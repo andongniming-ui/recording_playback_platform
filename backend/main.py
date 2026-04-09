@@ -75,6 +75,9 @@ app.include_router(schedule_api.router, prefix="/api/v1")
 from api.v1 import suites, ci
 app.include_router(suites.router, prefix="/api/v1")
 app.include_router(ci.router, prefix="/api/v1")
+from api.v1 import stats as stats_api, compare as compare_api
+app.include_router(stats_api.router, prefix="/api/v1")
+app.include_router(compare_api.router, prefix="/api/v1")
 
 
 @app.get("/api/health")

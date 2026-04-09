@@ -36,7 +36,11 @@ async def _create_default_admin():
 async def lifespan(app: FastAPI):
     await init_db()
     await _create_default_admin()
+    from core.scheduler import scheduler, load_all_schedules
+    await load_all_schedules()
+    scheduler.start()
     yield
+    scheduler.shutdown(wait=False)
 
 
 app = FastAPI(
@@ -66,6 +70,8 @@ app.include_router(arex_proxy_router)   # no prefix, handles /api/storage/* and 
 app.include_router(sessions.router, prefix="/api/v1")
 app.include_router(test_cases.router, prefix="/api/v1")
 app.include_router(replays.router, prefix="/api/v1")
+from api.v1 import schedule as schedule_api
+app.include_router(schedule_api.router, prefix="/api/v1")
 
 
 @app.get("/api/health")

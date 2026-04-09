@@ -58,12 +58,14 @@ from api.v1 import auth, users, applications
 from api.arex_proxy import router as arex_proxy_router
 from api.v1 import sessions
 from api.v1 import test_cases
+from api.v1 import replays
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
 app.include_router(applications.router, prefix="/api/v1")
 app.include_router(arex_proxy_router)   # no prefix, handles /api/storage/* and /api/config/*
 app.include_router(sessions.router, prefix="/api/v1")
 app.include_router(test_cases.router, prefix="/api/v1")
+app.include_router(replays.router, prefix="/api/v1")
 
 
 @app.get("/api/health")

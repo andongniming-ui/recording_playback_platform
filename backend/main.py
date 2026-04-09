@@ -54,9 +54,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from api.v1 import auth, users
+from api.v1 import auth, users, applications
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
+app.include_router(applications.router, prefix="/api/v1")
 
 
 @app.get("/api/health")

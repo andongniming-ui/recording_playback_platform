@@ -1,7 +1,7 @@
 version: "3.9"
 
 services:
-  mysql:
+  db:
     image: mysql:8.0
     container_name: arex-recorder-mysql
     environment:
@@ -26,18 +26,28 @@ services:
     container_name: arex-recorder-backend
     environment:
       AR_DB_TYPE: mysql
-      AR_DB_URL: mysql+aiomysql://arex:arex123@mysql:3306/arex_recorder
+      AR_DB_URL: mysql+aiomysql://arex:arex123@db:3306/arex_recorder
       AR_AREX_STORAGE_URL: http://host.docker.internal:8093
       AR_SECRET_KEY: please-change-this
     ports:
       - "8000:8000"
     depends_on:
-      mysql:
+      db:
         condition: service_healthy
     volumes:
       - ./backend:/app
       - ./data:/app/data
       - ./ssh_keys:/app/ssh_keys
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: arex-recorder-frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
 
 volumes:
   mysql_data:

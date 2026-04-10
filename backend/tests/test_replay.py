@@ -2,16 +2,19 @@
 import pytest
 
 
-TC_PAYLOAD = {
-    "name": "GET /healthz",
-    "request_method": "GET",
-    "request_uri": "/healthz",
-    "expected_status": 200,
-}
+@pytest.fixture
+def tc_payload():
+    """Return a fresh test-case payload dict for each test."""
+    return {
+        "name": "GET /healthz",
+        "request_method": "GET",
+        "request_uri": "/healthz",
+        "expected_status": 200,
+    }
 
 
-def _create_test_case(client, headers):
-    resp = client.post("/api/v1/test-cases", json=TC_PAYLOAD, headers=headers)
+def _create_test_case(client, headers, payload):
+    resp = client.post("/api/v1/test-cases", json=payload, headers=headers)
     assert resp.status_code == 201, resp.text
     return resp.json()
 
@@ -30,8 +33,8 @@ def _create_replay_job(client, headers, case_ids):
 # Replay job CRUD
 # ---------------------------------------------------------------------------
 
-def test_create_replay_job(client, admin_headers):
-    tc = _create_test_case(client, admin_headers)
+def test_create_replay_job(client, admin_headers, tc_payload):
+    tc = _create_test_case(client, admin_headers, tc_payload)
     resp = _create_replay_job(client, admin_headers, [tc["id"]])
     assert resp.status_code == 201
     body = resp.json()
@@ -49,8 +52,8 @@ def test_create_replay_job_empty_case_ids(client, admin_headers):
     assert resp.status_code == 400
 
 
-def test_list_replay_jobs(client, admin_headers):
-    tc = _create_test_case(client, admin_headers)
+def test_list_replay_jobs(client, admin_headers, tc_payload):
+    tc = _create_test_case(client, admin_headers, tc_payload)
     _create_replay_job(client, admin_headers, [tc["id"]])
 
     resp = client.get("/api/v1/replays", headers=admin_headers)
@@ -59,8 +62,8 @@ def test_list_replay_jobs(client, admin_headers):
     assert len(resp.json()) >= 1
 
 
-def test_get_replay_job(client, admin_headers):
-    tc = _create_test_case(client, admin_headers)
+def test_get_replay_job(client, admin_headers, tc_payload):
+    tc = _create_test_case(client, admin_headers, tc_payload)
     job = _create_replay_job(client, admin_headers, [tc["id"]]).json()
 
     resp = client.get(f"/api/v1/replays/{job['id']}", headers=admin_headers)
@@ -77,8 +80,8 @@ def test_get_replay_job_not_found(client, admin_headers):
 # Results
 # ---------------------------------------------------------------------------
 
-def test_list_replay_results(client, admin_headers):
-    tc = _create_test_case(client, admin_headers)
+def test_list_replay_results(client, admin_headers, tc_payload):
+    tc = _create_test_case(client, admin_headers, tc_payload)
     job = _create_replay_job(client, admin_headers, [tc["id"]]).json()
 
     resp = client.get(f"/api/v1/replays/{job['id']}/results", headers=admin_headers)
@@ -93,8 +96,8 @@ def test_list_replay_results(client, admin_headers):
 # HTML report
 # ---------------------------------------------------------------------------
 
-def test_html_report(client, admin_headers):
-    tc = _create_test_case(client, admin_headers)
+def test_html_report(client, admin_headers, tc_payload):
+    tc = _create_test_case(client, admin_headers, tc_payload)
     job = _create_replay_job(client, admin_headers, [tc["id"]]).json()
 
     resp = client.get(f"/api/v1/replays/{job['id']}/report", headers=admin_headers)
@@ -107,9 +110,9 @@ def test_html_report(client, admin_headers):
 # WebSocket progress (basic connection test)
 # ---------------------------------------------------------------------------
 
-def test_replay_job_fields(client, admin_headers):
+def test_replay_job_fields(client, admin_headers, tc_payload):
     """Verify replay job response contains all expected fields."""
-    tc = _create_test_case(client, admin_headers)
+    tc = _create_test_case(client, admin_headers, tc_payload)
     job = _create_replay_job(client, admin_headers, [tc["id"]]).json()
     job_id = job["id"]
 

@@ -12,42 +12,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import asyncio
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock, AsyncMock, PropertyMock
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from fastapi.testclient import TestClient
-
-
-def _ensure_admin_user(factory):
-    """Synchronously ensure the admin user exists in the test DB."""
-    from sqlalchemy import select, func
-    from models.user import User
-    from core.security import get_password_hash
-
-    async def _create():
-        async with factory() as db:
-            result = await db.execute(select(func.count()).select_from(User))
-            count = result.scalar()
-            if count == 0:
-                admin = User(
-                    username="admin",
-                    hashed_password=get_password_hash("admin123"),
-                    role="admin",
-                    is_active=True,
-                )
-                db.add(admin)
-                await db.commit()
-
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(asyncio.run, _create())
-                future.result(timeout=10)
-        else:
-            loop.run_until_complete(_create())
-    except RuntimeError:
-        asyncio.run(_create())
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +68,7 @@ def client(tmp_path):
 
     # Patch the scheduler singleton before TestClient starts (which runs lifespan)
     mock_sched = MagicMock()
-    mock_sched.running = False
+    type(mock_sched).running = PropertyMock(return_value=False)
     mock_sched.start = MagicMock()
     mock_sched.shutdown = MagicMock()
     mock_sched.add_job = MagicMock()
@@ -114,12 +81,12 @@ def client(tmp_path):
         patch("api.v1.schedule.remove_schedule", return_value=None),
         patch("api.v1.schedule.trigger_now", new_callable=AsyncMock),
         patch("core.replay_executor.run_replay_job", new_callable=AsyncMock),
+        # Patch main's local reference so lifespan _create_default_admin uses the
+        # test factory (main.py imports async_session_factory by name at module level).
+        patch("main.async_session_factory", test_factory),
     ):
 
         with TestClient(app, raise_server_exceptions=False) as c:
-            # Ensure admin user exists (in case lifespan admin creation is skipped
-            # when the real DB already has users)
-            _ensure_admin_user(test_factory)
             yield c
 
     app.dependency_overrides.clear()

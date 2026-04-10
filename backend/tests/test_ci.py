@@ -97,14 +97,18 @@ def test_trigger_replay_with_ci_token(client, admin_headers):
 
 
 def test_trigger_replay_missing_token(client):
-    resp = client.post("/api/v1/ci/trigger", json={"suite_id": 1})
+    # suite_id=99999 is intentionally non-existent; auth rejection happens before
+    # suite lookup, so the exact suite_id value does not affect the outcome.
+    resp = client.post("/api/v1/ci/trigger", json={"suite_id": 99999})
     assert resp.status_code == 401
 
 
 def test_trigger_replay_invalid_token(client):
+    # suite_id=99999 is intentionally non-existent; auth rejection happens before
+    # suite lookup, so the exact suite_id value does not affect the outcome.
     resp = client.post(
         "/api/v1/ci/trigger",
-        json={"suite_id": 1},
+        json={"suite_id": 99999},
         headers={"Authorization": "Token invalid_token_here"},
     )
     assert resp.status_code == 401

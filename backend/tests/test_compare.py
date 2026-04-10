@@ -3,21 +3,24 @@ import json
 import pytest
 
 
-RULE_PAYLOAD = {
-    "name": "ignore-timestamps",
-    "scope": "global",
-    "rule_type": "ignore",
-    "config": json.dumps({"path": "timestamp"}),
-    "is_active": True,
-}
+@pytest.fixture
+def rule_payload():
+    """Return a fresh compare-rule payload dict for each test."""
+    return {
+        "name": "ignore-timestamps",
+        "scope": "global",
+        "rule_type": "ignore",
+        "config": json.dumps({"path": "timestamp"}),
+        "is_active": True,
+    }
 
 
 # ---------------------------------------------------------------------------
 # Compare rule CRUD
 # ---------------------------------------------------------------------------
 
-def test_create_compare_rule(client, admin_headers):
-    resp = client.post("/api/v1/compare-rules", json=RULE_PAYLOAD, headers=admin_headers)
+def test_create_compare_rule(client, admin_headers, rule_payload):
+    resp = client.post("/api/v1/compare-rules", json=rule_payload, headers=admin_headers)
     assert resp.status_code == 201
     body = resp.json()
     assert body["name"] == "ignore-timestamps"
@@ -25,17 +28,17 @@ def test_create_compare_rule(client, admin_headers):
     assert "id" in body
 
 
-def test_list_compare_rules(client, admin_headers):
-    client.post("/api/v1/compare-rules", json=RULE_PAYLOAD, headers=admin_headers)
+def test_list_compare_rules(client, admin_headers, rule_payload):
+    client.post("/api/v1/compare-rules", json=rule_payload, headers=admin_headers)
     resp = client.get("/api/v1/compare-rules", headers=admin_headers)
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
-    assert len(resp.json()) >= 1
+    assert len(resp.json()) == 1
 
 
-def test_get_compare_rule(client, admin_headers):
+def test_get_compare_rule(client, admin_headers, rule_payload):
     rule = client.post(
-        "/api/v1/compare-rules", json=RULE_PAYLOAD, headers=admin_headers
+        "/api/v1/compare-rules", json=rule_payload, headers=admin_headers
     ).json()
     resp = client.get(f"/api/v1/compare-rules/{rule['id']}", headers=admin_headers)
     assert resp.status_code == 200
@@ -47,9 +50,9 @@ def test_get_compare_rule_not_found(client, admin_headers):
     assert resp.status_code == 404
 
 
-def test_update_compare_rule(client, admin_headers):
+def test_update_compare_rule(client, admin_headers, rule_payload):
     rule = client.post(
-        "/api/v1/compare-rules", json=RULE_PAYLOAD, headers=admin_headers
+        "/api/v1/compare-rules", json=rule_payload, headers=admin_headers
     ).json()
     resp = client.put(
         f"/api/v1/compare-rules/{rule['id']}",
@@ -60,9 +63,9 @@ def test_update_compare_rule(client, admin_headers):
     assert resp.json()["is_active"] is False
 
 
-def test_delete_compare_rule(client, admin_headers):
+def test_delete_compare_rule(client, admin_headers, rule_payload):
     rule = client.post(
-        "/api/v1/compare-rules", json=RULE_PAYLOAD, headers=admin_headers
+        "/api/v1/compare-rules", json=rule_payload, headers=admin_headers
     ).json()
     resp = client.delete(
         f"/api/v1/compare-rules/{rule['id']}", headers=admin_headers

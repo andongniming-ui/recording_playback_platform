@@ -59,7 +59,7 @@
 
 <script setup lang="ts">
 import { h, onMounted, reactive, ref } from 'vue'
-import { NButton, NCard, NDataTable, NDrawer, NDrawerContent, NGrid, NGridItem, NSpace, NSelect, NStatistic, NTag } from 'naive-ui'
+import { NButton, NCard, NDataTable, NDrawer, NDrawerContent, NGrid, NGridItem, NSpace, NSelect, NStatistic, NTag, useMessage } from 'naive-ui'
 import type { DataTableColumns, SelectOption, TagProps } from 'naive-ui'
 import { applicationApi } from '@/api/applications'
 import { replayApi } from '@/api/replays'
@@ -114,6 +114,7 @@ const resultStatusLabelMap: Record<string, string> = {
   PENDING: '待执行',
 }
 
+const message = useMessage()
 const filterAppId = ref<number | null>(null)
 const jobs = ref<JobRow[]>([])
 const loading = ref(false)
@@ -167,7 +168,7 @@ const columns: DataTableColumns<JobRow> = [
     render: (row) =>
       h(NSpace, { size: 4 }, () => [
         h(NButton, { size: 'tiny', onClick: () => openDrawer(row.id) }, () => '查看详情'),
-        h(NButton, { size: 'tiny', type: 'info', onClick: () => window.open(replayApi.getReportUrl(row.id), '_blank') }, () => '查看报告'),
+        h(NButton, { size: 'tiny', type: 'info', onClick: () => openReport(row.id) }, () => '查看报告'),
       ]),
   },
 ]
@@ -198,6 +199,18 @@ function formatDateTime(value?: string) {
   return value ? value.slice(0, 19).replace('T', ' ') : '-'
 }
 
+async function openReport(jobId: number) {
+  try {
+    const res = await replayApi.getReport(jobId)
+    const blob = new Blob([res.data], { type: 'text/html;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank', 'noopener')
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '加载报告失败')
+  }
+}
+
 async function loadJobs() {
   loading.value = true
   try {
@@ -213,6 +226,13 @@ async function loadJobs() {
     stats.total = finishedJobs.reduce((acc: number, job: JobRow) => acc + (job.total || 0), 0)
     stats.passed = finishedJobs.reduce((acc: number, job: JobRow) => acc + (job.passed || 0), 0)
     stats.passRate = stats.total > 0 ? (stats.passed / stats.total) * 100 : 0
+  } catch (error: any) {
+    jobs.value = []
+    stats.jobs = 0
+    stats.total = 0
+    stats.passed = 0
+    stats.passRate = 0
+    message.error(error.response?.data?.detail || '加载回放结果失败')
   } finally {
     loading.value = false
   }
@@ -225,14 +245,21 @@ async function openDrawer(jobId: number) {
   try {
     const res = await replayApi.getResults(jobId, { limit: 200 })
     drawerResults.value = res.data
+  } catch (error: any) {
+    drawerResults.value = []
+    message.error(error.response?.data?.detail || '加载任务详情失败')
   } finally {
     drawerLoading.value = false
   }
 }
 
 onMounted(async () => {
-  const appsRes = await applicationApi.list()
-  appOptions.value = appsRes.data.map((app: { id: number; name: string }) => ({ label: app.name, value: app.id }))
+  try {
+    const appsRes = await applicationApi.list()
+    appOptions.value = appsRes.data.map((app: { id: number; name: string }) => ({ label: app.name, value: app.id }))
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '加载应用列表失败')
+  }
   await loadJobs()
 })
 </script>

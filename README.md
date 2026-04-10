@@ -105,6 +105,7 @@ docker-compose up -d --build
 | `AR_DB_URL` | SQLite 文件路径 | 数据库连接字符串 |
 | `AR_SECRET_KEY` | `changeme-in-production` | **生产必须修改**，JWT 签名密钥 |
 | `AR_AREX_STORAGE_URL` | `http://localhost:8093` | arex-storage-service 地址 |
+| `AR_AREX_AGENT_STORAGE_URL` | 空 | JDK8/旧版 AREX agent 专用上报地址；配置后挂载时优先注入到 Agent，通常指向本平台后端代理地址 |
 | `AR_AREX_AGENT_JAR_PATH` | `/home/test/arex-agent/arex-agent.jar` | AREX Agent JAR 本地路径 |
 | `AR_SSH_KEYS_DIR` | `./ssh_keys` | SSH 私钥存储目录 |
 | `AR_ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Access Token 过期时间（分钟） |
@@ -133,7 +134,7 @@ docker-compose up -d --build
 ```
 
 **进程模型：** FastAPI async + APScheduler AsyncIOScheduler
-**Agent 通信：** `arex_proxy.py` 兼容 AREX agent 上报协议（`batchSaveMockers` zstd 解压转发）
+**Agent 通信：** `arex_proxy.py` 兼容旧版 AREX agent 上报协议（`batchSaveMockers` zstd 解压转发）。对于 JDK8/旧版 agent，建议配置 `AR_AREX_AGENT_STORAGE_URL` 指向本平台后端地址，让 Agent 先通过本平台代理再转发到 arex-storage。
 
 ---
 

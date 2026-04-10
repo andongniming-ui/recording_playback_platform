@@ -6,12 +6,13 @@ import time
 from typing import Optional
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from config import settings
 import database
 from integration.arex_client import ArexClient, ArexClientError
 from models.application import Application
+from models.compare import CompareRule
 from models.recording import Recording
 from models.replay import ReplayJob, ReplayResult
 from models.test_case import TestCase
@@ -30,6 +31,47 @@ def register_ws(job_id: int, ws):
 def unregister_ws(job_id: int, ws):
     if job_id in _ws_connections:
         _ws_connections[job_id].discard(ws)
+
+
+def _load_json_value(raw: str | None, label: str, default):
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except Exception:
+        logger.warning("Invalid JSON for %s", label)
+        return default
+
+
+def _normalize_rule_entries(value) -> list[dict]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(value, dict):
+        return [value]
+    return []
+
+
+def _collect_compare_rule_effects(rule: CompareRule) -> tuple[list[str], list[dict], list[dict]]:
+    config = _load_json_value(rule.config, f"compare rule {rule.id}", default=None)
+    entries = _normalize_rule_entries(config)
+    ignore_fields: list[str] = []
+    diff_rule_entries: list[dict] = []
+    assertion_entries: list[dict] = []
+
+    for entry in entries:
+        if rule.rule_type == "ignore":
+            if entry.get("path"):
+                normalized = dict(entry)
+                normalized["type"] = normalized.get("type") or "ignore"
+                diff_rule_entries.append(normalized)
+            elif entry.get("key"):
+                ignore_fields.append(str(entry["key"]))
+            elif entry.get("field"):
+                ignore_fields.append(str(entry["field"]))
+        elif rule.rule_type == "assert" and entry.get("type"):
+            assertion_entries.append(entry)
+
+    return ignore_fields, diff_rule_entries, assertion_entries
 
 
 async def _broadcast_progress(job_id: int, data: dict):
@@ -77,6 +119,7 @@ async def run_replay_job(job_id: int):
                 resolved_application_id = next(iter(case_application_ids))
                 job.application_id = resolved_application_id
 
+        app = None
         target_host = None
         arex_storage_url = settings.arex_storage_url
         if resolved_application_id:
@@ -88,6 +131,19 @@ async def run_replay_job(job_id: int):
                 target_host = f"http://{app.ssh_host}:{app.service_port}"
                 arex_storage_url = app.arex_storage_url or settings.arex_storage_url
 
+        compare_rule_stmt = select(CompareRule).where(CompareRule.is_active == True)
+        if resolved_application_id is None:
+            compare_rule_stmt = compare_rule_stmt.where(CompareRule.scope == "global")
+        else:
+            compare_rule_stmt = compare_rule_stmt.where(
+                or_(
+                    CompareRule.scope == "global",
+                    (CompareRule.scope == "app") & (CompareRule.application_id == resolved_application_id),
+                )
+            )
+        compare_rules_result = await db.execute(compare_rule_stmt.order_by(CompareRule.id))
+        compare_rules = compare_rules_result.scalars().all()
+
         from datetime import datetime, timezone
 
         job.status = "RUNNING"
@@ -95,17 +151,37 @@ async def run_replay_job(job_id: int):
         job.started_at = datetime.now(timezone.utc)
         await db.commit()
 
-    diff_rules = None
-    assertions_config = None
-    try:
-        if job.diff_rules:
-            diff_rules = json.loads(job.diff_rules)
-        if job.assertions:
-            assertions_config = json.loads(job.assertions)
-    except Exception:
-        logger.warning("ReplayJob %s has invalid diff_rules/assertions JSON", job_id)
+    base_ignore_fields = _load_json_value(
+        app.default_ignore_fields if app else None,
+        f"application {resolved_application_id} default_ignore_fields",
+        default=[],
+    )
+    if not isinstance(base_ignore_fields, list):
+        base_ignore_fields = []
+
+    diff_rules: list[dict] = []
+    assertions_config: list[dict] = []
+
+    app_assertions = _load_json_value(
+        app.default_assertions if app else None,
+        f"application {resolved_application_id} default_assertions",
+        default=[],
+    )
+    assertions_config.extend(_normalize_rule_entries(app_assertions))
+
+    for rule in compare_rules:
+        rule_ignore_fields, rule_diff_rules, rule_assertions = _collect_compare_rule_effects(rule)
+        base_ignore_fields.extend(rule_ignore_fields)
+        diff_rules.extend(rule_diff_rules)
+        assertions_config.extend(rule_assertions)
+
+    diff_rules.extend(_normalize_rule_entries(_load_json_value(job.diff_rules, f"replay job {job_id} diff_rules", default=[])))
+    assertions_config.extend(_normalize_rule_entries(_load_json_value(job.assertions, f"replay job {job_id} assertions", default=[])))
+
+    perf_threshold_ms = job.perf_threshold_ms if job.perf_threshold_ms is not None else (app.default_perf_threshold_ms if app else None)
 
     semaphore = asyncio.Semaphore(job.concurrency)
+    progress_lock = asyncio.Lock()
     done_count = 0
     passed = 0
     failed = 0
@@ -123,30 +199,41 @@ async def run_replay_job(job_id: int):
                 arex_storage_url=arex_storage_url,
                 timeout_ms=job.timeout_ms,
                 diff_rules=diff_rules,
+                base_ignore_fields=base_ignore_fields,
                 assertions_config=assertions_config,
-                perf_threshold_ms=job.perf_threshold_ms,
+                perf_threshold_ms=perf_threshold_ms,
                 use_mocks=job.use_sub_invocation_mocks,
             )
 
-        done_count += 1
-        if result.status == "PASS":
-            passed += 1
-        elif result.status in ("FAIL", "TIMEOUT"):
-            failed += 1
-        else:
-            errored += 1
+        async with progress_lock:
+            done_count += 1
+            if result.status == "PASS":
+                passed += 1
+            elif result.status in ("FAIL", "TIMEOUT"):
+                failed += 1
+            else:
+                errored += 1
 
-        await _broadcast_progress(
-            job_id,
-            {
-                "job_id": job_id,
-                "done": done_count,
-                "total": job.total,
-                "passed": passed,
-                "failed": failed,
-                "errored": errored,
-            },
-        )
+            async with database.async_session_factory() as progress_db:
+                job_result = await progress_db.execute(select(ReplayJob).where(ReplayJob.id == job_id))
+                progress_job = job_result.scalar_one_or_none()
+                if progress_job:
+                    progress_job.passed = passed
+                    progress_job.failed = failed
+                    progress_job.errored = errored
+                    await progress_db.commit()
+
+            await _broadcast_progress(
+                job_id,
+                {
+                    "job_id": job_id,
+                    "done": done_count,
+                    "total": job.total,
+                    "passed": passed,
+                    "failed": failed,
+                    "errored": errored,
+                },
+            )
 
     await asyncio.gather(*[_run_one(case_id) for case_id in case_ids])
 
@@ -185,9 +272,10 @@ async def _execute_single(
     arex_storage_url: str,
     timeout_ms: int,
     diff_rules,
-    assertions_config,
-    perf_threshold_ms: Optional[int],
-    use_mocks: bool,
+    base_ignore_fields=None,
+    assertions_config=None,
+    perf_threshold_ms: Optional[int] = None,
+    use_mocks: bool = False,
 ) -> ReplayResult:
     """Execute one test case and save the result back into the placeholder row."""
     if not case:
@@ -298,10 +386,12 @@ async def _execute_single(
     is_pass = False
 
     if status == "OK_GOT_RESPONSE":
-        ignore_fields = []
+        ignore_fields = list(base_ignore_fields or [])
         if case.ignore_fields:
             try:
-                ignore_fields = json.loads(case.ignore_fields)
+                case_ignore_fields = json.loads(case.ignore_fields)
+                if isinstance(case_ignore_fields, list):
+                    ignore_fields.extend(case_ignore_fields)
             except Exception:
                 logger.warning("Replay case %s has invalid ignore_fields JSON", case.id)
 
@@ -329,28 +419,31 @@ async def _execute_single(
         )
         assertion_results_json = json.dumps(assertion_results, ensure_ascii=False)
 
+        status_ok = case.expected_status is None or actual_status == case.expected_status
         diff_ok = diff_json is None
         assertions_ok = assertions_all_passed(assertion_results)
         perf_ok = perf_threshold_ms is None or latency_ms <= perf_threshold_ms
 
-        if diff_ok and assertions_ok and perf_ok:
+        if status_ok and diff_ok and assertions_ok and perf_ok:
             status = "PASS"
             is_pass = True
         else:
             status = "FAIL"
             failure_category = (
-                "diff"
-                if not diff_ok
-                else ("assertion" if not assertions_ok else "performance")
+                "status_mismatch"
+                if not status_ok
+                else ("response_diff" if not diff_ok else ("assertion_failed" if not assertions_ok else "performance"))
             )
             failure_reason = (
-                "Response mismatch"
+                f"Status mismatch: expected {case.expected_status}, got {actual_status}"
+                if not status_ok
+                else ("Response mismatch"
                 if not diff_ok
                 else (
                     "Assertion failed"
                     if not assertions_ok
                     else f"Latency {latency_ms}ms > threshold {perf_threshold_ms}ms"
-                )
+                ))
             )
 
     return await _save_result(

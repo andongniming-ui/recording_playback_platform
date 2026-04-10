@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 
 from database import get_db, async_session_factory
 from models.recording import RecordingSession, Recording
@@ -15,6 +15,7 @@ from core.security import require_viewer, require_editor
 from config import settings
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+HTTP_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
 
 
 async def _get_app_or_404(app_id: int, db: AsyncSession) -> Application:
@@ -23,6 +24,39 @@ async def _get_app_or_404(app_id: int, db: AsyncSession) -> Application:
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
     return app
+
+
+def _extract_request_meta(detail: dict, raw: dict) -> tuple[str, str]:
+    method_candidates = [
+        detail.get("requestMethod"),
+        raw.get("requestMethod"),
+    ]
+    uri_candidates = [
+        detail.get("requestUri"),
+        raw.get("requestUri"),
+        detail.get("uri"),
+        raw.get("uri"),
+    ]
+    operation_name = detail.get("operationName") or raw.get("operationName") or ""
+    if operation_name:
+        first, sep, rest = operation_name.partition(" ")
+        if sep and first.upper() in HTTP_METHODS:
+            method_candidates.append(first.upper())
+            uri_candidates.append(rest.strip())
+        else:
+            uri_candidates.append(operation_name)
+
+    method = next((str(value).upper() for value in method_candidates if value), "GET")
+    uri = next((str(value).strip() for value in uri_candidates if value), "/")
+    return method, uri
+
+
+def _serialize_payload(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value)
 
 
 @router.get("", response_model=list[RecordingSessionOut])
@@ -102,6 +136,7 @@ async def sync_recordings(
 
     sess.status = "collecting"
     sess.start_time = datetime.now(timezone.utc)
+    sess.error_message = None
     await db.commit()
 
     background_tasks.add_task(
@@ -159,7 +194,6 @@ async def _sync_from_arex_storage(
             if isinstance(records_raw, dict):
                 records_raw = records_raw.get("records") or []
 
-            saved_count = 0
             for raw in records_raw:
                 record_id = raw.get("recordId") or raw.get("id")
                 if not record_id:
@@ -178,21 +212,22 @@ async def _sync_from_arex_storage(
                 except Exception:
                     detail = raw
 
+                request_method, request_uri = _extract_request_meta(detail, raw)
+
                 rec = Recording(
                     session_id=session_id,
                     application_id=application_id,
                     record_id=str(record_id),
-                    request_method=detail.get("operationName", "").split(" ")[0] or raw.get("operationName", "GET"),
-                    request_uri=detail.get("operationName", raw.get("operationName", "/")),
-                    request_headers=json.dumps(detail.get("requestHeaders") or {}),
-                    request_body=json.dumps(detail.get("targetRequest") or detail.get("requestBody") or {}),
+                    request_method=request_method,
+                    request_uri=request_uri,
+                    request_headers=_serialize_payload(detail.get("requestHeaders") or {}),
+                    request_body=_serialize_payload(detail.get("targetRequest") or detail.get("requestBody")),
                     response_status=detail.get("responseStatusCode") or 200,
-                    response_body=json.dumps(detail.get("targetResponse") or {}),
+                    response_body=_serialize_payload(detail.get("targetResponse")),
                     sub_calls=json.dumps(detail.get("subCallInfo") or []),
                     recorded_at=datetime.now(timezone.utc),
                 )
                 db.add(rec)
-                saved_count += 1
 
             await db.commit()
 
@@ -202,9 +237,13 @@ async def _sync_from_arex_storage(
             )
             sess = sess_result.scalar_one_or_none()
             if sess:
+                count_result = await db.execute(
+                    select(func.count()).select_from(Recording).where(Recording.session_id == session_id)
+                )
                 sess.status = "done"
                 sess.end_time = datetime.now(timezone.utc)
-                sess.total_count = saved_count
+                sess.total_count = count_result.scalar_one()
+                sess.error_message = None
                 await db.commit()
 
         except ArexClientError as e:

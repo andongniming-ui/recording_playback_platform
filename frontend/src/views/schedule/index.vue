@@ -2,7 +2,7 @@
   <n-space vertical :size="16">
     <n-space justify="space-between">
       <n-h2 style="margin:0">定时任务</n-h2>
-      <n-button type="primary" @click="openCreate">+ 新增任务</n-button>
+      <n-button v-if="canEdit" type="primary" @click="openCreate">+ 新增任务</n-button>
     </n-space>
 
     <n-data-table :columns="columns" :data="schedules" :loading="loading" :pagination="{ pageSize: 10 }" />
@@ -47,8 +47,11 @@ import { ref, onMounted, h } from 'vue'
 import { NSpace, NH2, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NSelect, NSwitch, NAlert, NTag, NPopconfirm, useMessage } from 'naive-ui'
 import { scheduleApi } from '@/api/schedules'
 import { suiteApi } from '@/api/suites'
+import { useUserStore } from '@/store/user'
 
 const message = useMessage()
+const userStore = useUserStore()
+const canEdit = userStore.role === 'admin' || userStore.role === 'editor'
 const schedules = ref<any[]>([])
 const loading = ref(false)
 const showModal = ref(false)
@@ -79,20 +82,25 @@ const columns = [
   },
   {
     title: '操作', key: 'actions', width: 180,
-    render: (r: any) => h(NSpace, { size: 4 }, () => [
+    render: (r: any) => canEdit ? h(NSpace, { size: 4 }, () => [
       h(NButton, { size: 'tiny', type: 'info', onClick: () => triggerNow(r.id) }, () => '立即触发'),
       h(NButton, { size: 'tiny', onClick: () => openEdit(r) }, () => '编辑'),
       h(NPopconfirm, { onPositiveClick: () => deleteSchedule(r.id) }, {
         default: () => '确认删除?',
         trigger: () => h(NButton, { size: 'tiny', type: 'error' }, () => '删除'),
       }),
-    ]),
+    ]) : null,
   },
 ]
 
 async function load() {
   loading.value = true
-  try { schedules.value = (await scheduleApi.list()).data } finally { loading.value = false }
+  try {
+    schedules.value = (await scheduleApi.list()).data
+  } catch (error: any) {
+    schedules.value = []
+    message.error(error.response?.data?.detail || '加载定时任务失败')
+  } finally { loading.value = false }
 }
 
 function openCreate() {
@@ -108,6 +116,10 @@ function openEdit(s: any) {
 }
 
 async function save() {
+  if (!form.value.suite_id) {
+    message.warning('请选择关联套件')
+    return
+  }
   saving.value = true
   try {
     if (editingId.value) await scheduleApi.update(editingId.value, form.value)
@@ -115,20 +127,24 @@ async function save() {
     message.success('保存成功')
     showModal.value = false
     await load()
-  } catch { message.error('保存失败') } finally { saving.value = false }
+  } catch (error: any) { message.error(error.response?.data?.detail || '保存失败') } finally { saving.value = false }
 }
 
 async function deleteSchedule(id: number) {
-  try { await scheduleApi.delete(id); message.success('已删除'); await load() } catch { message.error('删除失败') }
+  try { await scheduleApi.delete(id); message.success('已删除'); await load() } catch (error: any) { message.error(error.response?.data?.detail || '删除失败') }
 }
 
 async function triggerNow(id: number) {
-  try { await scheduleApi.trigger(id); message.success('已触发') } catch { message.error('触发失败') }
+  try { await scheduleApi.trigger(id); message.success('已触发') } catch (error: any) { message.error(error.response?.data?.detail || '触发失败') }
 }
 
 onMounted(async () => {
-  const suitesRes = await suiteApi.list()
-  suiteOptions.value = suitesRes.data.map((s: any) => ({ label: s.name, value: s.id }))
+  try {
+    const suitesRes = await suiteApi.list()
+    suiteOptions.value = suitesRes.data.map((s: any) => ({ label: s.name, value: s.id }))
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '加载套件列表失败')
+  }
   await load()
 })
 </script>

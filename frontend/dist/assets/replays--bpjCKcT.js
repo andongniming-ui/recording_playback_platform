@@ -1,1 +1,0 @@
-import{a as r}from"./index-DTEWPgGI.js";const s={list:e=>r.get("/replays",{params:e}),create:e=>r.post("/replays",e),get:e=>r.get(`/replays/${e}`),getResults:(e,t)=>r.get(`/replays/${e}/results`,{params:t}),getReportUrl:e=>`/api/v1/replays/${e}/report`};export{s as r};

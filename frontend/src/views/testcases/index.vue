@@ -4,7 +4,7 @@
       <n-h2 style="margin:0">测试用例库</n-h2>
       <n-space>
         <n-button @click="exportCases">导出</n-button>
-        <n-button type="primary" @click="openCreate">+ 新增用例</n-button>
+        <n-button v-if="canEdit" type="primary" @click="openCreate">+ 新增用例</n-button>
       </n-space>
     </n-space>
 
@@ -51,7 +51,7 @@
           <n-input v-model:value="form.name" placeholder="用例名称" />
         </n-form-item>
         <n-form-item label="应用">
-          <n-select v-model:value="form.app_id" :options="appOptions" placeholder="选择应用" />
+          <n-select v-model:value="form.application_id" :options="appOptions" placeholder="选择应用" />
         </n-form-item>
         <n-form-item label="状态">
           <n-select v-model:value="form.status" :options="statusOptions" />
@@ -61,13 +61,13 @@
         </n-form-item>
         <n-form-item label="请求方法">
           <n-select
-            v-model:value="form.method"
+            v-model:value="form.request_method"
             :options="methodOptions"
             style="width:120px"
           />
         </n-form-item>
         <n-form-item label="请求 URI">
-          <n-input v-model:value="form.uri" placeholder="/api/path" />
+          <n-input v-model:value="form.request_uri" placeholder="/api/path" />
         </n-form-item>
         <n-form-item label="请求 Headers (JSON)">
           <n-input
@@ -78,12 +78,12 @@
             style="font-family:monospace"
           />
         </n-form-item>
-        <n-form-item label="请求 Body (JSON)">
+        <n-form-item label="请求 Body">
           <n-input
             v-model:value="form.body_json"
             type="textarea"
             :rows="6"
-            placeholder='{"key": "value"}'
+            placeholder='支持 JSON / XML / 普通文本'
             style="font-family:monospace"
           />
         </n-form-item>
@@ -130,8 +130,11 @@ import {
 } from 'naive-ui'
 import { testCaseApi } from '@/api/testcases'
 import { applicationApi } from '@/api/applications'
+import { useUserStore } from '@/store/user'
 
 const message = useMessage()
+const userStore = useUserStore()
+const canEdit = userStore.role === 'admin' || userStore.role === 'editor'
 
 const cases = ref<any[]>([])
 const loading = ref(false)
@@ -139,13 +142,14 @@ const filterAppId = ref<number | null>(null)
 const filterStatus = ref<string | null>(null)
 const filterSearch = ref('')
 const appOptions = ref<any[]>([])
+const appNameMap = ref<Record<number, string>>({})
 
 const showDrawer = ref(false)
 const saving = ref(false)
 const editingId = ref<number | null>(null)
 const form = ref({
-  name: '', app_id: null as number | null, status: 'active', description: '',
-  method: 'GET', uri: '', headers_json: '', body_json: '', assertions_json: '',
+  name: '', application_id: null as number | null, status: 'active', description: '',
+  request_method: 'GET', request_uri: '', headers_json: '', body_json: '', assertions_json: '',
 })
 
 const showAddSuiteModal = ref(false)
@@ -167,12 +171,17 @@ const statusTagMap: Record<string, any> = {
 const columns = [
   { title: 'ID', key: 'id', width: 60 },
   { title: '名称', key: 'name', ellipsis: { tooltip: true } },
-  { title: '应用', key: 'app_name', width: 120 },
   {
-    title: '请求', key: 'uri',
+    title: '应用',
+    key: 'application_id',
+    width: 120,
+    render: (r: any) => r.application_id != null ? (appNameMap.value[r.application_id] || `#${r.application_id}`) : '-',
+  },
+  {
+    title: '请求', key: 'request_uri',
     render: (r: any) => h('span', [
-      h('b', { style: 'margin-right:4px' }, r.method || 'GET'),
-      r.uri,
+      h('b', { style: 'margin-right:4px' }, r.request_method || 'GET'),
+      r.request_uri,
     ]),
   },
   {
@@ -185,7 +194,7 @@ const columns = [
   },
   {
     title: '操作', key: 'actions',
-    render: (r: any) => h(NSpace, { size: 4 }, () => [
+    render: (r: any) => canEdit ? h(NSpace, { size: 4 }, () => [
       h(NButton, { size: 'tiny', onClick: () => openEdit(r) }, () => '编辑'),
       h(NButton, { size: 'tiny', type: 'info', onClick: () => cloneCase(r.id) }, () => '克隆'),
       h(NButton, { size: 'tiny', onClick: () => openAddSuite(r.id) }, () => '加入套件'),
@@ -193,7 +202,7 @@ const columns = [
         default: () => '确认删除?',
         trigger: () => h(NButton, { size: 'tiny', type: 'error' }, () => '删除'),
       }),
-    ]),
+    ]) : null,
   },
 ]
 
@@ -201,8 +210,11 @@ async function loadApps() {
   try {
     const res = await applicationApi.list()
     appOptions.value = res.data.map((a: any) => ({ label: a.name, value: a.id }))
-  } catch {
-    // ignore
+    appNameMap.value = Object.fromEntries(res.data.map((a: any) => [a.id, a.name]))
+  } catch (error: any) {
+    appOptions.value = []
+    appNameMap.value = {}
+    message.error(error.response?.data?.detail || '加载应用列表失败')
   }
 }
 
@@ -210,13 +222,14 @@ async function loadCases() {
   loading.value = true
   try {
     const params: any = {}
-    if (filterAppId.value) params.app_id = filterAppId.value
+    if (filterAppId.value) params.application_id = filterAppId.value
     if (filterStatus.value) params.status = filterStatus.value
     if (filterSearch.value) params.search = filterSearch.value
     const res = await testCaseApi.list(params)
     cases.value = res.data
-  } catch {
-    message.error('加载用例失败')
+  } catch (error: any) {
+    cases.value = []
+    message.error(error.response?.data?.detail || '加载用例失败')
   } finally {
     loading.value = false
   }
@@ -225,24 +238,33 @@ async function loadCases() {
 function openCreate() {
   editingId.value = null
   form.value = {
-    name: '', app_id: null, status: 'active', description: '',
-    method: 'GET', uri: '', headers_json: '', body_json: '', assertions_json: '',
+    name: '', application_id: null, status: 'active', description: '',
+    request_method: 'GET', request_uri: '', headers_json: '', body_json: '', assertions_json: '',
   }
   showDrawer.value = true
+}
+
+function prettifyJsonString(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) return ''
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2)
+  } catch {
+    return value
+  }
 }
 
 function openEdit(tc: any) {
   editingId.value = tc.id
   form.value = {
     name: tc.name || '',
-    app_id: tc.app_id || null,
+    application_id: tc.application_id || null,
     status: tc.status || 'active',
     description: tc.description || '',
-    method: tc.method || 'GET',
-    uri: tc.uri || '',
-    headers_json: tc.headers ? JSON.stringify(tc.headers, null, 2) : '',
-    body_json: tc.body ? JSON.stringify(tc.body, null, 2) : '',
-    assertions_json: tc.assertions ? JSON.stringify(tc.assertions, null, 2) : '',
+    request_method: tc.request_method || 'GET',
+    request_uri: tc.request_uri || '',
+    headers_json: prettifyJsonString(tc.request_headers),
+    body_json: prettifyJsonString(tc.request_body),
+    assertions_json: prettifyJsonString(tc.assert_rules),
   }
   showDrawer.value = true
 }
@@ -250,19 +272,35 @@ function openEdit(tc: any) {
 async function save() {
   saving.value = true
   try {
-    const parseJson = (s: string) => {
-      if (!s.trim()) return undefined
-      try { return JSON.parse(s) } catch { return s }
+    const serializeStructuredText = (value: string) => {
+      const text = value.trim()
+      if (!text) return undefined
+      try {
+        return JSON.stringify(JSON.parse(text))
+      } catch {
+        return text
+      }
+    }
+    const serializeBodyText = (value: string) => {
+      const text = value.trim()
+      if (!text) return undefined
+      try {
+        return JSON.stringify(JSON.parse(text))
+      } catch {
+        return value
+      }
     }
     const payload: any = {
-      ...form.value,
-      headers: parseJson(form.value.headers_json),
-      body: parseJson(form.value.body_json),
-      assertions: parseJson(form.value.assertions_json),
+      name: form.value.name,
+      description: form.value.description,
+      application_id: form.value.application_id,
+      status: form.value.status,
+      request_method: form.value.request_method,
+      request_uri: form.value.request_uri,
+      request_headers: serializeStructuredText(form.value.headers_json),
+      request_body: serializeBodyText(form.value.body_json),
+      assert_rules: serializeStructuredText(form.value.assertions_json),
     }
-    delete payload.headers_json
-    delete payload.body_json
-    delete payload.assertions_json
     if (editingId.value) {
       await testCaseApi.update(editingId.value, payload)
     } else {
@@ -283,8 +321,8 @@ async function cloneCase(id: number) {
     await testCaseApi.clone(id)
     message.success('克隆成功')
     await loadCases()
-  } catch {
-    message.error('克隆失败')
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '克隆失败')
   }
 }
 
@@ -293,15 +331,15 @@ async function deleteCase(id: number) {
     await testCaseApi.delete(id)
     message.success('删除成功')
     await loadCases()
-  } catch {
-    message.error('删除失败')
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '删除失败')
   }
 }
 
 async function exportCases() {
   try {
     const params: any = {}
-    if (filterAppId.value) params.app_id = filterAppId.value
+    if (filterAppId.value) params.application_id = filterAppId.value
     const res = await testCaseApi.exportCases(params)
     const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -311,8 +349,8 @@ async function exportCases() {
     a.click()
     URL.revokeObjectURL(url)
     message.success('导出成功')
-  } catch {
-    message.error('导出失败')
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '导出失败')
   }
 }
 

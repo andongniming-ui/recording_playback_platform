@@ -1,6 +1,6 @@
 ﻿<template>
   <n-space vertical :size="16">
-    <n-card title="发起回放">
+    <n-card v-if="canEdit" title="发起回放">
       <n-form :model="launchForm" label-placement="left" label-width="120px">
         <n-form-item label="所属应用">
           <n-select
@@ -76,6 +76,7 @@ import type { DataTableColumns, SelectOption, TagProps } from 'naive-ui'
 import { applicationApi } from '@/api/applications'
 import { replayApi } from '@/api/replays'
 import { testCaseApi } from '@/api/testcases'
+import { useUserStore } from '@/store/user'
 
 type JobRow = {
   id: number
@@ -84,6 +85,7 @@ type JobRow = {
   total: number
   passed: number
   failed: number
+  errored: number
   created_at: string
 }
 
@@ -96,6 +98,8 @@ type ResultRow = {
 }
 
 const message = useMessage()
+const userStore = useUserStore()
+const canEdit = userStore.role === 'admin' || userStore.role === 'editor'
 const jobs = ref<JobRow[]>([])
 const loading = ref(false)
 const launching = ref(false)
@@ -169,7 +173,10 @@ const jobColumns: DataTableColumns<JobRow> = [
     title: '进度',
     key: 'progress',
     width: 120,
-    render: (row) => (row.total ? `${row.passed}/${row.total} (${((row.passed / row.total) * 100).toFixed(0)}%)` : '-'),
+    render: (row) => {
+      const completed = (row.passed ?? 0) + (row.failed ?? 0) + (row.errored ?? 0)
+      return row.total ? `${completed}/${row.total} (${((completed / row.total) * 100).toFixed(0)}%)` : '-'
+    },
   },
   {
     title: '失败数',
@@ -190,7 +197,7 @@ const jobColumns: DataTableColumns<JobRow> = [
     render: (row) =>
       h(NSpace, { size: 4 }, () => [
         h(NButton, { size: 'tiny', onClick: () => openDrawer(row.id) }, () => '查看结果'),
-        h(NButton, { size: 'tiny', type: 'info', onClick: () => window.open(replayApi.getReportUrl(row.id), '_blank') }, () => '查看报告'),
+        h(NButton, { size: 'tiny', type: 'info', onClick: () => openReport(row.id) }, () => '查看报告'),
       ]),
   },
 ]
@@ -221,6 +228,18 @@ function formatDateTime(value?: string) {
   return value ? value.slice(0, 19).replace('T', ' ') : '-'
 }
 
+async function openReport(jobId: number) {
+  try {
+    const res = await replayApi.getReport(jobId)
+    const blob = new Blob([res.data], { type: 'text/html;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank', 'noopener')
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '加载报告失败')
+  }
+}
+
 async function loadJobs() {
   loading.value = true
   try {
@@ -230,6 +249,9 @@ async function loadJobs() {
     }
     const res = await replayApi.list(params)
     jobs.value = res.data
+  } catch (error: any) {
+    jobs.value = []
+    message.error(error.response?.data?.detail || '加载回放任务失败')
   } finally {
     loading.value = false
   }
@@ -253,6 +275,9 @@ async function loadResults() {
     }
     const res = await replayApi.getResults(selectedJobId.value, params)
     results.value = res.data
+  } catch (error: any) {
+    results.value = []
+    message.error(error.response?.data?.detail || '加载回放结果失败')
   } finally {
     resultsLoading.value = false
   }
@@ -274,15 +299,19 @@ async function launchReplay() {
 }
 
 onMounted(async () => {
-  const [appsRes, casesRes] = await Promise.all([
-    applicationApi.list(),
-    testCaseApi.list({ limit: 100, status: 'active' }),
-  ])
-  appOptions.value = appsRes.data.map((app: { id: number; name: string }) => ({ label: app.name, value: app.id }))
-  caseOptions.value = casesRes.data.map((testCase: { id: number; request_method: string; request_uri: string; name: string }) => ({
-    label: `[${testCase.request_method}] ${testCase.request_uri} - ${testCase.name}`,
-    value: testCase.id,
-  }))
+  try {
+    const [appsRes, casesRes] = await Promise.all([
+      applicationApi.list(),
+      testCaseApi.list({ limit: 100, status: 'active' }),
+    ])
+    appOptions.value = appsRes.data.map((app: { id: number; name: string }) => ({ label: app.name, value: app.id }))
+    caseOptions.value = casesRes.data.map((testCase: { id: number; request_method: string; request_uri: string; name: string }) => ({
+      label: `[${testCase.request_method}] ${testCase.request_uri} - ${testCase.name}`,
+      value: testCase.id,
+    }))
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '初始化回放页面失败')
+  }
   await loadJobs()
 })
 </script>

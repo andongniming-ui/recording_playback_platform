@@ -16,12 +16,13 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { NCard, NForm, NFormItem, NInput, NButton, useMessage } from 'naive-ui'
 import axios from 'axios'
 import { useUserStore } from '@/store/user'
 
 const router = useRouter()
+const route = useRoute()
 const message = useMessage()
 const userStore = useUserStore()
 const loading = ref(false)
@@ -41,7 +42,8 @@ async function handleLogin() {
     params.append('password', form.value.password)
     const resp = await axios.post('/api/v1/auth/login', params)
     userStore.setUser(resp.data.access_token, form.value.username, resp.data.role || 'viewer')
-    router.push('/dashboard')
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/dashboard'
+    router.push(redirect)
   } catch (e: any) {
     message.error(e.response?.data?.detail || '登录失败')
   } finally {

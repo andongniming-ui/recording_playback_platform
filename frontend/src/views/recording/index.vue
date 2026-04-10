@@ -2,7 +2,7 @@
   <n-space vertical :size="12">
     <n-space justify="space-between">
       <n-h2 style="margin: 0">录制中心</n-h2>
-      <n-button type="primary" @click="openCreateSession">+ 新建会话</n-button>
+      <n-button v-if="canEdit" type="primary" @click="openCreateSession">+ 新建会话</n-button>
     </n-space>
 
     <n-space>
@@ -93,6 +93,7 @@ import type { DataTableColumns, SelectOption, TagProps } from 'naive-ui'
 import { applicationApi } from '@/api/applications'
 import { recordingApi } from '@/api/recordings'
 import { testCaseApi } from '@/api/testcases'
+import { useUserStore } from '@/store/user'
 
 type SessionRow = {
   id: number
@@ -100,6 +101,7 @@ type SessionRow = {
   name: string
   status: string
   total_count: number
+  error_message?: string | null
   created_at: string
 }
 
@@ -113,6 +115,8 @@ type RecordingRow = {
 }
 
 const message = useMessage()
+const userStore = useUserStore()
+const canEdit = userStore.role === 'admin' || userStore.role === 'editor'
 
 const sessions = ref<SessionRow[]>([])
 const sessionsLoading = ref(false)
@@ -188,7 +192,11 @@ const sessionColumns: DataTableColumns<SessionRow> = [
     width: 100,
     render: (row) => h(
       NTag,
-      { type: sessionStatusTagType[row.status] ?? 'default', size: 'small' },
+      {
+        type: sessionStatusTagType[row.status] ?? 'default',
+        size: 'small',
+        title: row.status === 'error' ? (row.error_message || '同步失败') : undefined,
+      },
       () => sessionStatusLabelMap[row.status] || row.status,
     ),
   },
@@ -204,7 +212,7 @@ const sessionColumns: DataTableColumns<SessionRow> = [
     key: 'actions',
     render: (row) =>
       h(NSpace, { size: 4 }, () => [
-        h(NButton, { size: 'tiny', type: 'info', onClick: () => syncSession(row.id) }, () => '同步'),
+        ...(canEdit ? [h(NButton, { size: 'tiny', type: 'info', onClick: () => syncSession(row.id) }, () => '同步')] : []),
         h(NButton, { size: 'tiny', onClick: () => viewRecordings(row) }, () => '查看录制'),
       ]),
   },
@@ -238,7 +246,7 @@ const recordingColumns: DataTableColumns<RecordingRow> = [
     title: '操作',
     key: 'actions',
     width: 100,
-    render: (row) => h(NButton, { size: 'tiny', type: 'primary', onClick: () => openConvert(row.id) }, () => '生成用例'),
+    render: (row) => canEdit ? h(NButton, { size: 'tiny', type: 'primary', onClick: () => openConvert(row.id) }, () => '生成用例') : null,
   },
 ]
 
@@ -254,8 +262,10 @@ async function loadApps() {
       value: app.id,
     }))
     appNameMap.value = Object.fromEntries(res.data.map((app: { id: number; name: string }) => [app.id, app.name]))
-  } catch {
-    message.error('加载应用列表失败')
+  } catch (error: any) {
+    appOptions.value = []
+    appNameMap.value = {}
+    message.error(error.response?.data?.detail || '加载应用列表失败')
   }
 }
 
@@ -268,8 +278,9 @@ async function loadSessions() {
     }
     const res = await recordingApi.listSessions(params)
     sessions.value = res.data
-  } catch {
-    message.error('加载录制会话失败')
+  } catch (error: any) {
+    sessions.value = []
+    message.error(error.response?.data?.detail || '加载录制会话失败')
   } finally {
     sessionsLoading.value = false
   }
@@ -307,8 +318,8 @@ async function syncSession(sessionId: number) {
     await recordingApi.syncSession(sessionId, {})
     message.success('已开始同步录制数据')
     await loadSessions()
-  } catch {
-    message.error('启动录制同步失败')
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '启动录制同步失败')
   }
 }
 
@@ -320,8 +331,9 @@ async function viewRecordings(session: SessionRow) {
   try {
     const res = await recordingApi.listRecordings(session.id)
     recordings.value = res.data
-  } catch {
-    message.error('加载录制数据失败')
+  } catch (error: any) {
+    recordings.value = []
+    message.error(error.response?.data?.detail || '加载录制数据失败')
   } finally {
     recordingsLoading.value = false
   }

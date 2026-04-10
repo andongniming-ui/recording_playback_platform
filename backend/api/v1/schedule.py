@@ -4,13 +4,52 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+from core.replay_context import infer_application_id_for_case_ids
 from database import get_db
 from models.schedule import Schedule
+from models.suite import Suite, SuiteCase
 from schemas.schedule import ScheduleCreate, ScheduleUpdate, ScheduleOut
 from core.security import require_viewer, require_editor
 from core.scheduler import add_schedule, remove_schedule, trigger_now
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
+
+
+async def _validate_suite_exists(suite_id: Optional[int], db: AsyncSession):
+    if suite_id is None:
+        return
+    result = await db.execute(select(Suite).where(Suite.id == suite_id))
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Suite not found")
+
+
+async def _validate_schedule_can_run(schedule: Schedule, db: AsyncSession):
+    if schedule.suite_id is None:
+        raise HTTPException(status_code=400, detail="Schedule must be bound to a suite before it can run")
+
+    suite_result = await db.execute(select(Suite).where(Suite.id == schedule.suite_id))
+    if not suite_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Suite not found")
+
+    cases_result = await db.execute(
+        select(SuiteCase.test_case_id)
+        .where(SuiteCase.suite_id == schedule.suite_id)
+        .order_by(SuiteCase.order_index)
+    )
+    case_ids = list(cases_result.scalars().all())
+    if not case_ids:
+        raise HTTPException(status_code=400, detail="Schedule suite has no test cases")
+
+    try:
+        application_id = await infer_application_id_for_case_ids(db, case_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if application_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Schedule suite test cases must have an application_id before execution can start",
+        )
 
 
 @router.get("", response_model=list[ScheduleOut])
@@ -31,6 +70,7 @@ async def create_schedule(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_editor),
 ):
+    await _validate_suite_exists(body.suite_id, db)
     sched = Schedule(**body.model_dump())
     db.add(sched)
     await db.commit()
@@ -65,6 +105,7 @@ async def update_schedule(
     if not sched:
         raise HTTPException(status_code=404, detail="Schedule not found")
 
+    await _validate_suite_exists(body.suite_id, db)
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(sched, field, value)
 
@@ -105,5 +146,6 @@ async def trigger_schedule(
     sched = result.scalar_one_or_none()
     if not sched:
         raise HTTPException(status_code=404, detail="Schedule not found")
+    await _validate_schedule_can_run(sched, db)
     await trigger_now(schedule_id)
     return {"message": f"Schedule {schedule_id} triggered"}

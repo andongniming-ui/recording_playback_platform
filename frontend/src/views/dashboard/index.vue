@@ -68,7 +68,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, h } from 'vue'
 import {
-  NSpace, NGrid, NGridItem, NCard, NStatistic, NSelect, NDataTable, NTag
+  NSpace, NGrid, NGridItem, NCard, NStatistic, NSelect, NDataTable, NTag, useMessage
 } from 'naive-ui'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -79,6 +79,7 @@ import { statsApi } from '@/api/stats'
 
 use([CanvasRenderer, LineChart, PieChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent])
 
+const message = useMessage()
 const summary = ref<any>(null)
 const trend = ref<any[]>([])
 const failureTypes = ref<any[]>([])
@@ -159,8 +160,9 @@ async function loadTrend() {
   try {
     const res = await statsApi.trend({ days: days.value })
     trend.value = res.data
-  } catch {
+  } catch (error: any) {
     trend.value = []
+    message.error(error.response?.data?.detail || '加载通过率趋势失败')
   } finally {
     trendLoading.value = false
   }
@@ -177,8 +179,11 @@ onMounted(async () => {
     summary.value = sumRes.data
     recentJobs.value = jobsRes.data
     failureTypes.value = failRes.data
-  } catch {
-    // ignore network errors during development
+  } catch (error: any) {
+    summary.value = null
+    recentJobs.value = []
+    failureTypes.value = []
+    message.error(error.response?.data?.detail || '加载仪表盘统计失败')
   } finally {
     failLoading.value = false
   }

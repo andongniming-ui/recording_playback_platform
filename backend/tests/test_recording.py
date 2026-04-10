@@ -1,5 +1,11 @@
 """Tests for recording session CRUD, recording listing, and session sync."""
 import pytest
+from unittest.mock import AsyncMock, patch
+
+import database
+from sqlalchemy import select
+from api.v1.sessions import _sync_from_arex_storage
+from models.recording import Recording
 
 
 # ---------------------------------------------------------------------------
@@ -93,3 +99,71 @@ def test_list_recordings_empty(client, admin_headers, created_app):
     resp = client.get(f"/api/v1/sessions/{sess_id}/recordings", headers=admin_headers)
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_sync_session_keeps_total_count_as_session_total_and_parses_operation_name(
+    client, admin_headers, created_app
+):
+    app_id = created_app["id"]
+    sess_id = _create_session(client, app_id, admin_headers).json()["id"]
+
+    query_side_effect = [
+        {"body": [{"recordId": "r-1"}, {"recordId": "r-2"}]},
+        {"body": [{"recordId": "r-2"}, {"recordId": "r-3"}]},
+    ]
+
+    async def fake_view_recording(*args):
+        record_id = args[-1]
+        return {
+            "operationName": {
+                "r-1": "GET /api/orders/1",
+                "r-2": "POST /api/orders",
+                "r-3": "DELETE /api/orders/3",
+            }[record_id],
+            "requestHeaders": {"Content-Type": "application/json"},
+            "targetRequest": "<xml><id>r-3</id></xml>" if record_id == "r-3" else {"id": record_id},
+            "responseStatusCode": 200,
+            "targetResponse": "<xml><ok>true</ok></xml>" if record_id == "r-3" else {"ok": True},
+        }
+
+    with (
+        patch("api.v1.sessions.async_session_factory", database.async_session_factory),
+        patch("integration.arex_client.ArexClient.query_recordings", new=AsyncMock(side_effect=query_side_effect)),
+        patch("integration.arex_client.ArexClient.view_recording", new=AsyncMock(side_effect=fake_view_recording)),
+    ):
+        await _sync_from_arex_storage(
+            session_id=sess_id,
+            application_id=app_id,
+            begin_time=None,
+            end_time=None,
+            page_size=50,
+            page_index=0,
+        )
+        await _sync_from_arex_storage(
+            session_id=sess_id,
+            application_id=app_id,
+            begin_time=None,
+            end_time=None,
+            page_size=50,
+            page_index=0,
+        )
+
+    resp = client.get(f"/api/v1/sessions/{sess_id}", headers=admin_headers)
+    assert resp.status_code == 200
+    assert resp.json()["total_count"] == 3
+
+    async with database.async_session_factory() as db:
+        rows = (
+            await db.execute(
+                select(Recording).where(Recording.session_id == sess_id).order_by(Recording.record_id)
+            )
+        ).scalars().all()
+
+    assert [row.record_id for row in rows] == ["r-1", "r-2", "r-3"]
+    assert rows[0].request_method == "GET"
+    assert rows[0].request_uri == "/api/orders/1"
+    assert rows[1].request_method == "POST"
+    assert rows[1].request_uri == "/api/orders"
+    assert rows[2].request_body == "<xml><id>r-3</id></xml>"
+    assert rows[2].response_body == "<xml><ok>true</ok></xml>"

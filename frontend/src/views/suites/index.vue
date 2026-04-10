@@ -2,7 +2,7 @@
   <n-space vertical :size="16">
     <n-space justify="space-between">
       <n-h2 style="margin:0">测试套件</n-h2>
-      <n-button type="primary" @click="openCreate">+ 新建套件</n-button>
+      <n-button v-if="canEdit" type="primary" @click="openCreate">+ 新建套件</n-button>
     </n-space>
 
     <n-data-table :columns="columns" :data="suites" :loading="loading" :pagination="{ pageSize: 10 }" />
@@ -27,8 +27,8 @@
     <n-drawer-content :title="`套件详情: ${selectedSuite?.name}`" closable>
       <n-space justify="space-between" style="margin-bottom:12px">
         <n-space>
-          <n-button size="small" type="primary" @click="openAddCase">添加用例</n-button>
-          <n-button size="small" type="success" :loading="running" @click="runSuite">运行套件</n-button>
+          <n-button v-if="canEdit" size="small" type="primary" @click="openAddCase">添加用例</n-button>
+          <n-button v-if="canEdit" size="small" type="success" :loading="running" @click="runSuite">运行套件</n-button>
         </n-space>
         <n-text>共 {{ suiteDetail?.cases?.length || 0 }} 个用例</n-text>
       </n-space>
@@ -53,8 +53,11 @@ import { ref, onMounted, h } from 'vue'
 import { NSpace, NH2, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NSelect, NText, NDrawer, NDrawerContent, NPopconfirm, useMessage } from 'naive-ui'
 import { suiteApi } from '@/api/suites'
 import { testCaseApi } from '@/api/testcases'
+import { useUserStore } from '@/store/user'
 
 const message = useMessage()
+const userStore = useUserStore()
+const canEdit = userStore.role === 'admin' || userStore.role === 'editor'
 const suites = ref<any[]>([])
 const loading = ref(false)
 const showCreateModal = ref(false)
@@ -76,10 +79,10 @@ const columns = [
     title: '操作', key: 'actions', width: 140,
     render: (r: any) => h(NSpace, { size: 4 }, () => [
       h(NButton, { size: 'tiny', onClick: () => openDetail(r) }, () => '详情'),
-      h(NPopconfirm, { onPositiveClick: () => deleteSuite(r.id) }, {
+      ...(canEdit ? [h(NPopconfirm, { onPositiveClick: () => deleteSuite(r.id) }, {
         default: () => '确认删除?',
         trigger: () => h(NButton, { size: 'tiny', type: 'error' }, () => '删除'),
-      }),
+      })] : []),
     ]),
   },
 ]
@@ -91,7 +94,12 @@ const caseCols = [
 
 async function load() {
   loading.value = true
-  try { suites.value = (await suiteApi.list()).data } finally { loading.value = false }
+  try {
+    suites.value = (await suiteApi.list()).data
+  } catch (error: any) {
+    suites.value = []
+    message.error(error.response?.data?.detail || '加载套件失败')
+  } finally { loading.value = false }
 }
 
 function openCreate() {
@@ -106,14 +114,19 @@ async function createSuite() {
     message.success('套件已创建')
     showCreateModal.value = false
     await load()
-  } catch { message.error('创建失败') } finally { saving.value = false }
+  } catch (error: any) { message.error(error.response?.data?.detail || '创建失败') } finally { saving.value = false }
 }
 
 async function openDetail(suite: any) {
   selectedSuite.value = suite
   showDrawer.value = true
-  const res = await suiteApi.get(suite.id)
-  suiteDetail.value = res.data
+  try {
+    const res = await suiteApi.get(suite.id)
+    suiteDetail.value = res.data
+  } catch (error: any) {
+    suiteDetail.value = null
+    message.error(error.response?.data?.detail || '加载套件详情失败')
+  }
 }
 
 function openAddCase() {
@@ -130,7 +143,7 @@ async function addCases() {
     message.success('用例已添加')
     showAddCase.value = false
     await openDetail(selectedSuite.value)
-  } catch { message.error('添加失败') }
+  } catch (error: any) { message.error(error.response?.data?.detail || '添加失败') }
 }
 
 async function runSuite() {
@@ -139,16 +152,20 @@ async function runSuite() {
   try {
     const res = await suiteApi.run(selectedSuite.value.id)
     message.success(`回放任务 #${res.data.job_id} 已启动`)
-  } catch { message.error('运行失败') } finally { running.value = false }
+  } catch (error: any) { message.error(error.response?.data?.detail || '运行失败') } finally { running.value = false }
 }
 
 async function deleteSuite(id: number) {
-  try { await suiteApi.delete(id); message.success('已删除'); await load() } catch { message.error('删除失败') }
+  try { await suiteApi.delete(id); message.success('已删除'); await load() } catch (error: any) { message.error(error.response?.data?.detail || '删除失败') }
 }
 
 onMounted(async () => {
-  const casesRes = await testCaseApi.list({ limit: 200 })
-  caseOptions.value = casesRes.data.map((c: any) => ({ label: `[${c.request_method}] ${c.name}`, value: c.id }))
+  try {
+    const casesRes = await testCaseApi.list({ limit: 200 })
+    caseOptions.value = casesRes.data.map((c: any) => ({ label: `[${c.request_method}] ${c.name}`, value: c.id }))
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '加载测试用例失败')
+  }
   await load()
 })
 </script>

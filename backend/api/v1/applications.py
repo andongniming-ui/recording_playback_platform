@@ -119,7 +119,13 @@ async def mount_agent(
         from database import async_session_factory
 
         try:
-            arex_url = app.arex_storage_url or settings.arex_storage_url
+            # JDK8/legacy AREX agents may need to talk to this recorder backend
+            # proxy first instead of hitting arex-storage directly.
+            arex_url = (
+                settings.arex_agent_storage_url
+                or app.arex_storage_url
+                or settings.arex_storage_url
+            )
             agent_jar = settings.arex_agent_jar_path
             remote_agent_path = f"/home/{app.ssh_user}/arex-agent/arex-agent.jar"
 

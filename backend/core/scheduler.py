@@ -14,7 +14,7 @@ def _make_job_id(schedule_id: int) -> str:
     return f"schedule_{schedule_id}"
 
 
-async def _run_scheduled_replay(schedule_id: int):
+async def _run_scheduled_replay(schedule_id: int, ignore_active: bool = False):
     """Execute a scheduled replay job."""
     from datetime import datetime, timezone
     import core.replay_executor as replay_executor
@@ -30,7 +30,7 @@ async def _run_scheduled_replay(schedule_id: int):
     async with async_session_factory() as db:
         result = await db.execute(select(Schedule).where(Schedule.id == schedule_id))
         schedule = result.scalar_one_or_none()
-        if not schedule or not schedule.is_active:
+        if not schedule or (not schedule.is_active and not ignore_active):
             return
 
         case_ids: list[int] = []
@@ -43,18 +43,23 @@ async def _run_scheduled_replay(schedule_id: int):
             case_ids = list(suite_case_result.scalars().all())
 
         if not case_ids:
+            schedule.last_run_at = datetime.now(timezone.utc)
+            schedule.last_run_status = "FAILED"
+            await db.commit()
             logger.warning("Schedule %s: no cases found in suite %s", schedule_id, schedule.suite_id)
             return
 
         try:
             application_id = await infer_application_id_for_case_ids(db, case_ids)
         except ValueError as exc:
+            schedule.last_run_at = datetime.now(timezone.utc)
             schedule.last_run_status = "FAILED"
             await db.commit()
             logger.warning("Schedule %s: %s", schedule_id, exc)
             return
 
         if application_id is None:
+            schedule.last_run_at = datetime.now(timezone.utc)
             schedule.last_run_status = "FAILED"
             await db.commit()
             logger.warning(
@@ -163,7 +168,7 @@ def remove_schedule(schedule_id: int):
 
 async def trigger_now(schedule_id: int):
     """Immediately trigger a scheduled replay (ignoring cron timing)."""
-    asyncio.create_task(_run_scheduled_replay(schedule_id))
+    asyncio.create_task(_run_scheduled_replay(schedule_id, ignore_active=True))
 
 
 async def load_all_schedules():

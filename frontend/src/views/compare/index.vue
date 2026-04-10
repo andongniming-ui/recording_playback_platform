@@ -5,7 +5,7 @@
       <n-grid-item>
         <n-card title="对比规则管理">
           <template #header-extra>
-            <n-button size="small" type="primary" @click="openCreate">+ 新增规则</n-button>
+            <n-button v-if="canEdit" size="small" type="primary" @click="openCreate">+ 新增规则</n-button>
           </template>
           <n-data-table :columns="ruleColumns" :data="rules" :loading="ruleLoading" size="small" :pagination="{ pageSize: 8 }" />
         </n-card>
@@ -67,8 +67,11 @@ import { ref, onMounted, h } from 'vue'
 import { NSpace, NGrid, NGridItem, NCard, NDataTable, NButton, NModal, NForm, NFormItem, NInput, NSelect, NText, NAlert, NPopconfirm, useMessage } from 'naive-ui'
 import { compareApi } from '@/api/compare'
 import { replayApi } from '@/api/replays'
+import { useUserStore } from '@/store/user'
 
 const message = useMessage()
+const userStore = useUserStore()
+const canEdit = userStore.role === 'admin' || userStore.role === 'editor'
 const rules = ref<any[]>([])
 const ruleLoading = ref(false)
 const showModal = ref(false)
@@ -83,10 +86,10 @@ const ruleColumns = [
   { title: '状态', key: 'is_active', width: 60, render: (r: any) => r.is_active ? '启用' : '停用' },
   {
     title: '操作', key: 'actions', width: 80,
-    render: (r: any) => h(NPopconfirm, { onPositiveClick: () => deleteRule(r.id) }, {
+    render: (r: any) => canEdit ? h(NPopconfirm, { onPositiveClick: () => deleteRule(r.id) }, {
       default: () => '确认删除?',
       trigger: () => h(NButton, { size: 'tiny', type: 'error' }, () => '删除'),
-    }),
+    }) : null,
   },
 ]
 
@@ -100,6 +103,8 @@ async function loadRules() {
   try {
     const res = await compareApi.list()
     rules.value = res.data
+  } catch {
+    message.error('加载对比规则失败')
   } finally { ruleLoading.value = false }
 }
 
@@ -114,7 +119,7 @@ async function saveRule() {
     message.success('规则已创建')
     showModal.value = false
     await loadRules()
-  } catch { message.error('创建失败') }
+  } catch (error: any) { message.error(error.response?.data?.detail || '创建失败') }
 }
 
 async function deleteRule(id: number) {
@@ -122,20 +127,23 @@ async function deleteRule(id: number) {
     await compareApi.delete(id)
     message.success('已删除')
     await loadRules()
-  } catch { message.error('删除失败') }
+  } catch (error: any) { message.error(error.response?.data?.detail || '删除失败') }
 }
 
 async function loadDiff() {
   if (!resultId.value) return
   try {
-    // Get results list for the job - try treating input as result_id from /replays/{jobId}/results
-    // We'll try job ID approach
-    const jobId = parseInt(resultId.value)
-    if (isNaN(jobId)) { message.error('请输入有效的任务 ID'); return }
-    const res = await replayApi.getResults(jobId, { limit: 1 })
-    if (res.data.length) diffData.value = res.data[0]
-    else message.warning('未找到回放结果')
-  } catch { message.error('查询失败') }
+    const parsedId = parseInt(resultId.value, 10)
+    if (isNaN(parsedId)) {
+      message.error('请输入有效的回放结果 ID')
+      return
+    }
+    const res = await replayApi.getResult(parsedId)
+    diffData.value = res.data
+  } catch (error: any) {
+    diffData.value = null
+    message.error(error.response?.data?.detail || '查询失败')
+  }
 }
 
 onMounted(loadRules)

@@ -13,6 +13,7 @@ from models.test_case import TestCase
 from core.security import require_viewer
 
 router = APIRouter(prefix="/stats", tags=["stats"])
+FINISHED_JOB_STATUSES = ("DONE", "FAILED")
 
 
 @router.get("/trend")
@@ -32,7 +33,7 @@ async def get_pass_rate_trend(
     stmt = select(ReplayJob).where(
         and_(
             ReplayJob.created_at >= start,
-            ReplayJob.status == "DONE",
+            ReplayJob.status.in_(FINISHED_JOB_STATUSES),
         )
     )
     if application_id:
@@ -79,7 +80,7 @@ async def get_summary(
     thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
     jobs_result = await db.execute(
         select(ReplayJob).where(
-            and_(ReplayJob.created_at >= thirty_days_ago, ReplayJob.status == "DONE")
+            and_(ReplayJob.created_at >= thirty_days_ago, ReplayJob.status.in_(FINISHED_JOB_STATUSES))
         )
     )
     recent_jobs = jobs_result.scalars().all()
@@ -123,7 +124,7 @@ async def get_app_summary(
                 and_(
                     ReplayJob.application_id == app.id,
                     ReplayJob.created_at >= thirty_days_ago,
-                    ReplayJob.status == "DONE",
+                    ReplayJob.status.in_(FINISHED_JOB_STATUSES),
                 )
             )
         )

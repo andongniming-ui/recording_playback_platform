@@ -25,7 +25,7 @@
 
     <n-card title="脱敏规则管理">
       <template #header-extra>
-        <n-button size="small" type="primary" @click="openCreate">+ 新增规则</n-button>
+        <n-button v-if="canEdit" size="small" type="primary" @click="openCreate">+ 新增规则</n-button>
       </template>
       <n-data-table :columns="columns" :data="rules" :loading="loading" size="small" :pagination="{ pageSize: 10 }" />
     </n-card>
@@ -51,8 +51,11 @@
 import { ref, onMounted, h } from 'vue'
 import { NSpace, NCard, NAlert, NDescriptions, NDescriptionsItem, NText, NButton, NDataTable, NTag, NModal, NForm, NFormItem, NInput, NPopconfirm, useMessage } from 'naive-ui'
 import { compareApi } from '@/api/compare'
+import { useUserStore } from '@/store/user'
 
 const message = useMessage()
+const userStore = useUserStore()
+const canEdit = userStore.role === 'admin' || userStore.role === 'editor'
 const rules = ref<any[]>([])
 const loading = ref(false)
 const showModal = ref(false)
@@ -68,10 +71,10 @@ const columns = [
   },
   {
     title: '操作', key: 'actions', width: 80,
-    render: (r: any) => h(NPopconfirm, { onPositiveClick: () => deleteRule(r.id) }, {
+    render: (r: any) => canEdit ? h(NPopconfirm, { onPositiveClick: () => deleteRule(r.id) }, {
       default: () => '确认删除?',
       trigger: () => h(NButton, { size: 'tiny', type: 'error' }, () => '删除'),
-    }),
+    }) : null,
   },
 ]
 
@@ -80,6 +83,9 @@ async function load() {
   try {
     const res = await compareApi.list({ rule_type: 'ignore' })
     rules.value = res.data
+  } catch (error: any) {
+    rules.value = []
+    message.error(error.response?.data?.detail || '加载脱敏规则失败')
   } finally { loading.value = false }
 }
 
@@ -95,11 +101,11 @@ async function save() {
     message.success('规则已创建')
     showModal.value = false
     await load()
-  } catch { message.error('创建失败') } finally { saving.value = false }
+  } catch (error: any) { message.error(error.response?.data?.detail || '创建失败') } finally { saving.value = false }
 }
 
 async function deleteRule(id: number) {
-  try { await compareApi.delete(id); message.success('已删除'); await load() } catch { message.error('删除失败') }
+  try { await compareApi.delete(id); message.success('已删除'); await load() } catch (error: any) { message.error(error.response?.data?.detail || '删除失败') }
 }
 
 onMounted(load)

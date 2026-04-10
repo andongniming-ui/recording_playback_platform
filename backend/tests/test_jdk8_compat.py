@@ -195,22 +195,31 @@ class TestInjectJavaagentParam:
         assert captured_sed
         assert "Darex.record.rate=100" in captured_sed[0]
 
-    def test_rejects_jdk11_target(self):
-        """inject_javaagent_param must return ERROR when target JVM is JDK 11."""
+    def test_accepts_jdk11_target(self):
+        """inject_javaagent_param must proceed for JDK 11 (supported by AREX agent)."""
         result = _run_inject(
             _make_app(), "http://host:8093", "/agent.jar",
             java_version_str="11.0.18"
         )
-        assert result.startswith("ERROR:"), f"Expected ERROR for JDK11, got: {result}"
-        assert "11.0.18" in result
+        assert result.startswith("OK:") or result == "ALREADY_INJECTED", \
+            f"Expected OK for JDK11, got: {result}"
 
-    def test_rejects_jdk17_target(self):
-        """inject_javaagent_param must return ERROR when target JVM is JDK 17."""
+    def test_accepts_jdk17_target(self):
+        """inject_javaagent_param must proceed for JDK 17 (experimental support)."""
         result = _run_inject(
             _make_app(), "http://host:8093", "/agent.jar",
             java_version_str="17.0.5"
         )
-        assert result.startswith("ERROR:"), f"Expected ERROR for JDK17, got: {result}"
+        assert result.startswith("OK:") or result == "ALREADY_INJECTED", \
+            f"Expected OK for JDK17, got: {result}"
+
+    def test_rejects_jdk6_target(self):
+        """inject_javaagent_param must return ERROR for ancient JDK 6."""
+        result = _run_inject(
+            _make_app(), "http://host:8093", "/agent.jar",
+            java_version_str="1.6.0_45"
+        )
+        assert result.startswith("ERROR:"), f"Expected ERROR for JDK6, got: {result}"
 
     def test_accepts_jdk8_target(self):
         """inject_javaagent_param must proceed normally for JDK 8 (1.8.x)."""
@@ -308,23 +317,73 @@ class TestDetectJavaVersion:
             ver = detect_java_version(MagicMock())
         assert ver is None
 
+    def test_detect_prefers_running_jvm_binary_over_host_default_java(self):
+        """Use the actual running JVM binary when host default java points to JDK11."""
+        from integration.ssh_executor import detect_java_version
+
+        def fake_run(app_, cmd, timeout=30):
+            if "pgrep -f" in cmd:
+                return (0, "4321\n", "")
+            if "readlink -f /proc/4321/exe" in cmd:
+                return (0, "/usr/lib/jvm/java-8-openjdk/bin/java\n", "")
+            if "/usr/lib/jvm/java-8-openjdk/bin/java" in cmd and "-version" in cmd:
+                return (0, 'openjdk version "1.8.0_402" 2024-01-16\n', "")
+            if "java -version" in cmd:
+                return (0, 'openjdk version "11.0.30" 2026-01-20\n', "")
+            return (0, "", "")
+
+        app = _make_app()
+        app.jvm_process_name = "demo-service"
+        with patch("integration.ssh_executor.run_command", side_effect=fake_run), \
+             patch("integration.ssh_executor.discover_pid", return_value=4321):
+            ver = detect_java_version(app)
+        assert ver == "1.8.0_402"
+
+    def test_detect_uses_java_home_from_startup_script(self):
+        """Parse JAVA_HOME from the startup script before falling back to host default java."""
+        from integration.ssh_executor import detect_java_version
+
+        script = """
+export JAVA_HOME=/usr/lib/jvm/java-8-openjdk
+exec $JAVA_HOME/bin/java -jar app.jar
+"""
+
+        def fake_run(app_, cmd, timeout=30):
+            if "pgrep -f" in cmd:
+                return (0, "", "")
+            if "find ~" in cmd or "ls ~" in cmd:
+                return (0, "/home/ubuntu/start.sh\n", "")
+            if cmd.startswith("cat "):
+                return (0, script, "")
+            if "/usr/lib/jvm/java-8-openjdk/bin/java" in cmd and "-version" in cmd:
+                return (0, 'openjdk version "1.8.0_402" 2024-01-16\n', "")
+            if "java -version" in cmd:
+                return (0, 'openjdk version "11.0.30" 2026-01-20\n', "")
+            return (0, "", "")
+
+        app = _make_app()
+        app.jvm_process_name = "demo-service"
+        with patch("integration.ssh_executor.run_command", side_effect=fake_run), \
+             patch("integration.ssh_executor.discover_pid", return_value=None):
+            ver = detect_java_version(app)
+        assert ver == "1.8.0_402"
+
 
 # ---------------------------------------------------------------------------
 # Integration test: mount-agent API returns "mounting" and logs JDK error
 # ---------------------------------------------------------------------------
 
-def test_mount_agent_sets_error_status_for_non_jdk8(client, admin_headers, created_app):
+def test_mount_agent_sets_error_status_for_unsupported_jdk(client, admin_headers, created_app):
     """
-    When the target JVM is not JDK8, mount-agent API should still return 200
-    (it's a background task), and the agent_status should eventually be 'error'.
-    We mock the background work synchronously to verify the status transition.
+    When the target JVM is an unsupported version (e.g. JDK 6), mount-agent API
+    should still return 200 (background task), and agent_status should be 'error'.
     """
     app_id = created_app["id"]
 
     with patch("integration.ssh_executor.upload_arex_agent", return_value=None), \
          patch(
              "integration.ssh_executor.inject_javaagent_param",
-             return_value="ERROR: JDK version 11.0.18 is not JDK 8 — use the correct AREX agent JAR",
+             return_value="ERROR: JDK version 1.6.0_45 is not supported — AREX agent requires JDK 8 or JDK 11",
          ):
         resp = client.post(
             f"/api/v1/applications/{app_id}/mount-agent",
@@ -334,3 +393,22 @@ def test_mount_agent_sets_error_status_for_non_jdk8(client, admin_headers, creat
     # The endpoint immediately returns "mounting" (background task)
     assert resp.status_code == 200
     assert resp.json()["status"] == "mounting"
+
+
+def test_mount_agent_prefers_arex_agent_storage_proxy_url(client, admin_headers, created_app):
+    """Mount flow should inject the dedicated agent/proxy URL when configured."""
+    from config import settings
+
+    app_id = created_app["id"]
+
+    with patch.object(settings, "arex_agent_storage_url", "http://recorder-proxy:8000"), \
+         patch("integration.ssh_executor.upload_arex_agent", return_value=None), \
+         patch("integration.ssh_executor.inject_javaagent_param", return_value="ALREADY_INJECTED") as inject_mock:
+        resp = client.post(
+            f"/api/v1/applications/{app_id}/mount-agent",
+            headers=admin_headers,
+        )
+
+    assert resp.status_code == 200
+    inject_mock.assert_called_once()
+    assert inject_mock.call_args.args[1] == "http://recorder-proxy:8000"

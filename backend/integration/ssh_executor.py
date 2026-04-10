@@ -4,6 +4,7 @@ All methods are sync (run in thread pool via asyncio.to_thread).
 """
 import logging
 import re
+import shlex
 import time
 from pathlib import Path
 import paramiko
@@ -163,22 +164,91 @@ def upload_arex_agent(app: Application, local_agent_jar_path: str) -> None:
         client.close()
 
 
-def detect_java_version(app: Application) -> str | None:
-    """Detect the Java version on the target host.
+def _extract_java_version(output: str) -> str | None:
+    """Extract a Java version string from `java -version` output."""
+    match = re.search(r'"([^"]+)"', output)
+    if match:
+        return match.group(1)
+    return output or None
+
+
+def _detect_java_version_with_command(app: Application, command: str) -> str | None:
+    """Run a remote Java command and parse the first version line."""
+    _, out, err = run_command(app, command)
+    output = (out + err).strip()
+    return _extract_java_version(output)
+
+
+def _find_startup_script(app: Application) -> str | None:
+    """Find the target JVM startup script, if present."""
+    _, out1, _ = run_command(
+        app,
+        'find ~ -maxdepth 3 \\( -name "start.sh" -o -name "startup.sh" \\) 2>/dev/null | head -1',
+    )
+    script_path = out1.strip()
+    if script_path:
+        return script_path
+
+    _, out2, _ = run_command(
+        app,
+        'ls ~/bin/start.sh ~/start.sh 2>/dev/null | head -1',
+    )
+    script_path = out2.strip()
+    return script_path or None
+
+
+def detect_java_version(app: Application, script_path: str | None = None) -> str | None:
+    """Detect the Java version actually used by the target service.
+
+    Detection order:
+    1. Running JVM binary (`/proc/<pid>/exe`) if the target process is already up.
+    2. `JAVA_HOME` or explicit java binary found in the startup script.
+    3. Fallback to the host default `java -version`.
 
     Returns a string like "1.8.0_362" (JDK8), "11.0.18" (JDK11), or None on failure.
     """
     try:
-        _, out, err = run_command(app, "java -version 2>&1 | head -1")
-        # java -version prints to stderr; redirect above captures it in stdout
-        output = (out + err).strip()
-        # Typical outputs:
-        #   openjdk version "1.8.0_362" 2023-01-17
-        #   java version "11.0.18" 2023-01-17
-        match = re.search(r'"([^"]+)"', output)
-        if match:
-            return match.group(1)
-        return output or None
+        pid = discover_pid(app)
+        if pid is not None:
+            _, out, err = run_command(app, f"readlink -f /proc/{pid}/exe")
+            java_bin = (out + err).strip()
+            if java_bin.endswith("/java"):
+                detected = _detect_java_version_with_command(
+                    app, f"{shlex.quote(java_bin)} -version 2>&1 | head -1"
+                )
+                if detected:
+                    return detected
+
+        if script_path is None:
+            script_path = _find_startup_script(app)
+
+        if script_path:
+            _, script_content, _ = run_command(app, f"cat {shlex.quote(script_path)}")
+
+            java_home_match = re.search(
+                r'^\s*(?:export\s+)?JAVA_HOME\s*=\s*["\']?([^\s"\']+)["\']?',
+                script_content,
+                re.MULTILINE,
+            )
+            if java_home_match:
+                java_home = java_home_match.group(1).strip()
+                if java_home:
+                    detected = _detect_java_version_with_command(
+                        app, f"{shlex.quote(java_home + '/bin/java')} -version 2>&1 | head -1"
+                    )
+                    if detected:
+                        return detected
+
+            explicit_java_match = re.search(r'(/[^ \t\r\n;|&]+/bin/java)\b', script_content)
+            if explicit_java_match:
+                java_bin = explicit_java_match.group(1)
+                detected = _detect_java_version_with_command(
+                    app, f"{shlex.quote(java_bin)} -version 2>&1 | head -1"
+                )
+                if detected:
+                    return detected
+
+        return _detect_java_version_with_command(app, "java -version 2>&1 | head -1")
     except Exception as e:
         logger.warning("detect_java_version failed: %s", e)
         return None
@@ -191,38 +261,37 @@ def inject_javaagent_param(app: Application, arex_storage_url: str, agent_remote
       "OK: injected into {script_path}"
       "ALREADY_INJECTED"
       "NOT_FOUND: no startup script found at ~/start.sh or ~/bin/start.sh"
-      "ERROR: JDK version {ver} is not JDK 8 — use the correct AREX agent JAR"
+      "ERROR: JDK version {ver} is not supported — AREX agent requires JDK 8 or JDK 11"
     """
-    # Step 0: verify target JVM is JDK 8
-    java_ver = detect_java_version(app)
+    script_path = _find_startup_script(app)
+
+    # Step 0: verify target JVM version is compatible with AREX agent.
+    # AREX agent supports JDK 8 (1.8.x) and JDK 11 (11.x).
+    # JDK 17+ may work but is untested; JDK 6/7 are not supported.
+    java_ver = detect_java_version(app, script_path=script_path)
     if java_ver:
-        # JDK8 reports version strings starting with "1.8."
-        # JDK11+ reports "11.", "17.", etc.
-        if not java_ver.startswith("1.8."):
+        supported = (
+            java_ver.startswith("1.8.")   # JDK 8
+            or java_ver.startswith("11.") # JDK 11
+            or java_ver.startswith("17.") # JDK 17 (experimental)
+        )
+        if not supported:
             logger.warning(
-                "inject_javaagent_param: target JVM is %s, expected JDK 8 (1.8.x)", java_ver
+                "inject_javaagent_param: target JVM is %s, "
+                "AREX agent requires JDK 8 (1.8.x) or JDK 11 (11.x)", java_ver
             )
-            return f"ERROR: JDK version {java_ver} is not JDK 8 — use the correct AREX agent JAR"
+            return (
+                f"ERROR: JDK version {java_ver} is not supported — "
+                "AREX agent requires JDK 8 or JDK 11"
+            )
+        logger.info("inject_javaagent_param: target JVM detected as %s", java_ver)
 
     # Step 1: find the startup script
-    _, out1, _ = run_command(
-        app,
-        'find ~ -maxdepth 3 -name "start.sh" -o -name "startup.sh" 2>/dev/null | head -1',
-    )
-    script_path = out1.strip()
-
-    if not script_path:
-        _, out2, _ = run_command(
-            app,
-            'ls ~/bin/start.sh ~/start.sh 2>/dev/null | head -1',
-        )
-        script_path = out2.strip()
-
     if not script_path:
         return "NOT_FOUND: no startup script found at ~/start.sh or ~/bin/start.sh"
 
     # Step 2: read the script content
-    _, script_content, _ = run_command(app, f"cat {script_path}")
+    _, script_content, _ = run_command(app, f"cat {shlex.quote(script_path)}")
 
     # Step 3: check if already injected
     if "-javaagent" in script_content:
@@ -255,7 +324,7 @@ def inject_javaagent_param(app: Application, arex_storage_url: str, agent_remote
 
     # Step 5: inject into the java command line via sed
     escaped_param = javaagent_param.replace('\\', '\\\\').replace('/', '\\/').replace('&', '\\&')
-    sed_cmd = f"sed -i 's/java /java {escaped_param} /' {script_path}"
+    sed_cmd = f"sed -i 's/java /java {escaped_param} /' {shlex.quote(script_path)}"
     exit_code, _, sed_err = run_command(app, sed_cmd)
     if exit_code != 0:
         logger.warning("inject_javaagent_param: sed failed (exit %d): %s", exit_code, sed_err)

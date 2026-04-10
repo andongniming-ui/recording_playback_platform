@@ -1,1 +1,0 @@
-import{a as r}from"./index-DTEWPgGI.js";const t={list:e=>r.get("/compare-rules",{params:e}),create:e=>r.post("/compare-rules",e),update:(e,p)=>r.put(`/compare-rules/${e}`,p),delete:e=>r.delete(`/compare-rules/${e}`)};export{t as c};

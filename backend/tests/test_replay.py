@@ -155,6 +155,97 @@ def test_replay_job_fields(client, admin_headers, tc_payload):
 
 
 @pytest.mark.asyncio
+async def test_run_replay_job_applies_active_compare_rules(client, admin_headers, created_app):
+    rule_resp = client.post(
+        "/api/v1/compare-rules",
+        json={
+            "name": "ignore-timestamp",
+            "scope": "global",
+            "rule_type": "ignore",
+            "config": '{"path": "timestamp"}',
+            "is_active": True,
+        },
+        headers=admin_headers,
+    )
+    assert rule_resp.status_code == 201
+
+    tc_resp = client.post(
+        "/api/v1/test-cases",
+        json={
+            "name": "compare-rule-case",
+            "application_id": created_app["id"],
+            "request_method": "GET",
+            "request_uri": "/compare",
+            "expected_response": '{"timestamp": 1000, "value": "ok"}',
+        },
+        headers=admin_headers,
+    )
+    assert tc_resp.status_code == 201
+    tc = tc_resp.json()
+
+    job = _create_replay_job(client, admin_headers, [tc["id"]], application_id=created_app["id"]).json()
+
+    class DummyResponse:
+        status_code = 200
+        text = '{"timestamp": 9999, "value": "ok"}'
+
+    request_mock = AsyncMock(return_value=DummyResponse())
+    with patch("httpx.AsyncClient.request", request_mock):
+        await run_replay_job(job["id"])
+
+    async with database.async_session_factory() as db:
+        result_row = (
+            await db.execute(select(ReplayResult).where(ReplayResult.job_id == job["id"]))
+        ).scalar_one()
+        job_row = (
+            await db.execute(select(ReplayJob).where(ReplayJob.id == job["id"]))
+        ).scalar_one()
+    assert result_row.status == "PASS"
+    assert result_row.failure_category is None
+    assert job_row.status == "DONE"
+
+
+@pytest.mark.asyncio
+async def test_run_replay_job_fails_on_expected_status_mismatch(client, admin_headers, created_app):
+    tc_resp = client.post(
+        "/api/v1/test-cases",
+        json={
+            "name": "status-mismatch-case",
+            "application_id": created_app["id"],
+            "request_method": "GET",
+            "request_uri": "/status",
+            "expected_status": 201,
+            "expected_response": '{"ok": true}',
+        },
+        headers=admin_headers,
+    )
+    assert tc_resp.status_code == 201
+    tc = tc_resp.json()
+
+    job = _create_replay_job(client, admin_headers, [tc["id"]], application_id=created_app["id"]).json()
+
+    class DummyResponse:
+        status_code = 200
+        text = '{"ok": true}'
+
+    request_mock = AsyncMock(return_value=DummyResponse())
+    with patch("httpx.AsyncClient.request", request_mock):
+        await run_replay_job(job["id"])
+
+    async with database.async_session_factory() as db:
+        result_row = (
+            await db.execute(select(ReplayResult).where(ReplayResult.job_id == job["id"]))
+        ).scalar_one()
+        job_row = (
+            await db.execute(select(ReplayJob).where(ReplayJob.id == job["id"]))
+        ).scalar_one()
+    assert result_row.status == "FAIL"
+    assert result_row.failure_category == "status_mismatch"
+    assert "expected 201" in (result_row.failure_reason or "")
+    assert job_row.status == "FAILED"
+
+
+@pytest.mark.asyncio
 async def test_run_replay_job_marks_job_failed_when_any_case_fails(client, admin_headers, created_app):
     tc_resp = client.post(
         "/api/v1/test-cases",

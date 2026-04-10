@@ -1,0 +1,1 @@
+import{a as t}from"./index-CXjJCXf5.js";const p={list:e=>t.get("/replays",{params:e}),create:e=>t.post("/replays",e),get:e=>t.get(`/replays/${e}`),getResult:e=>t.get(`/replays/results/${e}`),getResults:(e,r)=>t.get(`/replays/${e}/results`,{params:r}),getReport:e=>t.get(`/replays/${e}/report`,{responseType:"blob"}),getReportUrl:e=>`/api/v1/replays/${e}/report`};export{p as r};

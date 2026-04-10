@@ -118,6 +118,19 @@ async def get_replay_job(
     return job
 
 
+@router.get("/results/{result_id}", response_model=ReplayResultOut)
+async def get_replay_result(
+    result_id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_viewer),
+):
+    result = await db.execute(select(ReplayResult).where(ReplayResult.id == result_id))
+    replay_result = result.scalar_one_or_none()
+    if not replay_result:
+        raise HTTPException(status_code=404, detail="Replay result not found")
+    return replay_result
+
+
 @router.get("/{job_id}/results", response_model=list[ReplayResultOut])
 async def list_results(
     job_id: int,
@@ -171,6 +184,7 @@ async def get_html_report(
         "assertion_failed": "\u65ad\u8a00\u5931\u8d25",
         "status_mismatch": "\u72b6\u6001\u7801\u4e0d\u4e00\u81f4",
         "response_diff": "\u54cd\u5e94\u5185\u5bb9\u4e0d\u4e00\u81f4",
+        "performance": "\u6027\u80fd\u9608\u503c\u8d85\u9650",
         "timeout": "\u8bf7\u6c42\u8d85\u65f6",
         "connection_error": "\u8fde\u63a5\u5f02\u5e38",
         "mock_error": "Mock \u5f02\u5e38",

@@ -2,7 +2,7 @@
   <n-space vertical :size="12">
     <n-space justify="space-between">
       <n-h2 style="margin: 0">应用管理</n-h2>
-      <n-button type="primary" @click="openCreate">+ 新增应用</n-button>
+      <n-button v-if="canEdit" type="primary" @click="openCreate">+ 新增应用</n-button>
     </n-space>
 
     <n-data-table
@@ -87,6 +87,7 @@ import {
 } from 'naive-ui'
 import type { DataTableColumns, TagProps } from 'naive-ui'
 import { applicationApi } from '@/api/applications'
+import { useUserStore } from '@/store/user'
 
 type AppRow = {
   id: number
@@ -113,6 +114,8 @@ type AppForm = {
 }
 
 const message = useMessage()
+const userStore = useUserStore()
+const canEdit = userStore.role === 'admin' || userStore.role === 'editor'
 const apps = ref<AppRow[]>([])
 const loading = ref(false)
 const showModal = ref(false)
@@ -132,6 +135,9 @@ function normalizeAgentStatus(status?: string | null) {
   if (value === 'mounting') {
     return 'mounting'
   }
+  if (value === 'error') {
+    return 'error'
+  }
   return 'unknown'
 }
 
@@ -139,6 +145,7 @@ const statusTypeMap: Record<string, NonNullable<TagProps['type']>> = {
   online: 'success',
   offline: 'error',
   mounting: 'warning',
+  error: 'error',
   unknown: 'default',
 }
 
@@ -146,6 +153,7 @@ const statusLabelMap: Record<string, string> = {
   online: '已挂载',
   offline: '未挂载',
   mounting: '挂载中',
+  error: '挂载失败',
   unknown: '未知',
 }
 
@@ -181,19 +189,23 @@ const columns: DataTableColumns<AppRow> = [
     render: (row) => {
       const normalizedStatus = normalizeAgentStatus(row.agent_status)
       return h(NSpace, { size: 4 }, () => [
-        h(NButton, { size: 'tiny', onClick: () => testConn(row.id) }, () => '连接测试'),
-        normalizedStatus === 'online'
-          ? h(NButton, { size: 'tiny', type: 'warning', onClick: () => unmount(row.id) }, () => '卸载 Agent')
-          : h(NButton, { size: 'tiny', type: 'info', onClick: () => mount(row.id) }, () => '挂载 Agent'),
-        h(NButton, { size: 'tiny', onClick: () => openEdit(row) }, () => '编辑'),
-        h(
-          NPopconfirm,
-          { onPositiveClick: () => deleteApp(row.id) },
-          {
-            default: () => '确认删除？',
-            trigger: () => h(NButton, { size: 'tiny', type: 'error' }, () => '删除'),
-          },
-        ),
+        ...(canEdit ? [
+          h(NButton, { size: 'tiny', onClick: () => testConn(row.id) }, () => '连接测试'),
+          normalizedStatus === 'online'
+            ? h(NButton, { size: 'tiny', type: 'warning', onClick: () => unmount(row.id) }, () => '卸载 Agent')
+            : h(NButton, { size: 'tiny', type: 'info', onClick: () => mount(row.id) }, () => '挂载 Agent'),
+          h(NButton, { size: 'tiny', onClick: () => openEdit(row) }, () => '编辑'),
+        ] : []),
+        ...(userStore.role === 'admin'
+          ? [h(
+              NPopconfirm,
+              { onPositiveClick: () => deleteApp(row.id) },
+              {
+                default: () => '确认删除？',
+                trigger: () => h(NButton, { size: 'tiny', type: 'error' }, () => '删除'),
+              },
+            )]
+          : []),
       ])
     },
   },
@@ -225,8 +237,9 @@ async function loadApps() {
   try {
     const res = await applicationApi.list()
     apps.value = res.data
-  } catch {
-    message.error('加载应用列表失败')
+  } catch (error: any) {
+    apps.value = []
+    message.error(error.response?.data?.detail || '加载应用列表失败')
   } finally {
     loading.value = false
   }
@@ -277,8 +290,8 @@ async function testConn(id: number) {
     } else {
       message.error(`连接失败：${res.data.message}`)
     }
-  } catch {
-    message.error('连接测试失败')
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '连接测试失败')
   }
 }
 
@@ -286,9 +299,9 @@ async function mount(id: number) {
   try {
     await applicationApi.mountAgent(id)
     message.info('Agent 挂载已启动，请稍候...')
-    setTimeout(loadApps, 3000)
-  } catch {
-    message.error('挂载失败')
+    setTimeout(() => { void loadApps() }, 3000)
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '挂载失败')
   }
 }
 
@@ -297,8 +310,8 @@ async function unmount(id: number) {
     await applicationApi.unmountAgent(id)
     message.success('Agent 已卸载')
     await loadApps()
-  } catch {
-    message.error('卸载失败')
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '卸载失败')
   }
 }
 
@@ -307,8 +320,8 @@ async function deleteApp(id: number) {
     await applicationApi.delete(id)
     message.success('删除成功')
     await loadApps()
-  } catch {
-    message.error('删除失败')
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '删除失败')
   }
 }
 

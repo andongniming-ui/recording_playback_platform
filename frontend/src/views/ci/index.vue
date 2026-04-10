@@ -98,7 +98,12 @@ const tokenColumns = [
 
 async function load() {
   loading.value = true
-  try { tokens.value = (await ciApi.listTokens()).data } finally { loading.value = false }
+  try {
+    tokens.value = (await ciApi.listTokens()).data
+  } catch (error: any) {
+    tokens.value = []
+    message.error(error.response?.data?.detail || '加载 Token 列表失败')
+  } finally { loading.value = false }
 }
 
 function openCreate() {
@@ -114,15 +119,18 @@ async function createToken() {
     showModal.value = false
     showToken.value = true
     await load()
-  } catch { message.error('创建失败') } finally { saving.value = false }
+  } catch (error: any) { message.error(error.response?.data?.detail || '创建失败') } finally { saving.value = false }
 }
 
 async function revokeToken(id: number) {
-  try { await ciApi.revokeToken(id); message.success('已撤销'); await load() } catch { message.error('撤销失败') }
+  try { await ciApi.revokeToken(id); message.success('已撤销'); await load() } catch (error: any) { message.error(error.response?.data?.detail || '撤销失败') }
 }
 
 function copyToken() {
-  navigator.clipboard.writeText(newToken.value).then(() => message.success('已复制到剪贴板'))
+  navigator.clipboard
+    .writeText(newToken.value)
+    .then(() => message.success('已复制到剪贴板'))
+    .catch(() => message.error('复制失败，请手动复制'))
 }
 
 onMounted(load)

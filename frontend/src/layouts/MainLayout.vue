@@ -18,7 +18,7 @@
         :collapsed="collapsed"
         :collapsed-width="64"
         :collapsed-icon-size="22"
-        :options="menuOptions"
+        :options="visibleMenuOptions"
         :value="activeKey"
         @update:value="handleMenuSelect"
       />
@@ -64,6 +64,15 @@ const menuOptions: MenuOption[] = [
   { label: '用户管理', key: 'users' },
   { label: '系统设置', key: 'settings' },
 ]
+
+const visibleMenuOptions = computed(() =>
+  menuOptions.filter((item) => {
+    if (item.key === 'users' || item.key === 'ci') {
+      return userStore.role === 'admin'
+    }
+    return true
+  }),
+)
 
 const titleMap: Record<string, string> = {
   dashboard: '仪表盘',

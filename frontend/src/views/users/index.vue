@@ -77,7 +77,12 @@ const columns = [
 
 async function load() {
   loading.value = true
-  try { users.value = (await userApi.list()).data } finally { loading.value = false }
+  try {
+    users.value = (await userApi.list()).data
+  } catch (error: any) {
+    users.value = []
+    message.error(error.response?.data?.detail || '加载用户列表失败')
+  } finally { loading.value = false }
 }
 
 function openCreate() {
@@ -111,7 +116,13 @@ async function save() {
 }
 
 async function deleteUser(id: number) {
-  try { await userApi.delete(id); message.success('已删除'); await load() } catch { message.error('删除失败') }
+  try {
+    await userApi.delete(id)
+    message.success('已删除')
+    await load()
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '删除失败')
+  }
 }
 
 onMounted(load)

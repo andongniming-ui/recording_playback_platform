@@ -1,9 +1,6 @@
-__pycache__/
-*.pyc
-.env
-data/
-*.db
-node_modules/
-dist/
-.vite/
+target/
+*.log
+*.iml
+.idea/
 ssh_keys/
+.gitignore

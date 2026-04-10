@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import asyncio
@@ -27,8 +27,8 @@ async def _get_app_or_404(app_id: int, db: AsyncSession) -> Application:
 
 @router.get("", response_model=list[ApplicationOut])
 async def list_applications(
-    skip: int = 0,
-    limit: int = 20,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_viewer),
 ):

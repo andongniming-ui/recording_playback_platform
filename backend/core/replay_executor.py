@@ -149,7 +149,11 @@ async def run_replay_job(job_id: int):
         job_result = await db.execute(select(ReplayJob).where(ReplayJob.id == job_id))
         job = job_result.scalar_one_or_none()
         if job:
-            job.status = "DONE"
+            # Set status to FAILED if no cases passed and there are failures/errors
+            if passed == 0 and (failed > 0 or errored > 0):
+                job.status = "FAILED"
+            else:
+                job.status = "DONE"
             job.passed = passed
             job.failed = failed
             job.errored = errored

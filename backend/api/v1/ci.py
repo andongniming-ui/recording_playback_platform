@@ -95,6 +95,12 @@ async def trigger_replay(
     ci_token: CiToken = Depends(_get_ci_token),
 ):
     """Trigger a suite replay using CI token authentication."""
+    # Enforce scope: only 'trigger' tokens can trigger replays
+    if ci_token.scope != "trigger":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="CI token scope 'trigger' is required to trigger replays",
+        )
     import asyncio
     from models.replay import ReplayJob, ReplayResult
     from core.replay_executor import run_replay_job

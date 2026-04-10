@@ -28,6 +28,18 @@ async def create_replay_job(
     if not body.case_ids:
         raise HTTPException(status_code=400, detail="case_ids must not be empty")
 
+    # Validate all case_ids exist
+    from sqlalchemy import func
+    count_result = await db.execute(
+        select(func.count()).select_from(TestCase).where(TestCase.id.in_(body.case_ids))
+    )
+    found_count = count_result.scalar()
+    if found_count != len(body.case_ids):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Some case_ids do not exist: expected {len(body.case_ids)}, found {found_count}",
+        )
+
     job = ReplayJob(
         name=body.name,
         application_id=body.application_id,

@@ -7,8 +7,24 @@ class ReplayJobCreate(BaseModel):
     name: Optional[str] = None
     application_id: Optional[int] = None
     case_ids: List[int]           # test case IDs to replay
-    concurrency: int = 5
-    timeout_ms: int = 5000
+    concurrency: int = 5           # constrained: 1..50
+    timeout_ms: int = 5000         # constrained: >= 1
+
+    from pydantic import field_validator as _fv
+
+    @_fv("concurrency")
+    @classmethod
+    def _validate_concurrency(cls, v):
+        if v < 1 or v > 50:
+            raise ValueError("concurrency must be between 1 and 50")
+        return v
+
+    @_fv("timeout_ms")
+    @classmethod
+    def _validate_timeout_ms(cls, v):
+        if v < 1:
+            raise ValueError("timeout_ms must be >= 1")
+        return v
     use_sub_invocation_mocks: bool = False
     diff_rules: Optional[str] = None       # JSON
     assertions: Optional[str] = None       # JSON

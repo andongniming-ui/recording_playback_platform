@@ -65,7 +65,7 @@ async def update_schedule(
     if not sched:
         raise HTTPException(status_code=404, detail="Schedule not found")
 
-    for field, value in body.model_dump(exclude_none=True).items():
+    for field, value in body.model_dump(exclude_unset=True).items():
         setattr(sched, field, value)
 
     await db.commit()

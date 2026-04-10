@@ -77,7 +77,7 @@ async def update_suite(
     suite = result.scalar_one_or_none()
     if not suite:
         raise HTTPException(status_code=404, detail="Suite not found")
-    for field, value in body.model_dump(exclude_none=True).items():
+    for field, value in body.model_dump(exclude_unset=True).items():
         setattr(suite, field, value)
     await db.commit()
     await db.refresh(suite)

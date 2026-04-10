@@ -1,8 +1,8 @@
 # AREX Recorder Platform
 
-基于 [AREX](https://github.com/arextest/arex-agent-java) 框架的完整录制回放管理平台，适用于 Java JDK11 + Spring Boot + MySQL 技术栈。
+基于 [AREX](https://github.com/arextest/arex-agent-java) 框架的完整录制回放管理平台，适用于 Java JDK8 + Spring Boot + MySQL 技术栈。
 
-A full-featured AREX recording & replay management platform for Java JDK11 + Spring Boot + MySQL systems.
+A full-featured AREX recording & replay management platform for Java JDK8 + Spring Boot + MySQL systems.
 
 ---
 
@@ -119,7 +119,7 @@ docker-compose up -d --build
 ## 系统架构 / Architecture
 
 ```
-[目标 SpringBoot 服务 (JDK11)]
+[目标 SpringBoot 服务 (JDK8)]
         ↕ JVM Agent
 [arex-agent.jar]  ←SSH挂载← [arex-recorder backend]
         ↓ 录制数据上报

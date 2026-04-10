@@ -1,19 +1,19 @@
 """Replay job management API."""
 import asyncio
-import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_db, async_session_factory
+from core.replay_context import infer_application_id_for_case_ids
+from core.replay_executor import register_ws, unregister_ws
+from core.security import require_editor, require_viewer
+from database import async_session_factory, get_db
 from models.replay import ReplayJob, ReplayResult
 from models.test_case import TestCase
 from schemas.replay import ReplayJobCreate, ReplayJobOut, ReplayResultOut
-from core.security import require_viewer, require_editor, get_current_user
-from core.replay_executor import run_replay_job, register_ws, unregister_ws
 
 router = APIRouter(prefix="/replays", tags=["replays"])
 
@@ -28,8 +28,8 @@ async def create_replay_job(
     if not body.case_ids:
         raise HTTPException(status_code=400, detail="case_ids must not be empty")
 
-    # Validate all case_ids exist
     from sqlalchemy import func
+
     count_result = await db.execute(
         select(func.count()).select_from(TestCase).where(TestCase.id.in_(body.case_ids))
     )
@@ -40,9 +40,23 @@ async def create_replay_job(
             detail=f"Some case_ids do not exist: expected {len(body.case_ids)}, found {found_count}",
         )
 
+    try:
+        inferred_application_id = await infer_application_id_for_case_ids(db, body.case_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    application_id = body.application_id
+    if inferred_application_id is not None:
+        if application_id is not None and application_id != inferred_application_id:
+            raise HTTPException(
+                status_code=400,
+                detail="application_id does not match the selected test cases",
+            )
+        application_id = inferred_application_id
+
     job = ReplayJob(
         name=body.name,
-        application_id=body.application_id,
+        application_id=application_id,
         status="PENDING",
         concurrency=body.concurrency,
         timeout_ms=body.timeout_ms,
@@ -58,20 +72,20 @@ async def create_replay_job(
     await db.commit()
     await db.refresh(job)
 
-    # Pre-create result placeholders so executor can find case_ids
     for case_id in body.case_ids:
-        r = ReplayResult(
-            job_id=job.id,
-            test_case_id=case_id,
-            status="PENDING",
-            is_pass=False,
+        db.add(
+            ReplayResult(
+                job_id=job.id,
+                test_case_id=case_id,
+                status="PENDING",
+                is_pass=False,
+            )
         )
-        db.add(r)
     await db.commit()
 
-    # Start async execution
-    asyncio.create_task(run_replay_job(job.id))
+    import core.replay_executor as replay_executor
 
+    asyncio.create_task(replay_executor.run_replay_job(job.id))
     return job
 
 
@@ -92,7 +106,11 @@ async def list_replay_jobs(
 
 
 @router.get("/{job_id}", response_model=ReplayJobOut)
-async def get_replay_job(job_id: int, db: AsyncSession = Depends(get_db), _=Depends(require_viewer)):
+async def get_replay_job(
+    job_id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_viewer),
+):
     result = await db.execute(select(ReplayJob).where(ReplayJob.id == job_id))
     job = result.scalar_one_or_none()
     if not job:
@@ -118,7 +136,11 @@ async def list_results(
 
 
 @router.get("/{job_id}/report", response_class=HTMLResponse)
-async def get_html_report(job_id: int, db: AsyncSession = Depends(get_db), _=Depends(require_viewer)):
+async def get_html_report(
+    job_id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_viewer),
+):
     """Generate a standalone HTML report for a replay job."""
     job_result = await db.execute(select(ReplayJob).where(ReplayJob.id == job_id))
     job = job_result.scalar_one_or_none()
@@ -130,26 +152,49 @@ async def get_html_report(job_id: int, db: AsyncSession = Depends(get_db), _=Dep
     )
     results = results_query.scalars().all()
 
-    pass_rate = f"{(job.passed / job.total * 100):.1f}%" if job.total > 0 else "N/A"
+    pass_rate = f"{(job.passed / job.total * 100):.1f}%" if job.total > 0 else "-"
+    job_status_label = {
+        "PENDING": "\u5f85\u6267\u884c",
+        "RUNNING": "\u8fd0\u884c\u4e2d",
+        "DONE": "\u5df2\u5b8c\u6210",
+        "FAILED": "\u5931\u8d25",
+        "CANCELLED": "\u5df2\u53d6\u6d88",
+    }.get(job.status, job.status)
+    result_status_label = {
+        "PASS": "\u901a\u8fc7",
+        "FAIL": "\u5931\u8d25",
+        "ERROR": "\u5f02\u5e38",
+        "TIMEOUT": "\u8d85\u65f6",
+        "PENDING": "\u5f85\u6267\u884c",
+    }
+    failure_type_label = {
+        "assertion_failed": "\u65ad\u8a00\u5931\u8d25",
+        "status_mismatch": "\u72b6\u6001\u7801\u4e0d\u4e00\u81f4",
+        "response_diff": "\u54cd\u5e94\u5185\u5bb9\u4e0d\u4e00\u81f4",
+        "timeout": "\u8bf7\u6c42\u8d85\u65f6",
+        "connection_error": "\u8fde\u63a5\u5f02\u5e38",
+        "mock_error": "Mock \u5f02\u5e38",
+    }
 
     rows = ""
-    for r in results:
-        color = "green" if r.is_pass else "red"
+    for result in results:
+        color = "green" if result.is_pass else "red"
+        latency = f"{result.latency_ms}ms" if result.latency_ms is not None else "-"
         rows += f"""
         <tr>
-            <td>{r.id}</td>
-            <td>{r.request_method or '-'} {r.request_uri or '-'}</td>
-            <td style="color:{color}">{r.status}</td>
-            <td>{r.actual_status_code or '-'}</td>
-            <td>{r.latency_ms or '-'}ms</td>
-            <td>{r.failure_category or '-'}</td>
+            <td>{result.id}</td>
+            <td>{result.request_method or '-'} {result.request_uri or '-'}</td>
+            <td style="color:{color}">{result_status_label.get(result.status, result.status)}</td>
+            <td>{result.actual_status_code or '-'}</td>
+            <td>{latency}</td>
+            <td>{failure_type_label.get(result.failure_category or '', result.failure_category or '-')}</td>
         </tr>"""
 
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>AREX Recorder - Replay Report #{job_id}</title>
+    <title>AREX \u5f55\u5236\u5e73\u53f0 - \u56de\u653e\u62a5\u544a #{job_id}</title>
     <style>
         body {{ font-family: sans-serif; padding: 20px; }}
         h1 {{ color: #333; }}
@@ -161,18 +206,18 @@ async def get_html_report(job_id: int, db: AsyncSession = Depends(get_db), _=Dep
     </style>
 </head>
 <body>
-    <h1>回放报告 #{job_id}: {job.name or '-'}</h1>
+    <h1>\u56de\u653e\u62a5\u544a #{job_id}\uff1a{job.name or '-'}</h1>
     <div class="summary">
-        <strong>状态：</strong>{job.status} |
-        <strong>总数：</strong>{job.total} |
-        <strong>通过：</strong>{job.passed} |
-        <strong>失败：</strong>{job.failed} |
-        <strong>错误：</strong>{job.errored} |
-        <strong>通过率：</strong>{pass_rate}
+        <strong>\u4efb\u52a1\u72b6\u6001\uff1a</strong> {job_status_label} |
+        <strong>\u603b\u6570\uff1a</strong> {job.total} |
+        <strong>\u901a\u8fc7\uff1a</strong> {job.passed} |
+        <strong>\u5931\u8d25\uff1a</strong> {job.failed} |
+        <strong>\u5f02\u5e38\uff1a</strong> {job.errored} |
+        <strong>\u901a\u8fc7\u7387\uff1a</strong> {pass_rate}
     </div>
     <table>
         <thead>
-            <tr><th>ID</th><th>请求</th><th>状态</th><th>HTTP状态码</th><th>延迟</th><th>失败原因</th></tr>
+            <tr><th>ID</th><th>\u8bf7\u6c42\u4fe1\u606f</th><th>\u6267\u884c\u7ed3\u679c</th><th>\u54cd\u5e94\u7801</th><th>\u8017\u65f6</th><th>\u5931\u8d25\u7c7b\u578b</th></tr>
         </thead>
         <tbody>{rows}</tbody>
     </table>
@@ -187,22 +232,23 @@ async def replay_progress_ws(job_id: int, websocket: WebSocket):
     await websocket.accept()
     register_ws(job_id, websocket)
     try:
-        # Send current job state immediately
         async with async_session_factory() as db:
             result = await db.execute(select(ReplayJob).where(ReplayJob.id == job_id))
             job = result.scalar_one_or_none()
             if job:
-                await websocket.send_json({
-                    "job_id": job_id,
-                    "done": job.passed + job.failed + job.errored,
-                    "total": job.total,
-                    "passed": job.passed,
-                    "failed": job.failed,
-                    "errored": job.errored,
-                    "finished": job.status in ("DONE", "FAILED", "CANCELLED"),
-                })
+                await websocket.send_json(
+                    {
+                        "job_id": job_id,
+                        "done": job.passed + job.failed + job.errored,
+                        "total": job.total,
+                        "passed": job.passed,
+                        "failed": job.failed,
+                        "errored": job.errored,
+                        "finished": job.status in ("DONE", "FAILED", "CANCELLED"),
+                    }
+                )
         while True:
-            await websocket.receive_text()  # keep alive
+            await websocket.receive_text()
     except WebSocketDisconnect:
         pass
     finally:

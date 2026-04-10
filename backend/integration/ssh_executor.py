@@ -163,6 +163,27 @@ def upload_arex_agent(app: Application, local_agent_jar_path: str) -> None:
         client.close()
 
 
+def detect_java_version(app: Application) -> str | None:
+    """Detect the Java version on the target host.
+
+    Returns a string like "1.8.0_362" (JDK8), "11.0.18" (JDK11), or None on failure.
+    """
+    try:
+        _, out, err = run_command(app, "java -version 2>&1 | head -1")
+        # java -version prints to stderr; redirect above captures it in stdout
+        output = (out + err).strip()
+        # Typical outputs:
+        #   openjdk version "1.8.0_362" 2023-01-17
+        #   java version "11.0.18" 2023-01-17
+        match = re.search(r'"([^"]+)"', output)
+        if match:
+            return match.group(1)
+        return output or None
+    except Exception as e:
+        logger.warning("detect_java_version failed: %s", e)
+        return None
+
+
 def inject_javaagent_param(app: Application, arex_storage_url: str, agent_remote_path: str) -> str:
     """Inject -javaagent and -Darex.* params into the target JVM startup script.
 
@@ -170,7 +191,19 @@ def inject_javaagent_param(app: Application, arex_storage_url: str, agent_remote
       "OK: injected into {script_path}"
       "ALREADY_INJECTED"
       "NOT_FOUND: no startup script found at ~/start.sh or ~/bin/start.sh"
+      "ERROR: JDK version {ver} is not JDK 8 — use the correct AREX agent JAR"
     """
+    # Step 0: verify target JVM is JDK 8
+    java_ver = detect_java_version(app)
+    if java_ver:
+        # JDK8 reports version strings starting with "1.8."
+        # JDK11+ reports "11.", "17.", etc.
+        if not java_ver.startswith("1.8."):
+            logger.warning(
+                "inject_javaagent_param: target JVM is %s, expected JDK 8 (1.8.x)", java_ver
+            )
+            return f"ERROR: JDK version {java_ver} is not JDK 8 — use the correct AREX agent JAR"
+
     # Step 1: find the startup script
     _, out1, _ = run_command(
         app,
@@ -196,6 +229,10 @@ def inject_javaagent_param(app: Application, arex_storage_url: str, agent_remote
         return "ALREADY_INJECTED"
 
     # Step 4: build javaagent string
+    # Use arex_app_id as the service name if configured; fall back to app.name.
+    # arex_app_id must match the appId in arex-storage so recordings can be synced.
+    service_name = app.arex_app_id or app.name
+
     storage_netloc = re.sub(r'^https?://', '', arex_storage_url).rstrip('/')
     if ':' in storage_netloc:
         storage_host, storage_port = storage_netloc.rsplit(':', 1)
@@ -203,10 +240,17 @@ def inject_javaagent_param(app: Application, arex_storage_url: str, agent_remote
         storage_host = storage_netloc
         storage_port = "8080"
 
+    # Convert sample_rate (0.0–1.0) to integer percentage (0–100) for AREX agent.
+    sample_rate_pct = max(0, min(100, int(round(app.sample_rate * 100))))
+
+    # AREX agent requires host and port as SEPARATE system properties.
+    # Do NOT combine as "host:port" — the agent will fail to connect.
     javaagent_param = (
         f"-javaagent:{agent_remote_path}"
-        f" -Darex.service.name={app.name}"
-        f" -Darex.storage.service.host={storage_host}:{storage_port}"
+        f" -Darex.service.name={service_name}"
+        f" -Darex.storage.service.host={storage_host}"
+        f" -Darex.storage.service.port={storage_port}"
+        f" -Darex.record.rate={sample_rate_pct}"
     )
 
     # Step 5: inject into the java command line via sed

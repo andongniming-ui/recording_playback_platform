@@ -1,7 +1,7 @@
-<template>
+﻿<template>
   <n-space vertical :size="12">
     <n-space justify="space-between">
-      <n-h2 style="margin:0">应用管理</n-h2>
+      <n-h2 style="margin: 0">应用管理</n-h2>
       <n-button type="primary" @click="openCreate">+ 新增应用</n-button>
     </n-space>
 
@@ -13,25 +13,24 @@
     />
   </n-space>
 
-  <!-- 新增/编辑弹窗 -->
   <n-modal
     v-model:show="showModal"
     :title="editingId ? '编辑应用' : '新增应用'"
     preset="card"
-    style="width:600px"
+    style="width: 600px"
   >
     <n-form ref="formRef" :model="form" label-placement="left" label-width="120px">
       <n-form-item label="应用名称" path="name" :rule="{ required: true, message: '请输入应用名称' }">
-        <n-input v-model:value="form.name" placeholder="如: demo-service" />
+        <n-input v-model:value="form.name" placeholder="例如：demo-service" />
       </n-form-item>
       <n-form-item label="描述">
         <n-input v-model:value="form.description" placeholder="可选" />
       </n-form-item>
-      <n-form-item label="SSH 主机" path="ssh_host" :rule="{ required: true, message: '请输入SSH主机' }">
-        <n-input v-model:value="form.ssh_host" placeholder="IP或域名" />
+      <n-form-item label="SSH 主机" path="ssh_host" :rule="{ required: true, message: '请输入 SSH 主机' }">
+        <n-input v-model:value="form.ssh_host" placeholder="IP 或域名" />
       </n-form-item>
-      <n-form-item label="SSH 用户" path="ssh_user" :rule="{ required: true, message: '请输入SSH用户' }">
-        <n-input v-model:value="form.ssh_user" placeholder="如: ubuntu" />
+      <n-form-item label="SSH 用户" path="ssh_user" :rule="{ required: true, message: '请输入 SSH 用户' }">
+        <n-input v-model:value="form.ssh_user" placeholder="例如：ubuntu" />
       </n-form-item>
       <n-form-item label="SSH 端口">
         <n-input-number v-model:value="form.ssh_port" />
@@ -51,12 +50,12 @@
       <n-form-item label="AREX App ID">
         <n-input v-model:value="form.arex_app_id" />
       </n-form-item>
-      <n-form-item label="AREX Storage URL">
-        <n-input v-model:value="form.arex_storage_url" placeholder="留空使用全局配置" />
+      <n-form-item label="AREX Storage 地址">
+        <n-input v-model:value="form.arex_storage_url" placeholder="留空则使用全局配置" />
       </n-form-item>
       <n-form-item label="采样率">
-        <n-slider v-model:value="form.sample_rate" :min="0" :max="1" :step="0.1" style="width:200px" />
-        <n-text style="margin-left:12px">{{ form.sample_rate }}</n-text>
+        <n-slider v-model:value="form.sample_rate" :min="0" :max="1" :step="0.1" style="width: 200px" />
+        <n-text style="margin-left: 12px">{{ form.sample_rate }}</n-text>
       </n-form-item>
     </n-form>
     <template #footer>
@@ -69,57 +68,157 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, h } from 'vue'
+import { h, onMounted, ref } from 'vue'
 import {
-  NSpace, NH2, NButton, NDataTable, NModal, NForm, NFormItem, NInput,
-  NInputNumber, NSlider, NText, NTag, NPopconfirm, useMessage
+  NButton,
+  NDataTable,
+  NForm,
+  NFormItem,
+  NH2,
+  NInput,
+  NInputNumber,
+  NModal,
+  NPopconfirm,
+  NSlider,
+  NSpace,
+  NTag,
+  NText,
+  useMessage,
 } from 'naive-ui'
+import type { DataTableColumns, TagProps } from 'naive-ui'
 import { applicationApi } from '@/api/applications'
 
+type AppRow = {
+  id: number
+  name: string
+  ssh_host: string
+  service_port: number
+  agent_status?: string | null
+  created_at?: string
+}
+
+type AppForm = {
+  name: string
+  description: string
+  ssh_host: string
+  ssh_user: string
+  ssh_port: number
+  ssh_key_path: string
+  ssh_password: string
+  service_port: number
+  jvm_process_name: string
+  arex_app_id: string
+  arex_storage_url: string
+  sample_rate: number
+}
+
 const message = useMessage()
-const apps = ref<any[]>([])
+const apps = ref<AppRow[]>([])
 const loading = ref(false)
 const showModal = ref(false)
 const saving = ref(false)
 const editingId = ref<number | null>(null)
 const formRef = ref()
-const form = ref({
-  name: '', description: '', ssh_host: '', ssh_user: '', ssh_port: 22,
-  ssh_key_path: '', ssh_password: '', service_port: 8080,
-  jvm_process_name: '', arex_app_id: '', arex_storage_url: '', sample_rate: 1.0,
-})
+const form = ref<AppForm>(createEmptyForm())
 
-const statusTypeMap: Record<string, any> = {
-  online: 'success', offline: 'error', mounting: 'warning', unknown: 'default',
+function normalizeAgentStatus(status?: string | null) {
+  const value = (status || 'unknown').toLowerCase()
+  if (value === 'attached' || value === 'online' || value === 'already_injected') {
+    return 'online'
+  }
+  if (value === 'detached' || value === 'offline') {
+    return 'offline'
+  }
+  if (value === 'mounting') {
+    return 'mounting'
+  }
+  return 'unknown'
 }
 
-const columns = [
+const statusTypeMap: Record<string, NonNullable<TagProps['type']>> = {
+  online: 'success',
+  offline: 'error',
+  mounting: 'warning',
+  unknown: 'default',
+}
+
+const statusLabelMap: Record<string, string> = {
+  online: '已挂载',
+  offline: '未挂载',
+  mounting: '挂载中',
+  unknown: '未知',
+}
+
+const columns: DataTableColumns<AppRow> = [
   { title: '名称', key: 'name' },
-  { title: 'SSH主机', key: 'ssh_host' },
+  { title: 'SSH 主机', key: 'ssh_host' },
   { title: '服务端口', key: 'service_port', width: 90 },
   {
-    title: 'Agent状态', key: 'agent_status', width: 110,
-    render: (r: any) => h(NTag, {
-      type: statusTypeMap[r.agent_status] || 'default',
-      size: 'small',
-    }, () => r.agent_status || 'unknown'),
+    title: 'Agent 状态',
+    key: 'agent_status',
+    width: 110,
+    render: (row) => {
+      const normalizedStatus = normalizeAgentStatus(row.agent_status)
+      return h(
+        NTag,
+        {
+          type: statusTypeMap[normalizedStatus] || 'default',
+          size: 'small',
+        },
+        () => statusLabelMap[normalizedStatus] || '未知',
+      )
+    },
   },
-  { title: '创建时间', key: 'created_at', width: 160, render: (r: any) => r.created_at?.slice(0, 19).replace('T', ' ') },
   {
-    title: '操作', key: 'actions',
-    render: (r: any) => h(NSpace, { size: 4 }, () => [
-      h(NButton, { size: 'tiny', onClick: () => testConn(r.id) }, () => '连接测试'),
-      r.agent_status === 'online'
-        ? h(NButton, { size: 'tiny', type: 'warning', onClick: () => unmount(r.id) }, () => '卸载Agent')
-        : h(NButton, { size: 'tiny', type: 'info', onClick: () => mount(r.id) }, () => '挂载Agent'),
-      h(NButton, { size: 'tiny', onClick: () => openEdit(r) }, () => '编辑'),
-      h(NPopconfirm, { onPositiveClick: () => deleteApp(r.id) }, {
-        default: () => '确认删除?',
-        trigger: () => h(NButton, { size: 'tiny', type: 'error' }, () => '删除'),
-      }),
-    ]),
+    title: '创建时间',
+    key: 'created_at',
+    width: 160,
+    render: (row) => formatDateTime(row.created_at),
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    render: (row) => {
+      const normalizedStatus = normalizeAgentStatus(row.agent_status)
+      return h(NSpace, { size: 4 }, () => [
+        h(NButton, { size: 'tiny', onClick: () => testConn(row.id) }, () => '连接测试'),
+        normalizedStatus === 'online'
+          ? h(NButton, { size: 'tiny', type: 'warning', onClick: () => unmount(row.id) }, () => '卸载 Agent')
+          : h(NButton, { size: 'tiny', type: 'info', onClick: () => mount(row.id) }, () => '挂载 Agent'),
+        h(NButton, { size: 'tiny', onClick: () => openEdit(row) }, () => '编辑'),
+        h(
+          NPopconfirm,
+          { onPositiveClick: () => deleteApp(row.id) },
+          {
+            default: () => '确认删除？',
+            trigger: () => h(NButton, { size: 'tiny', type: 'error' }, () => '删除'),
+          },
+        ),
+      ])
+    },
   },
 ]
+
+function createEmptyForm(): AppForm {
+  return {
+    name: '',
+    description: '',
+    ssh_host: '',
+    ssh_user: '',
+    ssh_port: 22,
+    ssh_key_path: '',
+    ssh_password: '',
+    service_port: 8080,
+    jvm_process_name: '',
+    arex_app_id: '',
+    arex_storage_url: '',
+    sample_rate: 1.0,
+  }
+}
+
+function formatDateTime(value?: string) {
+  return value ? value.slice(0, 19).replace('T', ' ') : '-'
+}
 
 async function loadApps() {
   loading.value = true
@@ -134,11 +233,7 @@ async function loadApps() {
 }
 
 function resetForm() {
-  form.value = {
-    name: '', description: '', ssh_host: '', ssh_user: '', ssh_port: 22,
-    ssh_key_path: '', ssh_password: '', service_port: 8080,
-    jvm_process_name: '', arex_app_id: '', arex_storage_url: '', sample_rate: 1.0,
-  }
+  form.value = createEmptyForm()
 }
 
 function openCreate() {
@@ -147,9 +242,12 @@ function openCreate() {
   showModal.value = true
 }
 
-function openEdit(app: any) {
+function openEdit(app: Record<string, any>) {
   editingId.value = app.id
-  Object.assign(form.value, app)
+  form.value = {
+    ...createEmptyForm(),
+    ...app,
+  }
   showModal.value = true
 }
 
@@ -164,8 +262,8 @@ async function save() {
     message.success('保存成功')
     showModal.value = false
     await loadApps()
-  } catch (e: any) {
-    message.error(e.response?.data?.detail || '保存失败')
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '保存失败')
   } finally {
     saving.value = false
   }
@@ -174,8 +272,11 @@ async function save() {
 async function testConn(id: number) {
   try {
     const res = await applicationApi.testConnection(id)
-    if (res.data.success) message.success('SSH 连接成功')
-    else message.error('连接失败: ' + res.data.message)
+    if (res.data.success) {
+      message.success('SSH 连接成功')
+    } else {
+      message.error(`连接失败：${res.data.message}`)
+    }
   } catch {
     message.error('连接测试失败')
   }

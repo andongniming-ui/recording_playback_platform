@@ -1,14 +1,13 @@
-"""Test suite management API."""
-from typing import Optional
+﻿"""Test suite management API."""
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
 
+from core.replay_context import infer_application_id_for_case_ids
+from core.security import require_editor, require_viewer
 from database import get_db
 from models.suite import Suite, SuiteCase
-from models.test_case import TestCase
-from schemas.suite import SuiteCreate, SuiteUpdate, SuiteOut, SuiteWithCases, SetCasesRequest, ReorderRequest
-from core.security import require_viewer, require_editor
+from schemas.suite import ReorderRequest, SetCasesRequest, SuiteCreate, SuiteOut, SuiteUpdate, SuiteWithCases
 
 router = APIRouter(prefix="/suites", tags=["suites"])
 
@@ -62,7 +61,7 @@ async def get_suite(
         description=suite.description,
         created_at=suite.created_at,
         updated_at=suite.updated_at,
-        cases=[{"test_case_id": c.test_case_id, "order_index": c.order_index} for c in cases],
+        cases=[{"test_case_id": case.test_case_id, "order_index": case.order_index} for case in cases],
     )
 
 
@@ -106,19 +105,15 @@ async def set_suite_cases(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_editor),
 ):
-    """Replace all cases in the suite with the provided ordered list."""
     result = await db.execute(select(Suite).where(Suite.id == suite_id))
     suite = result.scalar_one_or_none()
     if not suite:
         raise HTTPException(status_code=404, detail="Suite not found")
 
-    # Delete existing
     await db.execute(delete(SuiteCase).where(SuiteCase.suite_id == suite_id))
 
-    # Re-add in order
     for idx, case_id in enumerate(body.case_ids):
-        sc = SuiteCase(suite_id=suite_id, test_case_id=case_id, order_index=idx)
-        db.add(sc)
+        db.add(SuiteCase(suite_id=suite_id, test_case_id=case_id, order_index=idx))
     await db.commit()
 
     return await get_suite(suite_id, db)
@@ -131,7 +126,6 @@ async def reorder_suite_cases(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_editor),
 ):
-    """Update order_index for existing suite cases."""
     for item in body.items:
         result = await db.execute(
             select(SuiteCase).where(
@@ -139,9 +133,9 @@ async def reorder_suite_cases(
                 SuiteCase.test_case_id == item.test_case_id,
             )
         )
-        sc = result.scalar_one_or_none()
-        if sc:
-            sc.order_index = item.order_index
+        suite_case = result.scalar_one_or_none()
+        if suite_case:
+            suite_case.order_index = item.order_index
     await db.commit()
     return {"message": "Reordered"}
 
@@ -154,8 +148,8 @@ async def run_suite(
 ):
     """Immediately run all test cases in the suite as a replay job."""
     import asyncio
+    import core.replay_executor as replay_executor
     from models.replay import ReplayJob, ReplayResult
-    from core.replay_executor import run_replay_job
 
     result = await db.execute(select(Suite).where(Suite.id == suite_id))
     suite = result.scalar_one_or_none()
@@ -171,8 +165,20 @@ async def run_suite(
     if not case_ids:
         raise HTTPException(status_code=400, detail="Suite has no test cases")
 
+    try:
+        application_id = await infer_application_id_for_case_ids(db, case_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if application_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Suite test cases must have an application_id before replay can be started",
+        )
+
     job = ReplayJob(
         name=f"Suite Run: {suite.name}",
+        application_id=application_id,
         status="PENDING",
         concurrency=5,
         timeout_ms=5000,
@@ -183,9 +189,8 @@ async def run_suite(
     await db.refresh(job)
 
     for case_id in case_ids:
-        r = ReplayResult(job_id=job.id, test_case_id=case_id, status="PENDING", is_pass=False)
-        db.add(r)
+        db.add(ReplayResult(job_id=job.id, test_case_id=case_id, status="PENDING", is_pass=False))
     await db.commit()
 
-    asyncio.create_task(run_replay_job(job.id))
+    asyncio.create_task(replay_executor.run_replay_job(job.id))
     return {"message": "Suite replay started", "job_id": job.id}

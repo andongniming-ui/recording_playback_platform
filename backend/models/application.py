@@ -22,7 +22,8 @@ class Application(Base):
     jvm_process_name: Mapped[str | None] = mapped_column(String(256))  # used to identify process
 
     agent_status: Mapped[str] = mapped_column(String(32), default="unknown")
-    # 'unknown'/'online'/'offline'/'mounting'
+    # 'unknown'/'online'/'offline'/'mounting'/'error'
+    # 'error' means mounting failed due to JDK version mismatch or fatal config error
 
     arex_storage_url: Mapped[str | None] = mapped_column(String(512))  # override global config
     arex_app_id: Mapped[str | None] = mapped_column(String(128))  # AREX application identifier

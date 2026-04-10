@@ -1,46 +1,46 @@
-<template>
+﻿<template>
   <n-space vertical :size="12">
     <n-space justify="space-between">
-      <n-h2 style="margin:0">录制中心</n-h2>
+      <n-h2 style="margin: 0">录制中心</n-h2>
       <n-button type="primary" @click="openCreateSession">+ 新建会话</n-button>
     </n-space>
 
-    <!-- 过滤 -->
     <n-space>
       <n-select
-        v-model:value="filterAppId"
+        v-model:value="filterApplicationId"
         :options="appOptions"
         clearable
-        placeholder="选择应用"
-        style="width:200px"
+        placeholder="请选择应用"
+        style="width: 220px"
         @update:value="loadSessions"
       />
       <n-input
-        v-model:value="filterUri"
+        v-model:value="sessionSearch"
         clearable
-        placeholder="URI 搜索"
-        style="width:220px"
-        @input="loadSessions"
+        placeholder="搜索会话名称或应用"
+        style="width: 240px"
       />
     </n-space>
 
-    <!-- 会话列表 -->
     <n-data-table
       :columns="sessionColumns"
-      :data="sessions"
+      :data="filteredSessions"
       :loading="sessionsLoading"
       :pagination="{ pageSize: 10 }"
     />
   </n-space>
 
-  <!-- 新建会话弹窗 -->
-  <n-modal v-model:show="showSessionModal" title="新建录制会话" preset="card" style="width:480px">
-    <n-form :model="sessionForm" label-placement="left" label-width="100px">
+  <n-modal v-model:show="showSessionModal" title="新建录制会话" preset="card" style="width: 480px">
+    <n-form :model="sessionForm" label-placement="left" label-width="120px">
       <n-form-item label="会话名称">
-        <n-input v-model:value="sessionForm.name" placeholder="可选" />
+        <n-input v-model:value="sessionForm.name" placeholder="可选，便于识别" />
       </n-form-item>
-      <n-form-item label="应用" :rule="{ required: true }">
-        <n-select v-model:value="sessionForm.app_id" :options="appOptions" placeholder="选择应用" />
+      <n-form-item label="所属应用">
+        <n-select
+          v-model:value="sessionForm.application_id"
+          :options="appOptions"
+          placeholder="请选择应用"
+        />
       </n-form-item>
     </n-form>
     <template #footer>
@@ -51,15 +51,14 @@
     </template>
   </n-modal>
 
-  <!-- 录制详情抽屉 -->
-  <n-drawer v-model:show="showRecordingDrawer" :width="700" placement="right">
-    <n-drawer-content :title="`会话 #${selectedSession?.id} 录制列表`" closable>
+  <n-drawer v-model:show="showRecordingDrawer" :width="760" placement="right">
+    <n-drawer-content :title="`会话 #${selectedSession?.id} 的录制数据`" closable>
       <n-space vertical :size="8">
         <n-input
-          v-model:value="recSearchUri"
+          v-model:value="recordingSearch"
           clearable
-          placeholder="搜索 URI"
-          style="width:100%"
+          placeholder="按请求路径搜索"
+          style="width: 100%"
         />
         <n-data-table
           :columns="recordingColumns"
@@ -72,173 +71,257 @@
     </n-drawer-content>
   </n-drawer>
 
-  <!-- 转为用例确认弹窗 -->
-  <n-modal v-model:show="showConvertModal" title="转为测试用例" preset="card" style="width:400px">
+  <n-modal v-model:show="showConvertModal" title="由录制生成测试用例" preset="card" style="width: 420px">
     <n-form :model="convertForm" label-placement="left" label-width="100px">
       <n-form-item label="用例名称">
-        <n-input v-model:value="convertForm.name" placeholder="留空自动生成" />
+        <n-input v-model:value="convertForm.name" placeholder="留空则自动生成" />
       </n-form-item>
     </n-form>
     <template #footer>
       <n-space justify="end">
         <n-button @click="showConvertModal = false">取消</n-button>
-        <n-button type="primary" :loading="converting" @click="doConvert">转换</n-button>
+        <n-button type="primary" :loading="converting" @click="doConvert">生成</n-button>
       </n-space>
     </template>
   </n-modal>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, h } from 'vue'
-import {
-  NSpace, NH2, NButton, NDataTable, NSelect, NInput, NModal, NForm, NFormItem,
-  NDrawer, NDrawerContent, NTag, NPopconfirm, useMessage
-} from 'naive-ui'
+import { computed, h, onMounted, ref } from 'vue'
+import { NButton, NDataTable, NDrawer, NDrawerContent, NH2, NForm, NFormItem, NInput, NModal, NSpace, NSelect, NTag, useMessage } from 'naive-ui'
+import type { DataTableColumns, SelectOption, TagProps } from 'naive-ui'
+import { applicationApi } from '@/api/applications'
 import { recordingApi } from '@/api/recordings'
 import { testCaseApi } from '@/api/testcases'
-import { applicationApi } from '@/api/applications'
+
+type SessionRow = {
+  id: number
+  application_id: number
+  name: string
+  status: string
+  total_count: number
+  created_at: string
+}
+
+type RecordingRow = {
+  id: number
+  request_method: string
+  request_uri: string
+  response_status: number | null
+  latency_ms: number | null
+  recorded_at: string
+}
 
 const message = useMessage()
 
-const sessions = ref<any[]>([])
+const sessions = ref<SessionRow[]>([])
 const sessionsLoading = ref(false)
-const filterAppId = ref<number | null>(null)
-const filterUri = ref('')
-const appOptions = ref<any[]>([])
+const filterApplicationId = ref<number | null>(null)
+const sessionSearch = ref('')
+const appOptions = ref<SelectOption[]>([])
+const appNameMap = ref<Record<number, string>>({})
 
 const showSessionModal = ref(false)
 const creatingSession = ref(false)
-const sessionForm = ref({ name: '', app_id: null as number | null })
+const sessionForm = ref({
+  name: '',
+  application_id: null as number | null,
+})
 
 const showRecordingDrawer = ref(false)
-const selectedSession = ref<any>(null)
-const recordings = ref<any[]>([])
+const selectedSession = ref<SessionRow | null>(null)
+const recordings = ref<RecordingRow[]>([])
 const recordingsLoading = ref(false)
-const recSearchUri = ref('')
+const recordingSearch = ref('')
 
 const showConvertModal = ref(false)
 const convertingRecordingId = ref<number | null>(null)
-const convertForm = ref({ name: '' })
 const converting = ref(false)
+const convertForm = ref({ name: '' })
 
-const filteredRecordings = computed(() =>
-  recSearchUri.value
-    ? recordings.value.filter(r => r.uri?.includes(recSearchUri.value))
-    : recordings.value
-)
+const sessionStatusTagType: Record<string, NonNullable<TagProps['type']>> = {
+  idle: 'default',
+  collecting: 'info',
+  done: 'success',
+  error: 'error',
+}
 
-const sessionColumns = [
+const sessionStatusLabelMap: Record<string, string> = {
+  idle: '待同步',
+  collecting: '采集中',
+  done: '已完成',
+  error: '异常',
+}
+
+const filteredSessions = computed(() => {
+  const keyword = sessionSearch.value.trim().toLowerCase()
+  if (!keyword) {
+    return sessions.value
+  }
+  return sessions.value.filter((session) => {
+    const appName = appNameMap.value[session.application_id] || ''
+    return session.name.toLowerCase().includes(keyword) || appName.toLowerCase().includes(keyword)
+  })
+})
+
+const filteredRecordings = computed(() => {
+  const keyword = recordingSearch.value.trim().toLowerCase()
+  if (!keyword) {
+    return recordings.value
+  }
+  return recordings.value.filter((recording) =>
+    recording.request_uri?.toLowerCase().includes(keyword),
+  )
+})
+
+const sessionColumns: DataTableColumns<SessionRow> = [
   { title: 'ID', key: 'id', width: 60 },
-  { title: '会话名', key: 'name', ellipsis: { tooltip: true } },
-  { title: '应用', key: 'app_name' },
+  { title: '会话名称', key: 'name', ellipsis: { tooltip: true } },
   {
-    title: '状态', key: 'status', width: 90,
-    render: (r: any) => h(NTag, {
-      type: r.status === 'active' ? 'success' : 'default',
-      size: 'small',
-    }, () => r.status || '-'),
-  },
-  { title: '录制数', key: 'recording_count', width: 80 },
-  {
-    title: '创建时间', key: 'created_at', width: 160,
-    render: (r: any) => r.created_at?.slice(0, 19).replace('T', ' '),
+    title: '所属应用',
+    key: 'application_id',
+    render: (row) => appNameMap.value[row.application_id] || `#${row.application_id}`,
   },
   {
-    title: '操作', key: 'actions',
-    render: (r: any) => h(NSpace, { size: 4 }, () => [
-      h(NButton, { size: 'tiny', type: 'info', onClick: () => syncSession(r.id) }, () => '同步'),
-      h(NButton, { size: 'tiny', onClick: () => viewRecordings(r) }, () => '查看录制'),
-    ]),
+    title: '状态',
+    key: 'status',
+    width: 100,
+    render: (row) => h(
+      NTag,
+      { type: sessionStatusTagType[row.status] ?? 'default', size: 'small' },
+      () => sessionStatusLabelMap[row.status] || row.status,
+    ),
+  },
+  { title: '录制数', key: 'total_count', width: 100 },
+  {
+    title: '创建时间',
+    key: 'created_at',
+    width: 170,
+    render: (row) => formatDateTime(row.created_at),
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    render: (row) =>
+      h(NSpace, { size: 4 }, () => [
+        h(NButton, { size: 'tiny', type: 'info', onClick: () => syncSession(row.id) }, () => '同步'),
+        h(NButton, { size: 'tiny', onClick: () => viewRecordings(row) }, () => '查看录制'),
+      ]),
   },
 ]
 
-const recordingColumns = [
+const recordingColumns: DataTableColumns<RecordingRow> = [
   {
-    title: '请求', key: 'uri',
-    render: (r: any) => h('span', [
-      h('b', r.method || 'GET'),
-      ' ',
-      r.uri,
-    ]),
+    title: '请求信息',
+    key: 'request_uri',
+    render: (row) =>
+      h('span', [
+        h('b', row.request_method || 'GET'),
+        ' ',
+        row.request_uri,
+      ]),
   },
-  { title: '状态码', key: 'status_code', width: 75 },
-  { title: '延迟(ms)', key: 'latency_ms', width: 85 },
+  { title: '响应码', key: 'response_status', width: 80 },
   {
-    title: '时间', key: 'created_at', width: 150,
-    render: (r: any) => r.created_at?.slice(0, 19).replace('T', ' '),
+    title: '耗时',
+    key: 'latency_ms',
+    width: 90,
+    render: (row) => (row.latency_ms != null ? `${row.latency_ms}ms` : '-'),
   },
   {
-    title: '操作', key: 'actions', width: 90,
-    render: (r: any) => h(NButton, { size: 'tiny', type: 'primary', onClick: () => openConvert(r.id) }, () => '转为用例'),
+    title: '录制时间',
+    key: 'recorded_at',
+    width: 170,
+    render: (row) => formatDateTime(row.recorded_at),
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 100,
+    render: (row) => h(NButton, { size: 'tiny', type: 'primary', onClick: () => openConvert(row.id) }, () => '生成用例'),
   },
 ]
+
+function formatDateTime(value?: string) {
+  return value ? value.slice(0, 19).replace('T', ' ') : '-'
+}
 
 async function loadApps() {
   try {
     const res = await applicationApi.list()
-    appOptions.value = res.data.map((a: any) => ({ label: a.name, value: a.id }))
+    appOptions.value = res.data.map((app: { id: number; name: string }) => ({
+      label: app.name,
+      value: app.id,
+    }))
+    appNameMap.value = Object.fromEntries(res.data.map((app: { id: number; name: string }) => [app.id, app.name]))
   } catch {
-    // ignore
+    message.error('加载应用列表失败')
   }
 }
 
 async function loadSessions() {
   sessionsLoading.value = true
   try {
-    const params: any = {}
-    if (filterAppId.value) params.app_id = filterAppId.value
+    const params: Record<string, number> = {}
+    if (filterApplicationId.value != null) {
+      params.application_id = filterApplicationId.value
+    }
     const res = await recordingApi.listSessions(params)
     sessions.value = res.data
   } catch {
-    message.error('加载会话失败')
+    message.error('加载录制会话失败')
   } finally {
     sessionsLoading.value = false
   }
 }
 
 function openCreateSession() {
-  sessionForm.value = { name: '', app_id: null }
+  sessionForm.value = {
+    name: '',
+    application_id: null,
+  }
   showSessionModal.value = true
 }
 
 async function createSession() {
-  if (!sessionForm.value.app_id) {
-    message.warning('请选择应用')
+  if (sessionForm.value.application_id == null) {
+    message.warning('请先选择应用')
     return
   }
+
   creatingSession.value = true
   try {
     await recordingApi.createSession(sessionForm.value)
-    message.success('会话创建成功')
+    message.success('录制会话创建成功')
     showSessionModal.value = false
     await loadSessions()
-  } catch (e: any) {
-    message.error(e.response?.data?.detail || '创建失败')
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '创建录制会话失败')
   } finally {
     creatingSession.value = false
   }
 }
 
-async function syncSession(id: number) {
+async function syncSession(sessionId: number) {
   try {
-    await recordingApi.syncSession(id, {})
-    message.success('同步已触发')
+    await recordingApi.syncSession(sessionId, {})
+    message.success('已开始同步录制数据')
     await loadSessions()
   } catch {
-    message.error('同步失败')
+    message.error('启动录制同步失败')
   }
 }
 
-async function viewRecordings(session: any) {
+async function viewRecordings(session: SessionRow) {
   selectedSession.value = session
   showRecordingDrawer.value = true
   recordingsLoading.value = true
-  recSearchUri.value = ''
+  recordingSearch.value = ''
   try {
     const res = await recordingApi.listRecordings(session.id)
     recordings.value = res.data
   } catch {
-    message.error('加载录制列表失败')
+    message.error('加载录制数据失败')
   } finally {
     recordingsLoading.value = false
   }
@@ -251,17 +334,20 @@ function openConvert(recordingId: number) {
 }
 
 async function doConvert() {
-  if (!convertingRecordingId.value) return
+  if (convertingRecordingId.value == null) {
+    return
+  }
+
   converting.value = true
   try {
     await testCaseApi.fromRecording({
       recording_id: convertingRecordingId.value,
       name: convertForm.value.name || undefined,
     })
-    message.success('已转为测试用例')
+    message.success('已由录制生成测试用例')
     showConvertModal.value = false
-  } catch (e: any) {
-    message.error(e.response?.data?.detail || '转换失败')
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '生成测试用例失败')
   } finally {
     converting.value = false
   }

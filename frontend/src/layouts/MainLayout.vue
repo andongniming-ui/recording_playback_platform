@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <n-layout has-sider style="height: 100vh">
     <n-layout-sider
       bordered
@@ -10,9 +10,9 @@
       @collapse="collapsed = true"
       @expand="collapsed = false"
     >
-      <div class="logo" style="padding: 16px; font-weight: bold; font-size: 16px; color: #18a058">
-        <span v-if="!collapsed">AREX Recorder</span>
-        <span v-else>AR</span>
+      <div class="logo">
+        <span v-if="!collapsed">AREX 录制平台</span>
+        <span v-else>AREX</span>
       </div>
       <n-menu
         :collapsed="collapsed"
@@ -24,11 +24,11 @@
       />
     </n-layout-sider>
     <n-layout>
-      <n-layout-header bordered style="height: 56px; padding: 0 24px; display: flex; align-items: center; justify-content: space-between">
-        <span style="font-size: 16px; font-weight: 500">{{ currentTitle }}</span>
+      <n-layout-header class="header" bordered>
+        <span class="title">{{ currentTitle }}</span>
         <n-space>
           <n-text>{{ userStore.username }}</n-text>
-          <n-button text @click="logout">退出</n-button>
+          <n-button text @click="logout">退出登录</n-button>
         </n-space>
       </n-layout-header>
       <n-layout-content style="padding: 24px; overflow: auto">
@@ -39,11 +39,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
-import { NLayout, NLayoutSider, NLayoutHeader, NLayoutContent, NMenu, NSpace, NText, NButton } from 'naive-ui'
+import { computed, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { NButton, NLayout, NLayoutContent, NLayoutHeader, NLayoutSider, NMenu, NSpace, NText } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
-import { h } from 'vue'
 import { useUserStore } from '@/store/user'
 
 const router = useRouter()
@@ -52,13 +51,13 @@ const userStore = useUserStore()
 const collapsed = ref(false)
 
 const menuOptions: MenuOption[] = [
-  { label: '数据大盘', key: 'dashboard' },
+  { label: '仪表盘', key: 'dashboard' },
   { label: '应用管理', key: 'applications' },
   { label: '录制中心', key: 'recording' },
-  { label: '测试用例库', key: 'testcases' },
-  { label: '回放中心', key: 'replay' },
-  { label: '差异对比', key: 'compare' },
-  { label: '结果分析', key: 'results' },
+  { label: '测试用例', key: 'testcases' },
+  { label: '回放执行', key: 'replay' },
+  { label: '对比规则', key: 'compare' },
+  { label: '执行结果', key: 'results' },
   { label: '定时任务', key: 'schedule' },
   { label: '测试套件', key: 'suites' },
   { label: 'CI 集成', key: 'ci' },
@@ -67,13 +66,13 @@ const menuOptions: MenuOption[] = [
 ]
 
 const titleMap: Record<string, string> = {
-  dashboard: '数据大盘',
+  dashboard: '仪表盘',
   applications: '应用管理',
   recording: '录制中心',
-  testcases: '测试用例库',
-  replay: '回放中心',
-  compare: '差异对比',
-  results: '结果分析',
+  testcases: '测试用例',
+  replay: '回放执行',
+  compare: '对比规则',
+  results: '执行结果',
   schedule: '定时任务',
   suites: '测试套件',
   ci: 'CI 集成',
@@ -82,10 +81,10 @@ const titleMap: Record<string, string> = {
 }
 
 const activeKey = computed(() => route.path.split('/')[1] || 'dashboard')
-const currentTitle = computed(() => titleMap[activeKey.value] || 'AREX Recorder')
+const currentTitle = computed(() => titleMap[activeKey.value] || 'AREX 录制平台')
 
 function handleMenuSelect(key: string) {
-  router.push('/' + key)
+  router.push(`/${key}`)
 }
 
 function logout() {
@@ -93,3 +92,25 @@ function logout() {
   router.push('/login')
 }
 </script>
+
+<style scoped>
+.logo {
+  padding: 16px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #18a058;
+}
+
+.header {
+  height: 56px;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 600;
+}
+</style>

@@ -2,6 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 
 from database import get_db
 from models.application import Application
@@ -124,8 +127,16 @@ async def mount_agent(
             result = await asyncio.to_thread(
                 ssh_executor.inject_javaagent_param, app, arex_url, remote_agent_path
             )
-            new_status = "online" if result.startswith("OK") or result == "ALREADY_INJECTED" else "offline"
-        except Exception:
+            if result.startswith("ERROR:"):
+                # JDK version mismatch or other fatal configuration error
+                new_status = "error"
+                logger.warning("mount_agent [app=%d]: %s", app_id, result)
+            elif result.startswith("OK") or result == "ALREADY_INJECTED":
+                new_status = "online"
+            else:
+                new_status = "offline"
+        except Exception as exc:
+            logger.exception("mount_agent [app=%d] unexpected error: %s", app_id, exc)
             new_status = "offline"
 
         async with async_session_factory() as db2:

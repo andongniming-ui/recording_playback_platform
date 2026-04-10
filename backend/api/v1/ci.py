@@ -1,44 +1,43 @@
-"""CI/CD integration API: token management, trigger replay, poll result."""
+﻿"""CI/CD integration API: token management, trigger replay, poll result."""
 import secrets
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Header, status, Query
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.replay_context import infer_application_id_for_case_ids
+from core.security import get_password_hash, require_admin, verify_password
 from database import get_db
 from models.ci import CiToken
 from models.replay import ReplayJob, ReplayResult
 from models.suite import Suite, SuiteCase
-from schemas.ci import CiTokenCreate, CiTokenOut, CiTriggerRequest, CiResultResponse
-from core.security import require_admin, require_viewer, get_password_hash, verify_password
+from schemas.ci import CiResultResponse, CiTokenCreate, CiTokenOut, CiTriggerRequest
 
 router = APIRouter(prefix="/ci", tags=["ci"])
 
 
-async def _get_ci_token(authorization: Optional[str] = Header(None), db: AsyncSession = Depends(get_db)) -> CiToken:
+async def _get_ci_token(
+    authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db),
+) -> CiToken:
     """Validate CI token from Authorization header (format: 'Token <token>')."""
     if not authorization or not authorization.startswith("Token "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing CI token")
     plain_token = authorization.removeprefix("Token ").strip()
 
-    # Check all active tokens (token_hash is bcrypt of plain token)
     result = await db.execute(select(CiToken).where(CiToken.is_active == True))
     tokens = result.scalars().all()
-    for tok in tokens:
-        if verify_password(plain_token, tok.token_hash):
-            # Check expiry
-            if tok.expires_at and tok.expires_at < datetime.now(timezone.utc):
+    for token in tokens:
+        if verify_password(plain_token, token.token_hash):
+            if token.expires_at and token.expires_at < datetime.now(timezone.utc):
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="CI token expired")
-            # Update last_used_at
-            tok.last_used_at = datetime.now(timezone.utc)
+            token.last_used_at = datetime.now(timezone.utc)
             await db.commit()
-            return tok
+            return token
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid CI token")
 
-
-# ── Token management (admin only) ────────────────────────────────────────────
 
 @router.get("/tokens", response_model=list[CiTokenOut])
 async def list_tokens(db: AsyncSession = Depends(get_db), _=Depends(require_admin)):
@@ -57,18 +56,18 @@ async def create_token(
     if body.expires_days:
         expires_at = datetime.now(timezone.utc) + timedelta(days=body.expires_days)
 
-    tok = CiToken(
+    token = CiToken(
         name=body.name,
         token_hash=get_password_hash(plain_token),
         scope=body.scope,
         expires_at=expires_at,
     )
-    db.add(tok)
+    db.add(token)
     await db.commit()
-    await db.refresh(tok)
+    await db.refresh(token)
 
-    out = CiTokenOut.model_validate(tok)
-    out.plain_token = plain_token   # only returned once
+    out = CiTokenOut.model_validate(token)
+    out.plain_token = plain_token
     return out
 
 
@@ -79,14 +78,12 @@ async def revoke_token(
     _=Depends(require_admin),
 ):
     result = await db.execute(select(CiToken).where(CiToken.id == token_id))
-    tok = result.scalar_one_or_none()
-    if not tok:
+    token = result.scalar_one_or_none()
+    if not token:
         raise HTTPException(status_code=404, detail="Token not found")
-    tok.is_active = False
+    token.is_active = False
     await db.commit()
 
-
-# ── Trigger & poll (CI token auth) ───────────────────────────────────────────
 
 @router.post("/trigger")
 async def trigger_replay(
@@ -95,15 +92,14 @@ async def trigger_replay(
     ci_token: CiToken = Depends(_get_ci_token),
 ):
     """Trigger a suite replay using CI token authentication."""
-    # Enforce scope: only 'trigger' tokens can trigger replays
     if ci_token.scope != "trigger":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="CI token scope 'trigger' is required to trigger replays",
         )
+
     import asyncio
-    from models.replay import ReplayJob, ReplayResult
-    from core.replay_executor import run_replay_job
+    import core.replay_executor as replay_executor
 
     result = await db.execute(select(Suite).where(Suite.id == body.suite_id))
     suite = result.scalar_one_or_none()
@@ -119,8 +115,20 @@ async def trigger_replay(
     if not case_ids:
         raise HTTPException(status_code=400, detail="Suite has no test cases")
 
+    try:
+        application_id = await infer_application_id_for_case_ids(db, case_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if application_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Suite test cases must have an application_id before CI replay can be triggered",
+        )
+
     job = ReplayJob(
         name=f"[CI] Suite {body.suite_id}",
+        application_id=application_id,
         status="PENDING",
         concurrency=body.concurrency,
         timeout_ms=body.timeout_ms,
@@ -133,11 +141,10 @@ async def trigger_replay(
     await db.refresh(job)
 
     for case_id in case_ids:
-        r = ReplayResult(job_id=job.id, test_case_id=case_id, status="PENDING", is_pass=False)
-        db.add(r)
+        db.add(ReplayResult(job_id=job.id, test_case_id=case_id, status="PENDING", is_pass=False))
     await db.commit()
 
-    asyncio.create_task(run_replay_job(job.id))
+    asyncio.create_task(replay_executor.run_replay_job(job.id))
     return {"job_id": job.id, "status": "PENDING", "total": len(case_ids)}
 
 

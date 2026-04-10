@@ -1,10 +1,6 @@
-"""Tests for CI token management, trigger replay, and poll result."""
+﻿"""Tests for CI token management, trigger replay, and poll result."""
 import pytest
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _create_token(client, admin_headers, name="ci-token", expires_days=None):
     payload = {"name": name, "scope": "trigger"}
@@ -16,10 +12,27 @@ def _create_token(client, admin_headers, name="ci-token", expires_days=None):
 
 
 def _create_suite_with_case(client, admin_headers):
-    """Create a test case, a suite, add the case to the suite, return suite_id."""
+    """Create an application, a test case, a suite, add the case to the suite."""
+    app = client.post(
+        "/api/v1/applications",
+        json={
+            "name": "ci-app",
+            "ssh_host": "127.0.0.1",
+            "ssh_user": "deploy",
+            "ssh_port": 22,
+            "service_port": 8080,
+        },
+        headers=admin_headers,
+    ).json()
+
     tc = client.post(
         "/api/v1/test-cases",
-        json={"name": "ci-tc", "request_method": "GET", "request_uri": "/ci-test"},
+        json={
+            "name": "ci-tc",
+            "application_id": app["id"],
+            "request_method": "GET",
+            "request_uri": "/ci-test",
+        },
         headers=admin_headers,
     ).json()
 
@@ -36,10 +49,6 @@ def _create_suite_with_case(client, admin_headers):
     )
     return suite["id"]
 
-
-# ---------------------------------------------------------------------------
-# Token management (admin only)
-# ---------------------------------------------------------------------------
 
 def test_create_ci_token(client, admin_headers):
     token_data = _create_token(client, admin_headers)
@@ -75,10 +84,6 @@ def test_ci_token_requires_admin(client, editor_headers):
     assert resp.status_code == 403
 
 
-# ---------------------------------------------------------------------------
-# Trigger replay with CI token
-# ---------------------------------------------------------------------------
-
 def test_trigger_replay_with_ci_token(client, admin_headers):
     token_data = _create_token(client, admin_headers)
     plain_token = token_data["plain_token"]
@@ -97,15 +102,11 @@ def test_trigger_replay_with_ci_token(client, admin_headers):
 
 
 def test_trigger_replay_missing_token(client):
-    # suite_id=99999 is intentionally non-existent; auth rejection happens before
-    # suite lookup, so the exact suite_id value does not affect the outcome.
     resp = client.post("/api/v1/ci/trigger", json={"suite_id": 99999})
     assert resp.status_code == 401
 
 
 def test_trigger_replay_invalid_token(client):
-    # suite_id=99999 is intentionally non-existent; auth rejection happens before
-    # suite lookup, so the exact suite_id value does not affect the outcome.
     resp = client.post(
         "/api/v1/ci/trigger",
         json={"suite_id": 99999},
@@ -118,7 +119,6 @@ def test_trigger_replay_empty_suite(client, admin_headers):
     token_data = _create_token(client, admin_headers)
     plain_token = token_data["plain_token"]
 
-    # Create suite with no cases
     suite = client.post(
         "/api/v1/suites",
         json={"name": "empty-suite"},
@@ -132,10 +132,6 @@ def test_trigger_replay_empty_suite(client, admin_headers):
     )
     assert resp.status_code == 400
 
-
-# ---------------------------------------------------------------------------
-# Poll result with CI token
-# ---------------------------------------------------------------------------
 
 def test_poll_result_with_ci_token(client, admin_headers):
     token_data = _create_token(client, admin_headers)

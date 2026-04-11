@@ -40,7 +40,19 @@
         <n-descriptions-item label="所属应用">{{ applicationName }}</n-descriptions-item>
         <n-descriptions-item label="来源录制">{{ testCase.source_recording_id || '-' }}</n-descriptions-item>
         <n-descriptions-item label="交易码">{{ testCase.transaction_code || '-' }}</n-descriptions-item>
-        <n-descriptions-item label="治理状态">{{ governanceLabelMap[testCase.governance_status] || testCase.governance_status }}</n-descriptions-item>
+        <n-descriptions-item label="治理状态">
+          <n-space align="center" :size="8">
+            <span>{{ governanceLabelMap[testCase.governance_status] || testCase.governance_status }}</span>
+            <n-dropdown
+              v-if="canEdit"
+              trigger="click"
+              :options="governanceOptions.map(o => ({ ...o, disabled: o.value === testCase.governance_status }))"
+              @select="quickSwitchGovernance"
+            >
+              <n-button size="tiny" quaternary>切换 ▾</n-button>
+            </n-dropdown>
+          </n-space>
+        </n-descriptions-item>
         <n-descriptions-item label="请求">{{ `${testCase.request_method} ${testCase.request_uri}` }}</n-descriptions-item>
         <n-descriptions-item label="期望状态码">{{ testCase.expected_status ?? '-' }}</n-descriptions-item>
         <n-descriptions-item label="场景键" :span="2">{{ testCase.scene_key || '-' }}</n-descriptions-item>

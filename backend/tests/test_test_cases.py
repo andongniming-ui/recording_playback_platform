@@ -4,17 +4,17 @@ import io
 import pytest
 
 import asyncio
-from sqlalchemy import select as sa_select
+import uuid
 from models.recording import Recording
 import database as _db_module
 
 
 def _seed_recordings(app_id: int, transaction_codes: list):
-    """Seed Recording rows and return their IDs."""
+    """Seed Recording rows and return their IDs (in insertion order)."""
     async def _run():
-        ids = []
         async with _db_module.async_session_factory() as session:
-            for i, code in enumerate(transaction_codes):
+            rows = []
+            for code in transaction_codes:
                 row = Recording(
                     application_id=app_id,
                     request_method="POST",
@@ -24,16 +24,15 @@ def _seed_recordings(app_id: int, transaction_codes: list):
                     response_body="<response><code>0000</code></response>",
                     transaction_code=code,
                     scene_key=f"{code or 'UNKNOWN'}|POST|/api/service|success" if code else None,
-                    dedupe_hash=f"batch-hash-{i}",
+                    dedupe_hash=uuid.uuid4().hex,
                     governance_status="candidate",
                 )
                 session.add(row)
+                rows.append(row)
             await session.commit()
-            result = await session.execute(
-                sa_select(Recording).where(Recording.application_id == app_id)
-            )
-            ids = [r.id for r in result.scalars().all()]
-        return ids
+            for row in rows:
+                await session.refresh(row)
+            return [row.id for row in rows]
     return asyncio.get_event_loop().run_until_complete(_run())
 
 

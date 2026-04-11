@@ -87,7 +87,7 @@ class BatchCheckRequest(BaseModel):
 
 class BatchCheckItem(BaseModel):
     recording_id: int
-    transaction_code: Optional[str]
+    transaction_code: Optional[str] = None
     has_existing: bool
     existing_case_id: Optional[int] = None
     existing_case_name: Optional[str] = None

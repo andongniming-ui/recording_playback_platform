@@ -10,4 +10,8 @@ export const testCaseApi = {
   clone: (id: number) => api.post(`/test-cases/${id}/clone`),
   exportCases: (params?: any) => api.get('/test-cases/export', { params }),
   addToSuite: (id: number, data: any) => api.post(`/test-cases/${id}/add-to-suite`, data),
+  batchCheck: (data: { recording_ids: number[] }) =>
+    api.post('/test-cases/batch-check', data),
+  batchFromRecordings: (data: { recording_ids: number[]; prefix: string }) =>
+    api.post('/test-cases/batch-from-recordings', data),
 }

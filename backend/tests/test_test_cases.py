@@ -393,3 +393,55 @@ def test_batch_check_detects_conflict(client, admin_headers, created_app):
     assert by_id[rec_ids[0]]["has_existing"] is True
     assert by_id[rec_ids[0]]["existing_case_id"] is not None
     assert by_id[rec_ids[1]]["has_existing"] is False
+
+
+# ---------------------------------------------------------------------------
+# Batch from recordings
+# ---------------------------------------------------------------------------
+
+def test_batch_from_recordings_creates_cases(client, admin_headers, created_app):
+    rec_ids = _seed_recordings(created_app["id"], ["OPEN_ACCOUNT", "CLOSE_ACCOUNT"])
+
+    resp = client.post(
+        "/api/v1/test-cases/batch-from-recordings",
+        json={"recording_ids": rec_ids, "prefix": "银行"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 2
+    assert body["created"] == 2
+    assert body["failed"] == 0
+    names = {r["name"] for r in body["results"]}
+    assert "银行 - OPEN_ACCOUNT" in names
+    assert "银行 - CLOSE_ACCOUNT" in names
+    assert all(r["status"] == "created" for r in body["results"])
+
+
+def test_batch_from_recordings_fallback_name_when_no_transaction_code(client, admin_headers, created_app):
+    rec_ids = _seed_recordings(created_app["id"], [None])  # no transaction code
+
+    resp = client.post(
+        "/api/v1/test-cases/batch-from-recordings",
+        json={"recording_ids": rec_ids, "prefix": "前缀"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["created"] == 1
+    name = body["results"][0]["name"]
+    assert name.startswith("前缀 - POST")
+
+
+def test_batch_from_recordings_handles_missing_recording(client, admin_headers):
+    resp = client.post(
+        "/api/v1/test-cases/batch-from-recordings",
+        json={"recording_ids": [99999], "prefix": "test"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["failed"] == 1
+    assert body["results"][0]["status"] == "failed"
+    assert "not found" in body["results"][0]["error"].lower()

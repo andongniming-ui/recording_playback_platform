@@ -108,6 +108,78 @@ async def batch_check(
     return items
 
 
+@router.post("/batch-from-recordings", response_model=BatchFromRecordingsResponse)
+async def batch_from_recordings(
+    body: BatchFromRecordingsRequest,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_editor),
+):
+    """Batch create test cases from a list of recording IDs with a shared name prefix."""
+    results: list[BatchResultItem] = []
+    created_count = 0
+    failed_count = 0
+
+    for rec_id in body.recording_ids:
+        try:
+            rec_result = await db.execute(select(Recording).where(Recording.id == rec_id))
+            recording = rec_result.scalar_one_or_none()
+            if not recording:
+                results.append(BatchResultItem(
+                    recording_id=rec_id,
+                    status="failed",
+                    error="Recording not found",
+                ))
+                failed_count += 1
+                continue
+
+            # Build name: prefix + transaction_code or fallback to method + uri
+            suffix = recording.transaction_code or f"{recording.request_method} {recording.request_uri}"
+            name = f"{body.prefix} - {suffix}"
+
+            tc = TestCase(**_fill_governance_fields({
+                "name": name,
+                "application_id": recording.application_id,
+                "source_recording_id": recording.id,
+                "request_method": recording.request_method,
+                "request_uri": recording.request_uri,
+                "request_headers": recording.request_headers,
+                "request_body": recording.request_body,
+                "expected_status": recording.response_status,
+                "expected_response": recording.response_body,
+                "transaction_code": recording.transaction_code,
+                "scene_key": recording.scene_key,
+                "governance_status": recording.governance_status or "candidate",
+                "status": "active",
+            }))
+            db.add(tc)
+            await db.commit()
+            await db.refresh(tc)
+
+            results.append(BatchResultItem(
+                recording_id=rec_id,
+                status="created",
+                test_case_id=tc.id,
+                name=tc.name,
+            ))
+            created_count += 1
+
+        except Exception as exc:
+            await db.rollback()
+            results.append(BatchResultItem(
+                recording_id=rec_id,
+                status="failed",
+                error=str(exc),
+            ))
+            failed_count += 1
+
+    return BatchFromRecordingsResponse(
+        total=len(body.recording_ids),
+        created=created_count,
+        failed=failed_count,
+        results=results,
+    )
+
+
 @router.get("/export")
 async def export_test_cases(
     ids: Optional[str] = Query(None),

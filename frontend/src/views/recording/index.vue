@@ -222,7 +222,7 @@
     style="width: 420px"
   >
     <n-space vertical v-if="batchResult">
-      <n-alert type="success" :show-icon="true">成功 {{ batchResult.created }} 条</n-alert>
+      <n-alert v-if="batchResult.created > 0" type="success" :show-icon="true">成功 {{ batchResult.created }} 条</n-alert>
       <n-alert v-if="batchResult.skipped > 0" type="warning" :show-icon="true">
         跳过 {{ batchResult.skipped }} 条（已有用例）
       </n-alert>
@@ -604,6 +604,7 @@ async function loadRecordingGroups() {
       search: groupSearch.value.trim() || undefined,
     })
     recordingGroups.value = res.data
+    selectedRecordingIds.value = []
   } catch (error: any) {
     recordingGroups.value = []
     message.error(error.response?.data?.detail || '加载样本治理视图失败')
@@ -755,6 +756,10 @@ async function doBatchGenerate() {
   const toGenerate = batchCheckItems.value
     .filter(i => !i.has_existing)
     .map(i => i.recording_id)
+  if (toGenerate.length === 0) {
+    message.warning('没有可生成的用例')
+    return
+  }
   const skippedCount = batchCheckItems.value.filter(i => i.has_existing).length
 
   batchGenerating.value = true

@@ -3,6 +3,39 @@ import json
 import io
 import pytest
 
+import asyncio
+from sqlalchemy import select as sa_select
+from models.recording import Recording
+import database as _db_module
+
+
+def _seed_recordings(app_id: int, transaction_codes: list):
+    """Seed Recording rows and return their IDs."""
+    async def _run():
+        ids = []
+        async with _db_module.async_session_factory() as session:
+            for i, code in enumerate(transaction_codes):
+                row = Recording(
+                    application_id=app_id,
+                    request_method="POST",
+                    request_uri="/api/service",
+                    request_body=f"<req><service_id>{code or 'UNKNOWN'}</service_id></req>",
+                    response_status=200,
+                    response_body="<response><code>0000</code></response>",
+                    transaction_code=code,
+                    scene_key=f"{code or 'UNKNOWN'}|POST|/api/service|success" if code else None,
+                    dedupe_hash=f"batch-hash-{i}",
+                    governance_status="candidate",
+                )
+                session.add(row)
+            await session.commit()
+            result = await session.execute(
+                sa_select(Recording).where(Recording.application_id == app_id)
+            )
+            ids = [r.id for r in result.scalars().all()]
+        return ids
+    return asyncio.get_event_loop().run_until_complete(_run())
+
 
 TC_PAYLOAD = {
     "name": "GET /api/users",
@@ -136,7 +169,7 @@ def test_import_invalid_json(client, admin_headers):
 # ---------------------------------------------------------------------------
 
 def test_add_to_suite(client, admin_headers):
-    tc = _create_tc(client, admin_headers)
+    tc = _create_tc(client, admin_headers, governance_status="approved", scene_key="suite-case-1")
     # Create suite
     suite_resp = client.post(
         "/api/v1/suites",
@@ -153,3 +186,211 @@ def test_add_to_suite(client, admin_headers):
     )
     assert resp.status_code == 201
     assert resp.json()["order_index"] == 1
+
+
+def test_create_from_recording_carries_transaction_code_and_governance(client, admin_headers, created_app):
+    session_resp = client.post(
+        "/api/v1/sessions",
+        json={"application_id": created_app["id"], "name": "case-source"},
+        headers=admin_headers,
+    )
+    session_id = session_resp.json()["id"]
+
+    recording_resp = client.patch(
+        "/api/v1/sessions/recordings/1",
+        json={"governance_status": "approved"},
+        headers=admin_headers,
+    )
+    if recording_resp.status_code == 404:
+        from models.recording import Recording
+        import database
+        import asyncio
+
+        async def _seed():
+            async with database.async_session_factory() as db:
+                row = Recording(
+                    session_id=session_id,
+                    application_id=created_app["id"],
+                    request_method="POST",
+                    request_uri="/api/bank/service",
+                    request_body="<request><service_id>OPEN_ACCOUNT</service_id></request>",
+                    response_status=200,
+                    response_body="<response><code>0000</code></response>",
+                    transaction_code="OPEN_ACCOUNT",
+                    scene_key="OPEN_ACCOUNT|POST|/api/bank/service|success",
+                    dedupe_hash="seed-hash",
+                    governance_status="approved",
+                )
+                db.add(row)
+                await db.commit()
+                await db.refresh(row)
+                return row.id
+
+        recording_id = asyncio.get_event_loop().run_until_complete(_seed())
+    else:
+        recording_id = 1
+
+    resp = client.post(
+        "/api/v1/test-cases/from-recording",
+        json={"recording_id": recording_id},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["transaction_code"] == "OPEN_ACCOUNT"
+    assert body["governance_status"] == "approved"
+    assert body["scene_key"] == "OPEN_ACCOUNT|POST|/api/bank/service|success"
+
+
+def test_suite_supports_suite_type(client, admin_headers):
+    resp = client.post(
+        "/api/v1/suites",
+        json={"name": "daily-smoke", "suite_type": "smoke"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["suite_type"] == "smoke"
+
+    list_resp = client.get("/api/v1/suites?suite_type=smoke", headers=admin_headers)
+    assert list_resp.status_code == 200
+    assert any(item["id"] == body["id"] for item in list_resp.json())
+
+
+def test_add_to_smoke_suite_requires_approved_case(client, admin_headers):
+    tc = _create_tc(client, admin_headers, governance_status="candidate", scene_key="S1")
+    suite_resp = client.post(
+        "/api/v1/suites",
+        json={"name": "smoke-suite", "suite_type": "smoke"},
+        headers=admin_headers,
+    )
+    suite_id = suite_resp.json()["id"]
+
+    resp = client.post(
+        f"/api/v1/test-cases/{tc['id']}/add-to-suite",
+        json={"suite_id": suite_id},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 400
+    assert "Only approved test cases" in resp.json()["detail"]
+
+
+def test_suite_rejects_duplicate_scene_key_selection(client, admin_headers):
+    first = _create_tc(client, admin_headers, governance_status="approved", transaction_code="OPEN_ACCOUNT", scene_key="scene-a")
+    second = _create_tc(client, admin_headers, name="dup", governance_status="approved", transaction_code="OPEN_ACCOUNT", scene_key="scene-a")
+    suite_resp = client.post(
+        "/api/v1/suites",
+        json={"name": "reg-suite", "suite_type": "regression"},
+        headers=admin_headers,
+    )
+    suite_id = suite_resp.json()["id"]
+
+    resp = client.put(
+        f"/api/v1/suites/{suite_id}/cases",
+        json={"case_ids": [first["id"], second["id"]]},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 400
+    assert "Duplicate scene_key" in resp.json()["detail"]
+
+
+def test_auto_smoke_suite_selects_one_approved_case_per_transaction(client, admin_headers):
+    app = client.post(
+        "/api/v1/applications",
+        json={
+            "name": "auto-smoke-app",
+            "ssh_host": "127.0.0.1",
+            "ssh_user": "deploy",
+            "ssh_port": 22,
+            "service_port": 8080,
+        },
+        headers=admin_headers,
+    ).json()
+
+    first = _create_tc(
+        client,
+        admin_headers,
+        application_id=app["id"],
+        governance_status="approved",
+        transaction_code="OPEN_ACCOUNT",
+        scene_key="open-account-scene-1",
+        request_uri="/open/1",
+    )
+    second = _create_tc(
+        client,
+        admin_headers,
+        application_id=app["id"],
+        governance_status="approved",
+        transaction_code="OPEN_ACCOUNT",
+        scene_key="open-account-scene-2",
+        request_uri="/open/2",
+    )
+    third = _create_tc(
+        client,
+        admin_headers,
+        application_id=app["id"],
+        governance_status="approved",
+        transaction_code="QUERY_BALANCE",
+        scene_key="query-balance-scene-1",
+        request_uri="/query/1",
+    )
+
+    resp = client.post(
+        "/api/v1/suites/auto-smoke",
+        json={"application_id": app["id"], "name": "auto-smoke"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["name"] == "auto-smoke"
+    assert len(body["added_case_ids"]) == 2
+    assert set(body["added_case_ids"]).issubset({first["id"], second["id"], third["id"]})
+
+    suite_resp = client.get(f"/api/v1/suites/{body['suite_id']}", headers=admin_headers)
+    assert suite_resp.status_code == 200
+    suite_body = suite_resp.json()
+    assert suite_body["suite_type"] == "smoke"
+    assert len(suite_body["cases"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Batch check
+# ---------------------------------------------------------------------------
+
+def test_batch_check_no_conflicts(client, admin_headers, created_app):
+    rec_ids = _seed_recordings(created_app["id"], ["OPEN_ACCOUNT", "CLOSE_ACCOUNT"])
+
+    resp = client.post(
+        "/api/v1/test-cases/batch-check",
+        json={"recording_ids": rec_ids},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200
+    items = resp.json()
+    assert len(items) == 2
+    assert all(not item["has_existing"] for item in items)
+    codes = {item["transaction_code"] for item in items}
+    assert codes == {"OPEN_ACCOUNT", "CLOSE_ACCOUNT"}
+
+
+def test_batch_check_detects_conflict(client, admin_headers, created_app):
+    rec_ids = _seed_recordings(created_app["id"], ["FREEZE_ACCOUNT", "UNFREEZE_ACCOUNT"])
+
+    # Create a test case from rec_ids[0] to create conflict
+    client.post(
+        "/api/v1/test-cases/from-recording",
+        json={"recording_id": rec_ids[0]},
+        headers=admin_headers,
+    )
+
+    resp = client.post(
+        "/api/v1/test-cases/batch-check",
+        json={"recording_ids": rec_ids},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200
+    by_id = {item["recording_id"]: item for item in resp.json()}
+
+    assert by_id[rec_ids[0]]["has_existing"] is True
+    assert by_id[rec_ids[0]]["existing_case_id"] is not None
+    assert by_id[rec_ids[1]]["has_existing"] is False

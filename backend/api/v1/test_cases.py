@@ -14,11 +14,98 @@ from models.recording import Recording
 from models.suite import Suite, SuiteCase
 from schemas.test_case import (
     TestCaseCreate, TestCaseUpdate, TestCaseOut,
-    TestCaseFromRecording, AddToSuiteRequest
+    TestCaseFromRecording, AddToSuiteRequest,
+    BatchCheckRequest, BatchCheckItem,
+    BatchFromRecordingsRequest, BatchResultItem, BatchFromRecordingsResponse,
 )
 from core.security import require_viewer, require_editor
+from utils.governance import build_scene_key, infer_transaction_code, normalize_governance_status
 
 router = APIRouter(prefix="/test-cases", tags=["test-cases"])
+
+
+def _fill_governance_fields(payload: dict) -> dict:
+    transaction_code = payload.get("transaction_code") or infer_transaction_code(
+        payload.get("request_body"),
+        payload.get("expected_response"),
+    )
+    payload["transaction_code"] = transaction_code
+    payload["governance_status"] = normalize_governance_status(payload.get("governance_status"), "candidate")
+    payload["scene_key"] = payload.get("scene_key") or build_scene_key(
+        transaction_code,
+        payload.get("request_method"),
+        payload.get("request_uri"),
+        payload.get("expected_status"),
+    )
+    return payload
+
+
+async def _validate_suite_entry(case_id: int, suite: Suite, db: AsyncSession) -> None:
+    case_result = await db.execute(select(TestCase).where(TestCase.id == case_id))
+    test_case = case_result.scalar_one_or_none()
+    if not test_case:
+        raise HTTPException(status_code=404, detail="Test case not found")
+
+    if suite.suite_type in {"smoke", "regression"} and test_case.governance_status != "approved":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only approved test cases can be added to {suite.suite_type} suites",
+        )
+
+    if test_case.scene_key:
+        existing_result = await db.execute(
+            select(TestCase.id)
+            .join(SuiteCase, SuiteCase.test_case_id == TestCase.id)
+            .where(
+                SuiteCase.suite_id == suite.id,
+                TestCase.scene_key == test_case.scene_key,
+                TestCase.id != case_id,
+            )
+        )
+        if existing_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Suite already contains a representative sample for scene_key: {test_case.scene_key}",
+            )
+
+
+@router.post("/batch-check", response_model=list[BatchCheckItem])
+async def batch_check(
+    body: BatchCheckRequest,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_viewer),
+):
+    """Check which recordings already have a test case (by source_recording_id)."""
+    if not body.recording_ids:
+        return []
+
+    # Fetch recordings
+    rec_result = await db.execute(
+        select(Recording).where(Recording.id.in_(body.recording_ids))
+    )
+    recordings = {r.id: r for r in rec_result.scalars().all()}
+
+    # Fetch existing test cases that reference these recordings
+    tc_result = await db.execute(
+        select(TestCase).where(TestCase.source_recording_id.in_(body.recording_ids))
+    )
+    existing_by_rec: dict[int, TestCase] = {}
+    for tc in tc_result.scalars().all():
+        if tc.source_recording_id not in existing_by_rec:
+            existing_by_rec[tc.source_recording_id] = tc
+
+    items = []
+    for rec_id in body.recording_ids:
+        rec = recordings.get(rec_id)
+        existing = existing_by_rec.get(rec_id)
+        items.append(BatchCheckItem(
+            recording_id=rec_id,
+            transaction_code=rec.transaction_code if rec else None,
+            has_existing=existing is not None,
+            existing_case_id=existing.id if existing else None,
+            existing_case_name=existing.name if existing else None,
+        ))
+    return items
 
 
 @router.get("/export")
@@ -55,19 +142,22 @@ async def create_from_recording(
     # Extract expected response from response_body
     expected_response = recording.response_body
 
-    tc = TestCase(
-        name=name,
-        application_id=recording.application_id,
-        source_recording_id=recording.id,
-        request_method=recording.request_method,
-        request_uri=recording.request_uri,
-        request_headers=recording.request_headers,
-        request_body=recording.request_body,
-        expected_status=recording.response_status,
-        expected_response=expected_response,
-        tags=body.tags,
-        status=body.status,
-    )
+    tc = TestCase(**_fill_governance_fields({
+        "name": name,
+        "application_id": recording.application_id,
+        "source_recording_id": recording.id,
+        "request_method": recording.request_method,
+        "request_uri": recording.request_uri,
+        "request_headers": recording.request_headers,
+        "request_body": recording.request_body,
+        "expected_status": recording.response_status,
+        "expected_response": expected_response,
+        "tags": body.tags,
+        "status": body.status,
+        "transaction_code": recording.transaction_code,
+        "scene_key": recording.scene_key,
+        "governance_status": body.governance_status or recording.governance_status or "candidate",
+    }))
     db.add(tc)
     await db.commit()
     await db.refresh(tc)
@@ -92,7 +182,7 @@ async def import_test_cases(
     for item in data:
         try:
             tc_data = TestCaseCreate(**item)
-            tc = TestCase(**tc_data.model_dump())
+            tc = TestCase(**_fill_governance_fields(tc_data.model_dump()))
             db.add(tc)
             created.append(tc)
         except Exception:
@@ -105,6 +195,8 @@ async def import_test_cases(
 async def list_test_cases(
     application_id: Optional[int] = Query(None),
     status: Optional[str] = Query(None),
+    governance_status: Optional[str] = Query(None),
+    transaction_code: Optional[str] = Query(None),
     tags: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
@@ -118,12 +210,17 @@ async def list_test_cases(
         filters.append(TestCase.application_id == application_id)
     if status:
         filters.append(TestCase.status == status)
+    if governance_status:
+        filters.append(TestCase.governance_status == governance_status)
+    if transaction_code:
+        filters.append(TestCase.transaction_code == transaction_code)
     if tags:
         filters.append(TestCase.tags.contains(tags))
     if search:
         filters.append(or_(
             TestCase.name.contains(search),
             TestCase.request_uri.contains(search),
+            TestCase.transaction_code.contains(search),
         ))
     if filters:
         stmt = stmt.where(and_(*filters))
@@ -138,7 +235,7 @@ async def create_test_case(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_editor),
 ):
-    tc = TestCase(**body.model_dump())
+    tc = TestCase(**_fill_governance_fields(body.model_dump()))
     db.add(tc)
     await db.commit()
     await db.refresh(tc)
@@ -169,8 +266,15 @@ async def update_test_case(
     tc = result.scalar_one_or_none()
     if not tc:
         raise HTTPException(status_code=404, detail="Test case not found")
-    for field, value in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    for field, value in updates.items():
         setattr(tc, field, value)
+    if "transaction_code" in updates:
+        tc.transaction_code = updates["transaction_code"] or infer_transaction_code(tc.request_body, tc.expected_response)
+    else:
+        tc.transaction_code = infer_transaction_code(tc.request_body, tc.expected_response) or tc.transaction_code
+    tc.governance_status = normalize_governance_status(tc.governance_status, "candidate")
+    tc.scene_key = build_scene_key(tc.transaction_code, tc.request_method, tc.request_uri, tc.expected_status)
     await db.commit()
     await db.refresh(tc)
     return tc
@@ -206,6 +310,9 @@ async def clone_test_case(
         application_id=tc.application_id,
         source_recording_id=tc.source_recording_id,
         status="draft",
+        governance_status=tc.governance_status,
+        transaction_code=tc.transaction_code,
+        scene_key=tc.scene_key,
         tags=tc.tags,
         request_method=tc.request_method,
         request_uri=tc.request_uri,
@@ -230,14 +337,12 @@ async def add_to_suite(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_editor),
 ):
-    # Validate case exists
-    result = await db.execute(select(TestCase).where(TestCase.id == case_id))
-    if not result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Test case not found")
     # Validate suite exists
     result = await db.execute(select(Suite).where(Suite.id == body.suite_id))
-    if not result.scalar_one_or_none():
+    suite = result.scalar_one_or_none()
+    if not suite:
         raise HTTPException(status_code=404, detail="Suite not found")
+    await _validate_suite_entry(case_id, suite, db)
     # Check not already in suite
     existing = await db.execute(
         select(SuiteCase).where(

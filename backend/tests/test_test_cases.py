@@ -445,3 +445,22 @@ def test_batch_from_recordings_handles_missing_recording(client, admin_headers):
     assert body["failed"] == 1
     assert body["results"][0]["status"] == "failed"
     assert "not found" in body["results"][0]["error"].lower()
+
+
+def test_batch_from_recordings_partial_success(client, admin_headers, created_app):
+    rec_ids = _seed_recordings(created_app["id"], ["VALID_CODE"])
+    ids = [rec_ids[0], 99998]  # 一个有效，一个无效
+
+    resp = client.post(
+        "/api/v1/test-cases/batch-from-recordings",
+        json={"recording_ids": ids, "prefix": "混合"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 2
+    assert body["created"] == 1
+    assert body["failed"] == 1
+    created = next(r for r in body["results"] if r["status"] == "created")
+    assert created["test_case_id"] is not None
+    assert created["name"] == "混合 - VALID_CODE"

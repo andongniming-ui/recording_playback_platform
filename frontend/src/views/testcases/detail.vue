@@ -368,6 +368,10 @@ function openEdit() {
 }
 
 async function saveEdit() {
+  if (!editForm.value.name.trim()) {
+    message.warning('用例名称不能为空')
+    return
+  }
   saving.value = true
   try {
     await testCaseApi.update(caseId, {

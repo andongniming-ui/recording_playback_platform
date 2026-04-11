@@ -281,6 +281,12 @@ function prettifyJsonString(value: unknown) {
   }
 }
 
+function compactJsonString(value: string) {
+  const text = value.trim()
+  if (!text) return undefined
+  try { return JSON.stringify(JSON.parse(text)) } catch { return text }
+}
+
 function openEdit() {
   if (!testCase.value) return
   const tc = testCase.value
@@ -302,11 +308,6 @@ function openEdit() {
 async function saveEdit() {
   saving.value = true
   try {
-    const serializeJson = (value: string) => {
-      const text = value.trim()
-      if (!text) return undefined
-      try { return JSON.stringify(JSON.parse(text)) } catch { return text }
-    }
     await testCaseApi.update(caseId, {
       name: editForm.value.name,
       description: editForm.value.description || undefined,
@@ -315,9 +316,9 @@ async function saveEdit() {
       transaction_code: editForm.value.transaction_code.trim() || undefined,
       request_method: editForm.value.request_method,
       request_uri: editForm.value.request_uri,
-      request_headers: serializeJson(editForm.value.headers_json),
-      request_body: serializeJson(editForm.value.body_json),
-      assert_rules: serializeJson(editForm.value.assertions_json),
+      request_headers: compactJsonString(editForm.value.headers_json),
+      request_body: compactJsonString(editForm.value.body_json),
+      assert_rules: compactJsonString(editForm.value.assertions_json),
     })
     message.success('保存成功')
     showEditDrawer.value = false

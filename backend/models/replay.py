@@ -1,5 +1,5 @@
 ﻿from datetime import datetime
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 from database import Base
 
@@ -24,6 +24,17 @@ class ReplayJob(Base):
     diff_rules: Mapped[str | None] = mapped_column(Text)
     assertions: Mapped[str | None] = mapped_column(Text)
     perf_threshold_ms: Mapped[int | None] = mapped_column(Integer)
+
+    # P0: 智能降噪 - 自动忽略 30+ 常见动态字段
+    smart_noise_reduction: Mapped[bool] = mapped_column(Boolean, default=False)
+    # P1: 失败重试 - 失败后最多重试 N 次
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    # 高级回放配置
+    ignore_fields: Mapped[str | None] = mapped_column(Text)          # JSON list of field names
+    delay_ms: Mapped[int] = mapped_column(Integer, default=0)        # ms between requests
+    repeat_count: Mapped[int] = mapped_column(Integer, default=1)    # repeat each recording N times
+    header_transforms: Mapped[str | None] = mapped_column(Text)      # JSON list of {type,key,value}
 
     webhook_url: Mapped[str | None] = mapped_column(String(512))
     notify_type: Mapped[str | None] = mapped_column(String(32))
@@ -52,6 +63,7 @@ class ReplayResult(Base):
     expected_response: Mapped[str | None] = mapped_column(Text)
 
     diff_result: Mapped[str | None] = mapped_column(Text)
+    diff_score: Mapped[float | None] = mapped_column(Float)
     assertion_results: Mapped[str | None] = mapped_column(Text)
     is_pass: Mapped[bool] = mapped_column(Boolean, default=False)
     latency_ms: Mapped[int | None] = mapped_column(Integer)

@@ -9,6 +9,7 @@
         <n-button @click="loadPage">刷新</n-button>
         <n-button v-if="testCase?.source_recording_id" @click="router.push(`/recording/recordings/${testCase.source_recording_id}`)">来源录制</n-button>
         <n-button type="primary" @click="startReplay" :disabled="!testCase">发起回放</n-button>
+        <n-button v-if="canEdit" type="default" @click="openEdit">编辑</n-button>
         <n-button v-if="canEdit" @click="cloneCase" :loading="cloning">克隆</n-button>
         <n-button
           v-if="canEdit"
@@ -81,6 +82,67 @@
       </n-grid-item>
     </n-grid>
   </n-space>
+
+  <n-drawer v-model:show="showEditDrawer" :width="640" placement="right">
+    <n-drawer-content title="编辑测试用例" closable>
+      <n-form :model="editForm" label-placement="top">
+        <n-form-item label="用例名称">
+          <n-input v-model:value="editForm.name" placeholder="用例名称" />
+        </n-form-item>
+        <n-form-item label="描述">
+          <n-input v-model:value="editForm.description" type="textarea" :rows="2" />
+        </n-form-item>
+        <n-form-item label="状态">
+          <n-select v-model:value="editForm.status" :options="statusOptions" />
+        </n-form-item>
+        <n-form-item label="治理状态">
+          <n-select v-model:value="editForm.governance_status" :options="governanceOptions" />
+        </n-form-item>
+        <n-form-item label="交易码">
+          <n-input v-model:value="editForm.transaction_code" placeholder="如 OPEN_ACCOUNT" />
+        </n-form-item>
+        <n-form-item label="请求方法">
+          <n-select v-model:value="editForm.request_method" :options="methodOptions" style="width:120px" />
+        </n-form-item>
+        <n-form-item label="请求 URI">
+          <n-input v-model:value="editForm.request_uri" placeholder="/api/path" />
+        </n-form-item>
+        <n-form-item label="请求 Headers (JSON)">
+          <n-input
+            v-model:value="editForm.headers_json"
+            type="textarea"
+            :rows="3"
+            placeholder='{"Content-Type": "application/json"}'
+            style="font-family:monospace"
+          />
+        </n-form-item>
+        <n-form-item label="请求 Body">
+          <n-input
+            v-model:value="editForm.body_json"
+            type="textarea"
+            :rows="6"
+            placeholder="支持 JSON / XML / 普通文本"
+            style="font-family:monospace"
+          />
+        </n-form-item>
+        <n-form-item label="断言规则 (JSON)">
+          <n-input
+            v-model:value="editForm.assertions_json"
+            type="textarea"
+            :rows="4"
+            placeholder='[{"path": "/code", "op": "eq", "value": "0"}]'
+            style="font-family:monospace"
+          />
+        </n-form-item>
+      </n-form>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showEditDrawer = false">取消</n-button>
+          <n-button type="primary" :loading="saving" @click="saveEdit">保存</n-button>
+        </n-space>
+      </template>
+    </n-drawer-content>
+  </n-drawer>
 
   <n-modal v-model:show="showAddSuiteModal" title="加入测试套件" preset="card" style="width:420px">
     <n-form :model="addSuiteForm" label-placement="left" label-width="80px">

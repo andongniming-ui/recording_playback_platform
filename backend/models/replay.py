@@ -36,6 +36,7 @@ class ReplayJob(Base):
     repeat_count: Mapped[int] = mapped_column(Integer, default=1)    # repeat each recording N times
     header_transforms: Mapped[str | None] = mapped_column(Text)      # JSON list of {type,key,value}
 
+    target_host: Mapped[str | None] = mapped_column(String(512))     # override target host for replay
     webhook_url: Mapped[str | None] = mapped_column(String(512))
     notify_type: Mapped[str | None] = mapped_column(String(32))
 

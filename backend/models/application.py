@@ -18,6 +18,13 @@ class Application(Base):
     ssh_password: Mapped[str | None] = mapped_column(String(256))
     ssh_port: Mapped[int] = mapped_column(Integer, default=22)
 
+    launch_mode: Mapped[str] = mapped_column(String(32), default="ssh_script")
+    docker_workdir: Mapped[str | None] = mapped_column(String(512))
+    docker_compose_file: Mapped[str | None] = mapped_column(String(512))
+    docker_service_name: Mapped[str | None] = mapped_column(String(128))
+    docker_storage_url: Mapped[str | None] = mapped_column(String(512))
+    docker_agent_path: Mapped[str | None] = mapped_column(String(512))
+
     service_port: Mapped[int] = mapped_column(Integer, default=8080)
     jvm_process_name: Mapped[str | None] = mapped_column(String(256))  # used to identify process
 
@@ -32,6 +39,7 @@ class Application(Base):
     desensitize_rules: Mapped[str | None] = mapped_column(Text)  # JSON desensitize rules
     default_ignore_fields: Mapped[str | None] = mapped_column(Text)  # JSON default ignore field list
     default_assertions: Mapped[str | None] = mapped_column(Text)  # JSON default assertion rules
+    transaction_mappings: Mapped[str | None] = mapped_column(Text)  # JSON transaction-code mappings
     default_perf_threshold_ms: Mapped[int | None] = mapped_column(Integer)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

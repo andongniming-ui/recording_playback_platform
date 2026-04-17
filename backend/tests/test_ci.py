@@ -30,6 +30,8 @@ def _create_suite_with_case(client, admin_headers):
         json={
             "name": "ci-tc",
             "application_id": app["id"],
+            "governance_status": "approved",
+            "scene_key": "ci-tc|scene",
             "request_method": "GET",
             "request_uri": "/ci-test",
         },
@@ -42,11 +44,12 @@ def _create_suite_with_case(client, admin_headers):
         headers=admin_headers,
     ).json()
 
-    client.post(
+    add_resp = client.post(
         f"/api/v1/test-cases/{tc['id']}/add-to-suite",
         json={"suite_id": suite["id"]},
         headers=admin_headers,
     )
+    assert add_resp.status_code == 201, add_resp.text
     return suite["id"]
 
 

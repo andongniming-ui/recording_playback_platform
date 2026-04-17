@@ -26,13 +26,30 @@
         style="width:130px"
         @update:value="loadCases"
       />
+      <n-select
+        v-model:value="filterGovernanceStatus"
+        :options="governanceOptions"
+        clearable
+        placeholder="治理状态"
+        style="width:140px"
+        @update:value="loadCases"
+      />
+      <n-input
+        v-model:value="filterTransactionCode"
+        clearable
+        placeholder="交易码"
+        style="width:160px"
+        @keyup.enter="loadCases"
+      />
       <n-input
         v-model:value="filterSearch"
         clearable
         placeholder="搜索名称/URI"
         style="width:220px"
-        @input="loadCases"
+        @keyup.enter="loadCases"
       />
+      <n-button @click="loadCases">查询</n-button>
+      <n-button quaternary @click="resetFilters">重置</n-button>
     </n-space>
 
     <n-data-table
@@ -55,6 +72,12 @@
         </n-form-item>
         <n-form-item label="状态">
           <n-select v-model:value="form.status" :options="statusOptions" />
+        </n-form-item>
+        <n-form-item label="治理状态">
+          <n-select v-model:value="form.governance_status" :options="governanceOptions" />
+        </n-form-item>
+        <n-form-item label="交易码">
+          <n-input v-model:value="form.transaction_code" placeholder="如 OPEN_ACCOUNT" />
         </n-form-item>
         <n-form-item label="描述">
           <n-input v-model:value="form.description" type="textarea" :rows="2" />
@@ -109,8 +132,14 @@
   <!-- 加入套件弹窗 -->
   <n-modal v-model:show="showAddSuiteModal" title="加入测试套件" preset="card" style="width:400px">
     <n-form :model="addSuiteForm" label-placement="left" label-width="80px">
-      <n-form-item label="套件 ID">
-        <n-input-number v-model:value="addSuiteForm.suite_id" :min="1" />
+      <n-form-item label="测试套件">
+        <n-select
+          v-model:value="addSuiteForm.suite_id"
+          :options="suiteOptions"
+          clearable
+          filterable
+          placeholder="请选择测试套件"
+        />
       </n-form-item>
     </n-form>
     <template #footer>
@@ -124,14 +153,19 @@
 
 <script setup lang="ts">
 import { ref, onMounted, h } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
-  NSpace, NH2, NButton, NDataTable, NSelect, NInput, NInputNumber,
+  NSpace, NH2, NButton, NDataTable, NSelect, NInput,
   NDrawer, NDrawerContent, NModal, NForm, NFormItem, NTag, NPopconfirm, useMessage
 } from 'naive-ui'
 import { testCaseApi } from '@/api/testcases'
+import { formatDateTime } from '@/utils/format'
 import { applicationApi } from '@/api/applications'
+import { suiteApi } from '@/api/suites'
 import { useUserStore } from '@/store/user'
 
+const route = useRoute()
+const router = useRouter()
 const message = useMessage()
 const userStore = useUserStore()
 const canEdit = userStore.role === 'admin' || userStore.role === 'editor'
@@ -140,15 +174,18 @@ const cases = ref<any[]>([])
 const loading = ref(false)
 const filterAppId = ref<number | null>(null)
 const filterStatus = ref<string | null>(null)
+const filterGovernanceStatus = ref<string | null>(null)
+const filterTransactionCode = ref('')
 const filterSearch = ref('')
 const appOptions = ref<any[]>([])
 const appNameMap = ref<Record<number, string>>({})
+const suiteOptions = ref<any[]>([])
 
 const showDrawer = ref(false)
 const saving = ref(false)
 const editingId = ref<number | null>(null)
 const form = ref({
-  name: '', application_id: null as number | null, status: 'active', description: '',
+  name: '', application_id: null as number | null, status: 'active', governance_status: 'candidate', transaction_code: '', description: '',
   request_method: 'GET', request_uri: '', headers_json: '', body_json: '', assertions_json: '',
 })
 
@@ -162,15 +199,39 @@ const statusOptions = [
   { label: '已废弃', value: 'deprecated' },
 ]
 
+const governanceOptions = [
+  { label: '原始录制', value: 'raw' },
+  { label: '候选样本', value: 'candidate' },
+  { label: '已批准', value: 'approved' },
+  { label: '已拒绝', value: 'rejected' },
+  { label: '已归档', value: 'archived' },
+]
+
 const methodOptions = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].map(m => ({ label: m, value: m }))
 
 const statusTagMap: Record<string, any> = {
   draft: 'default', active: 'success', deprecated: 'error',
 }
+const statusLabelMap: Record<string, string> = {
+  draft: '草稿', active: '激活', deprecated: '已废弃',
+}
+
+const governanceLabelMap: Record<string, string> = {
+  raw: '原始录制',
+  candidate: '候选样本',
+  approved: '已批准',
+  rejected: '已拒绝',
+  archived: '已归档',
+}
 
 const columns = [
   { title: 'ID', key: 'id', width: 60 },
-  { title: '名称', key: 'name', ellipsis: { tooltip: true } },
+  {
+    title: '名称',
+    key: 'name',
+    ellipsis: { tooltip: true },
+    render: (r: any) => h(NButton, { text: true, type: 'primary', onClick: () => router.push(`/testcases/${r.id}`) }, () => r.name),
+  },
   {
     title: '应用',
     key: 'application_id',
@@ -184,18 +245,22 @@ const columns = [
       r.request_uri,
     ]),
   },
+  { title: '交易码', key: 'transaction_code', width: 140, render: (r: any) => r.transaction_code || '-' },
+  { title: '治理状态', key: 'governance_status', width: 110, render: (r: any) => governanceLabelMap[r.governance_status] || r.governance_status || '-' },
   {
     title: '状态', key: 'status', width: 80,
-    render: (r: any) => h(NTag, { type: statusTagMap[r.status] || 'default', size: 'small' }, () => r.status),
+    render: (r: any) => h(NTag, { type: statusTagMap[r.status] || 'default', size: 'small' }, () => statusLabelMap[r.status] || r.status),
   },
   {
     title: '创建时间', key: 'created_at', width: 155,
-    render: (r: any) => r.created_at?.slice(0, 19).replace('T', ' '),
+    render: (r: any) => formatDateTime(r.created_at),
   },
   {
     title: '操作', key: 'actions',
     render: (r: any) => canEdit ? h(NSpace, { size: 4 }, () => [
+      h(NButton, { size: 'tiny', onClick: () => router.push(`/testcases/${r.id}`) }, () => '详情'),
       h(NButton, { size: 'tiny', onClick: () => openEdit(r) }, () => '编辑'),
+      h(NButton, { size: 'tiny', type: 'primary', onClick: () => launchReplay(r) }, () => '回放'),
       h(NButton, { size: 'tiny', type: 'info', onClick: () => cloneCase(r.id) }, () => '克隆'),
       h(NButton, { size: 'tiny', onClick: () => openAddSuite(r.id) }, () => '加入套件'),
       h(NPopconfirm, { onPositiveClick: () => deleteCase(r.id) }, {
@@ -218,12 +283,27 @@ async function loadApps() {
   }
 }
 
+async function loadSuites() {
+  try {
+    const res = await suiteApi.list({ limit: 100 })
+    suiteOptions.value = res.data.map((suite: any) => ({
+      label: suite.name,
+      value: suite.id,
+    }))
+  } catch (error: any) {
+    suiteOptions.value = []
+    message.error(error.response?.data?.detail || '加载测试套件失败')
+  }
+}
+
 async function loadCases() {
   loading.value = true
   try {
     const params: any = {}
     if (filterAppId.value) params.application_id = filterAppId.value
     if (filterStatus.value) params.status = filterStatus.value
+    if (filterGovernanceStatus.value) params.governance_status = filterGovernanceStatus.value
+    if (filterTransactionCode.value.trim()) params.transaction_code = filterTransactionCode.value.trim()
     if (filterSearch.value) params.search = filterSearch.value
     const res = await testCaseApi.list(params)
     cases.value = res.data
@@ -235,10 +315,19 @@ async function loadCases() {
   }
 }
 
+function resetFilters() {
+  filterAppId.value = null
+  filterStatus.value = null
+  filterGovernanceStatus.value = null
+  filterTransactionCode.value = ''
+  filterSearch.value = ''
+  void loadCases()
+}
+
 function openCreate() {
   editingId.value = null
   form.value = {
-    name: '', application_id: null, status: 'active', description: '',
+    name: '', application_id: null, status: 'active', governance_status: 'candidate', transaction_code: '', description: '',
     request_method: 'GET', request_uri: '', headers_json: '', body_json: '', assertions_json: '',
   }
   showDrawer.value = true
@@ -259,6 +348,8 @@ function openEdit(tc: any) {
     name: tc.name || '',
     application_id: tc.application_id || null,
     status: tc.status || 'active',
+    governance_status: tc.governance_status || 'candidate',
+    transaction_code: tc.transaction_code || '',
     description: tc.description || '',
     request_method: tc.request_method || 'GET',
     request_uri: tc.request_uri || '',
@@ -267,6 +358,15 @@ function openEdit(tc: any) {
     assertions_json: prettifyJsonString(tc.assert_rules),
   }
   showDrawer.value = true
+}
+
+function launchReplay(testCase: any) {
+  const applicationId = testCase.application_id ?? filterAppId.value
+  const query: Record<string, string> = { case_id: String(testCase.id) }
+  if (applicationId != null) {
+    query.application_id = String(applicationId)
+  }
+  void router.push({ path: '/replay', query })
 }
 
 async function save() {
@@ -295,6 +395,8 @@ async function save() {
       description: form.value.description,
       application_id: form.value.application_id,
       status: form.value.status,
+      governance_status: form.value.governance_status,
+      transaction_code: form.value.transaction_code.trim() || undefined,
       request_method: form.value.request_method,
       request_uri: form.value.request_uri,
       request_headers: serializeStructuredText(form.value.headers_json),
@@ -339,7 +441,11 @@ async function deleteCase(id: number) {
 async function exportCases() {
   try {
     const params: any = {}
-    if (filterAppId.value) params.application_id = filterAppId.value
+    if (filterAppId.value) {
+      params.application_id = filterAppId.value
+    } else if (filterStatus.value || filterSearch.value.trim()) {
+      params.ids = cases.value.map((item) => item.id).join(',')
+    }
     const res = await testCaseApi.exportCases(params)
     const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -354,7 +460,10 @@ async function exportCases() {
   }
 }
 
-function openAddSuite(caseId: number) {
+async function openAddSuite(caseId: number) {
+  if (!suiteOptions.value.length) {
+    await loadSuites()
+  }
   addSuiteForm.value = { suite_id: null, case_id: caseId }
   showAddSuiteModal.value = true
 }
@@ -377,6 +486,10 @@ async function doAddToSuite() {
 }
 
 onMounted(async () => {
+  const queryAppId = typeof route.query.application_id === 'string' ? Number(route.query.application_id) : null
+  if (queryAppId != null && !Number.isNaN(queryAppId)) {
+    filterAppId.value = queryAppId
+  }
   await Promise.all([loadApps(), loadCases()])
 })
 </script>

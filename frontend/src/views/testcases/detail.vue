@@ -7,7 +7,7 @@
       </n-breadcrumb>
       <n-space>
         <n-button @click="loadPage">刷新</n-button>
-        <n-button v-if="testCase?.source_recording_id" @click="router.push(`/recording/recordings/${testCase.source_recording_id}`)">来源录制</n-button>
+        <n-button v-if="testCase?.source_recording_id" @click="router.push(`/recording/recordings/${testCase!.source_recording_id}`)">来源录制</n-button>
         <n-button type="primary" @click="startReplay" :disabled="!testCase">发起回放</n-button>
         <n-button v-if="canEdit" type="default" @click="openEdit">编辑</n-button>
         <n-button v-if="canEdit" @click="cloneCase" :loading="cloning">克隆</n-button>
@@ -46,7 +46,7 @@
             <n-dropdown
               v-if="canEdit"
               trigger="click"
-              :options="governanceOptions.map(o => ({ ...o, disabled: o.value === testCase.governance_status }))"
+              :options="governanceOptions.map(o => ({ ...o, disabled: o.value === testCase?.governance_status }))"
               @select="quickSwitchGovernance"
             >
               <n-button size="tiny" quaternary>切换 ▾</n-button>

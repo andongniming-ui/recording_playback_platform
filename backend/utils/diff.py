@@ -133,9 +133,14 @@ def _convert_patterns_to_deepdiff_regex(patterns: list[str]) -> list[str]:
     for pattern in patterns:
         # 移除首尾 ^ $ 锚点，因为我们要做正则匹配
         clean_pattern = pattern.strip("^$")
-        # 匹配任意路径下的该字段：root[...field...]
-        # DeepDiff 的 exclude_regex_paths 使用 Python 正则格式
-        result.append(rf"root(\[[^\]]+\])*\[.*{clean_pattern}.*\]")
+        # 对纯字段名模式使用更严格的“token 边界”匹配，避免 count 误伤 account_no。
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", clean_pattern):
+            result.append(
+                rf"root(\[[^\]]+\])*\['[^']*(?<![A-Za-z0-9]){re.escape(clean_pattern)}(?![A-Za-z0-9])[^']*'\]"
+            )
+        else:
+            # DeepDiff 的 exclude_regex_paths 使用 Python 正则格式
+            result.append(rf"root(\[[^\]]+\])*\[.*{clean_pattern}.*\]")
     return result
 
 

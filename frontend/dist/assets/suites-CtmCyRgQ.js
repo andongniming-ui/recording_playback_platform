@@ -1,1 +1,0 @@
-import{a as e}from"./index-CXjJCXf5.js";const i={list:s=>e.get("/suites",{params:s}),create:s=>e.post("/suites",s),get:s=>e.get(`/suites/${s}`),update:(s,t)=>e.put(`/suites/${s}`,t),delete:s=>e.delete(`/suites/${s}`),setCases:(s,t)=>e.put(`/suites/${s}/cases`,t),run:s=>e.post(`/suites/${s}/run`)};export{i as s};

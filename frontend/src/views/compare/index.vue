@@ -13,11 +13,11 @@
 
       <!-- 右：Diff 查看器 -->
       <n-grid-item>
-        <n-card title="响应差异查看">
-          <n-space vertical :size="8">
-            <n-input v-model:value="resultId" placeholder="输入回放结果 ID" style="width:200px" />
-            <n-button type="primary" @click="loadDiff">查看 Diff</n-button>
-            <template v-if="diffData">
+      <n-card title="响应差异查看">
+        <n-space vertical :size="8">
+          <n-input v-model:value="resultId" placeholder="输入回放结果 ID" style="width:200px" />
+          <n-button type="primary" @click="loadDiff">查看 Diff</n-button>
+          <template v-if="diffData">
               <n-grid :cols="2" :x-gap="8" style="margin-top:8px">
                 <n-grid-item>
                   <n-text strong>期望响应</n-text>
@@ -31,7 +31,27 @@
               <n-card v-if="diffData.diff_result" title="差异详情" size="small" style="margin-top:8px">
                 <pre style="background:#fffbe6;padding:8px;border-radius:4px;font-size:12px;max-height:300px;overflow:auto;white-space:pre-wrap;color:#d03050">{{ formatJson(diffData.diff_result) }}</pre>
               </n-card>
-              <n-alert v-else type="success">无差异，响应一致</n-alert>
+              <n-card v-if="sourceRecording" title="来源录制链路" size="small" style="margin-top:8px">
+                <template #header-extra>
+                  <n-space align="center" :size="8">
+                    <n-tag type="info" size="small">来源用例 #{{ sourceTestCase?.id || '-' }}</n-tag>
+                    <n-button v-if="sourceRecording.id" size="small" @click="router.push(`/recording/recordings/${sourceRecording.id}`)">
+                      打开录制详情
+                    </n-button>
+                  </n-space>
+                </template>
+                <n-descriptions bordered :column="2" size="small">
+                  <n-descriptions-item label="请求">{{ sourceRecording.request_method }} {{ sourceRecording.request_uri }}</n-descriptions-item>
+                  <n-descriptions-item label="交易码">{{ sourceRecording.transaction_code || '-' }}</n-descriptions-item>
+                  <n-descriptions-item label="治理状态">{{ sourceRecording.governance_status }}</n-descriptions-item>
+                  <n-descriptions-item label="子调用概览">{{ sourceRecordingSubCallSummary || '-' }}</n-descriptions-item>
+                </n-descriptions>
+                <div style="margin-top:12px">
+                  <SubCallPanel :sub-calls="sourceRecording.sub_calls" />
+                </div>
+              </n-card>
+              <n-alert v-else-if="sourceLookupState === 'missing'" type="warning">已查询到回放结果，但未找到对应的来源录制</n-alert>
+              <n-alert v-else-if="sourceLookupState === 'empty'" type="info">该回放结果未关联来源录制</n-alert>
             </template>
           </n-space>
         </n-card>
@@ -64,12 +84,18 @@
 
 <script setup lang="ts">
 import { ref, onMounted, h } from 'vue'
-import { NSpace, NGrid, NGridItem, NCard, NDataTable, NButton, NModal, NForm, NFormItem, NInput, NSelect, NText, NAlert, NPopconfirm, useMessage } from 'naive-ui'
+import { useRouter } from 'vue-router'
+import { NSpace, NGrid, NGridItem, NCard, NDataTable, NButton, NModal, NForm, NFormItem, NInput, NSelect, NText, NAlert, NPopconfirm, NDescriptions, NDescriptionsItem, NTag, useMessage } from 'naive-ui'
 import { compareApi } from '@/api/compare'
 import { replayApi } from '@/api/replays'
+import { testCaseApi } from '@/api/testcases'
+import { recordingApi } from '@/api/recordings'
 import { useUserStore } from '@/store/user'
+import SubCallPanel from '@/components/recording/SubCallPanel.vue'
+import { buildRecordingSubCallSummary, parseRecordingSubCalls } from '@/utils/recording'
 
 const message = useMessage()
+const router = useRouter()
 const userStore = useUserStore()
 const canEdit = userStore.role === 'admin' || userStore.role === 'editor'
 const rules = ref<any[]>([])
@@ -77,6 +103,10 @@ const ruleLoading = ref(false)
 const showModal = ref(false)
 const resultId = ref('')
 const diffData = ref<any>(null)
+const sourceTestCase = ref<any | null>(null)
+const sourceRecording = ref<any | null>(null)
+const sourceRecordingSubCallSummary = ref('')
+const sourceLookupState = ref<'idle' | 'found' | 'empty' | 'missing'>('idle')
 const ruleForm = ref({ name: '', scope: 'global', rule_type: 'ignore', config: '{}', is_active: true })
 
 const ruleColumns = [
@@ -140,9 +170,43 @@ async function loadDiff() {
     }
     const res = await replayApi.getResult(parsedId)
     diffData.value = res.data
+    await loadSourceRecording(res.data)
   } catch (error: any) {
     diffData.value = null
+    sourceTestCase.value = null
+    sourceRecording.value = null
+    sourceRecordingSubCallSummary.value = ''
+    sourceLookupState.value = 'idle'
     message.error(error.response?.data?.detail || '查询失败')
+  }
+}
+
+async function loadSourceRecording(result: any) {
+  sourceTestCase.value = null
+  sourceRecording.value = null
+  sourceRecordingSubCallSummary.value = ''
+  sourceLookupState.value = 'empty'
+  if (!result?.test_case_id) {
+    return
+  }
+  try {
+    const caseRes = await testCaseApi.get(result.test_case_id)
+    sourceTestCase.value = caseRes.data
+    if (caseRes.data.source_recording_id) {
+      const recordingRes = await recordingApi.getRecording(caseRes.data.source_recording_id)
+      sourceRecording.value = recordingRes.data
+      sourceRecordingSubCallSummary.value = buildRecordingSubCallSummary(
+        parseRecordingSubCalls(recordingRes.data.sub_calls),
+      )
+      sourceLookupState.value = 'found'
+    } else {
+      sourceLookupState.value = 'empty'
+    }
+  } catch {
+    sourceTestCase.value = null
+    sourceRecording.value = null
+    sourceRecordingSubCallSummary.value = ''
+    sourceLookupState.value = 'missing'
   }
 }
 

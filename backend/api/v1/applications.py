@@ -24,6 +24,23 @@ async def _get_app_or_404(app_id: int, db: AsyncSession) -> Application:
     return app
 
 
+def _validate_docker_launch_config(app: Application) -> None:
+    """Validate the final persisted Docker-compose launch configuration."""
+    if (app.launch_mode or "ssh_script").lower() != "docker_compose":
+        return
+
+    missing = []
+    if not app.docker_workdir:
+        missing.append("docker_workdir")
+    if not app.docker_service_name:
+        missing.append("docker_service_name")
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail="launch_mode=docker_compose requires: " + ", ".join(missing),
+        )
+
+
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
@@ -36,7 +53,7 @@ async def list_applications(
     _: User = Depends(require_viewer),
 ):
     result = await db.execute(select(Application).offset(skip).limit(limit))
-    return result.scalars().all()
+    return [ApplicationOut.from_orm_with_meta(a) for a in result.scalars().all()]
 
 
 @router.post("", response_model=ApplicationOut, status_code=status.HTTP_201_CREATED)
@@ -45,11 +62,12 @@ async def create_application(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_editor),
 ):
-    app = Application(**payload.model_dump())
+    data = {k: (v.strip() if isinstance(v, str) else v) for k, v in payload.model_dump().items()}
+    app = Application(**data)
     db.add(app)
     await db.commit()
     await db.refresh(app)
-    return app
+    return ApplicationOut.from_orm_with_meta(app)
 
 
 @router.get("/{app_id}", response_model=ApplicationOut)
@@ -58,7 +76,8 @@ async def get_application(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_viewer),
 ):
-    return await _get_app_or_404(app_id, db)
+    app = await _get_app_or_404(app_id, db)
+    return ApplicationOut.from_orm_with_meta(app)
 
 
 @router.put("/{app_id}", response_model=ApplicationOut)
@@ -69,11 +88,18 @@ async def update_application(
     _: User = Depends(require_editor),
 ):
     app = await _get_app_or_404(app_id, db)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    update_data = payload.model_dump(exclude_unset=True)
+    # 密码为空字符串时不覆盖原有密码（前端留空 = 不修改密码）
+    if "ssh_password" in update_data and not update_data["ssh_password"]:
+        update_data.pop("ssh_password")
+    for field, value in update_data.items():
+        if isinstance(value, str):
+            value = value.strip()
         setattr(app, field, value)
+    _validate_docker_launch_config(app)
     await db.commit()
     await db.refresh(app)
-    return app
+    return ApplicationOut.from_orm_with_meta(app)
 
 
 @router.delete("/{app_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -119,20 +145,31 @@ async def mount_agent(
         from database import async_session_factory
 
         try:
-            # JDK8/legacy AREX agents may need to talk to this recorder backend
-            # proxy first instead of hitting arex-storage directly.
-            arex_url = (
-                settings.arex_agent_storage_url
-                or app.arex_storage_url
-                or settings.arex_storage_url
-            )
             agent_jar = settings.arex_agent_jar_path
-            remote_agent_path = f"/home/{app.ssh_user}/arex-agent/arex-agent.jar"
+            if (app.launch_mode or "ssh_script").lower() == "docker_compose":
+                arex_url = (
+                    settings.arex_agent_storage_url
+                    or app.docker_storage_url
+                    or app.arex_storage_url
+                    or settings.docker_agent_storage_url
+                )
+                result = await asyncio.to_thread(
+                    ssh_executor.deploy_docker_agent, app, agent_jar, arex_url
+                )
+            else:
+                # JDK8/legacy AREX agents may need to talk to this recorder backend
+                # proxy first instead of hitting arex-storage directly.
+                arex_url = (
+                    settings.arex_agent_storage_url
+                    or app.arex_storage_url
+                    or settings.arex_storage_url
+                )
+                remote_agent_path = f"/home/{app.ssh_user}/arex-agent/arex-agent.jar"
 
-            await asyncio.to_thread(ssh_executor.upload_arex_agent, app, agent_jar)
-            result = await asyncio.to_thread(
-                ssh_executor.inject_javaagent_param, app, arex_url, remote_agent_path
-            )
+                await asyncio.to_thread(ssh_executor.upload_arex_agent, app, agent_jar)
+                result = await asyncio.to_thread(
+                    ssh_executor.inject_javaagent_param, app, arex_url, remote_agent_path
+                )
             if result.startswith("ERROR:"):
                 # JDK version mismatch or other fatal configuration error
                 new_status = "error"
@@ -165,19 +202,24 @@ async def unmount_agent(
     from integration import ssh_executor
     app = await _get_app_or_404(app_id, db)
 
-    # Remove javaagent param from start.sh via sed
-    _, out1, _ = await asyncio.to_thread(
-        ssh_executor.run_command,
-        app,
-        'find ~ -maxdepth 3 -name "start.sh" -o -name "startup.sh" 2>/dev/null | head -1',
-    )
-    script_path = out1.strip()
-    if script_path:
-        await asyncio.to_thread(
+    if (app.launch_mode or "ssh_script").lower() == "docker_compose":
+        result = await asyncio.to_thread(ssh_executor.remove_docker_agent, app)
+        if result.startswith("ERROR:"):
+            raise HTTPException(status_code=400, detail=result)
+    else:
+        # Remove javaagent param from start.sh via sed
+        _, out1, _ = await asyncio.to_thread(
             ssh_executor.run_command,
             app,
-            f"sed -i '/-javaagent/d' {script_path}",
+            'find ~ -maxdepth 3 -name "start.sh" -o -name "startup.sh" 2>/dev/null | head -1',
         )
+        script_path = out1.strip()
+        if script_path:
+            await asyncio.to_thread(
+                ssh_executor.run_command,
+                app,
+                f"sed -i '/-javaagent/d' {script_path}",
+            )
 
     app.agent_status = "offline"
     await db.commit()
@@ -192,7 +234,10 @@ async def agent_status(
 ):
     from integration import ssh_executor
     app = await _get_app_or_404(app_id, db)
-    status_info = await asyncio.to_thread(ssh_executor.get_javaagent_status, app)
+    if (app.launch_mode or "ssh_script").lower() == "docker_compose":
+        status_info = await asyncio.to_thread(ssh_executor.get_docker_agent_status, app)
+    else:
+        status_info = await asyncio.to_thread(ssh_executor.get_javaagent_status, app)
 
     # Update DB agent_status based on query result
     if status_info.get("arex_agent"):

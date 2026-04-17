@@ -15,6 +15,8 @@ def _create_case(client, headers, app_id, name="nightly-case", uri="/api/nightly
         json={
             "name": name,
             "application_id": app_id,
+            "governance_status": "approved",
+            "scene_key": f"{name}|scene",
             "request_method": "GET",
             "request_uri": uri,
         },

@@ -14,6 +14,9 @@ class TestCase(Base):
     source_recording_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("recording.id"))
     status: Mapped[str] = mapped_column(String(32), default="draft")
     # 'draft'/'active'/'deprecated'
+    governance_status: Mapped[str] = mapped_column(String(32), default="candidate")
+    transaction_code: Mapped[str | None] = mapped_column(String(128))
+    scene_key: Mapped[str | None] = mapped_column(String(256))
     tags: Mapped[str | None] = mapped_column(String(512))  # comma-separated
 
     request_method: Mapped[str] = mapped_column(String(16), nullable=False)

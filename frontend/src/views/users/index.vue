@@ -36,6 +36,7 @@
 import { ref, onMounted, h } from 'vue'
 import { NSpace, NH2, NButton, NDataTable, NTag, NModal, NForm, NFormItem, NInput, NSelect, NSwitch, NText, NPopconfirm, useMessage } from 'naive-ui'
 import { userApi } from '@/api/users'
+import { formatDateTime } from '@/utils/format'
 
 const message = useMessage()
 const users = ref<any[]>([])
@@ -62,7 +63,7 @@ const columns = [
     title: '状态', key: 'is_active', width: 80,
     render: (r: any) => h(NTag, { type: r.is_active ? 'success' : 'default', size: 'small' }, () => r.is_active ? '启用' : '停用'),
   },
-  { title: '创建时间', key: 'created_at', width: 155, render: (r: any) => r.created_at?.slice(0, 19).replace('T', ' ') },
+  { title: '创建时间', key: 'created_at', width: 155, render: (r: any) => formatDateTime(r.created_at) },
   {
     title: '操作', key: 'actions', width: 120,
     render: (r: any) => h(NSpace, { size: 4 }, () => [

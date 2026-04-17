@@ -10,8 +10,8 @@ A full-featured AREX recording & replay management platform for Java JDK8 + Spri
 
 | 模块 | 说明 |
 |------|------|
-| 应用管理 | 注册目标服务，SSH 远程挂载/卸载 AREX Java Agent |
-| 录制中心 | 从 arex-storage 同步录制列表，预览请求/子调用，批量转为测试用例 |
+| 应用管理 | 注册目标服务，支持宿主机脚本和 Docker Compose 两种接入方式 |
+| 录制中心 | 管理录制会话，支持开始/停止录制，收集 arex-storage 结果，预览请求/子调用，批量转为测试用例 |
 | 测试用例库 | 用例 CRUD、克隆、标签/状态过滤、JSON 编辑器、HAR/JSON 导入导出 |
 | 回放引擎 | 并发回放（1-50），WebSocket 实时进度，AREX 自动 Mock MySQL 子调用 |
 | 差异对比 | deepdiff 全字段递归对比，JSONPath 忽略规则，自定义断言（eq/contains/regex/range） |
@@ -64,7 +64,9 @@ docker-compose up -d db
 pip install -r requirements.txt
 
 # 5. 启动后端（自动建表，创建默认管理员）
-uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+# 注意：后端使用的是 backend/ 目录内的扁平导入，需在 backend 目录下启动
+cd backend
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 # 6. 安装前端依赖并启动
 cd frontend
@@ -72,7 +74,7 @@ npm install
 npm run dev
 ```
 
-打开 http://localhost:5173，使用默认账号登录：
+打开 http://localhost:3000，使用默认账号登录：
 
 | 字段 | 值 |
 |------|----|
@@ -88,7 +90,8 @@ docker-compose up -d --build
 ```
 
 服务端口：
-- 前端：http://localhost:5173
+- 前端开发模式：http://localhost:3000
+- 前端 Docker 预览模式：http://localhost:5173
 - 后端 API：http://localhost:8000
 - API 文档：http://localhost:8000/docs
 - MySQL：localhost:3307
@@ -122,7 +125,7 @@ docker-compose up -d --build
 ```
 [目标 SpringBoot 服务 (JDK8)]
         ↕ JVM Agent
-[arex-agent.jar]  ←SSH挂载← [arex-recorder backend]
+[arex-agent.jar]  ←宿主机/Compose 注入← [arex-recorder backend]
         ↓ 录制数据上报
 [arex-storage 官方存储服务]
         ↓ REST API
@@ -134,7 +137,7 @@ docker-compose up -d --build
 ```
 
 **进程模型：** FastAPI async + APScheduler AsyncIOScheduler
-**Agent 通信：** `arex_proxy.py` 兼容旧版 AREX agent 上报协议（`batchSaveMockers` zstd 解压转发）。对于 JDK8/旧版 agent，建议配置 `AR_AREX_AGENT_STORAGE_URL` 指向本平台后端地址，让 Agent 先通过本平台代理再转发到 arex-storage。
+**Agent 通信：** `arex_proxy.py` 兼容旧版 AREX agent 上报协议（`batchSaveMockers` zstd 解压转发）。对于 JDK8/旧版 agent，建议配置 `AR_AREX_AGENT_STORAGE_URL` 指向本平台后端地址，让 Agent 先通过本平台代理再转发到 arex-storage。Docker Compose 模式下，平台会生成 override 并注入 `JAVA_TOOL_OPTIONS`，不再依赖手工修改启动脚本。
 
 ---
 

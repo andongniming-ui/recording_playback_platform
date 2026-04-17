@@ -255,8 +255,8 @@ class TestInjectJavaagentParam:
 
         assert result.startswith("NOT_FOUND")
 
-    def test_storage_url_without_port_defaults_to_8080(self):
-        """If arex_storage_url has no port, default port 8080 is used."""
+    def test_storage_url_without_port_defaults_to_8093(self):
+        """If arex_storage_url has no port, default port 8093 is used."""
         captured_sed = []
 
         def capture_run(app_, cmd, timeout=30):
@@ -277,8 +277,8 @@ class TestInjectJavaagentParam:
             inject_javaagent_param(app, "http://arex-storage-host", "/agent.jar")
 
         assert captured_sed
-        assert "Darex.storage.service.port=8080" in captured_sed[0], \
-            f"Default port 8080 not used: {captured_sed[0]}"
+        assert "Darex.storage.service.port=8093" in captured_sed[0], \
+            f"Default port 8093 not used: {captured_sed[0]}"
 
 
 # ---------------------------------------------------------------------------

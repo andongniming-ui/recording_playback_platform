@@ -44,11 +44,14 @@
 
 <script setup lang="ts">
 import { ref, onMounted, h } from 'vue'
+import { useRouter } from 'vue-router'
 import { NSpace, NH2, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NSelect, NSwitch, NAlert, NTag, NPopconfirm, useMessage } from 'naive-ui'
 import { scheduleApi } from '@/api/schedules'
+import { formatDateTime } from '@/utils/format'
 import { suiteApi } from '@/api/suites'
 import { useUserStore } from '@/store/user'
 
+const router = useRouter()
 const message = useMessage()
 const userStore = useUserStore()
 const canEdit = userStore.role === 'admin' || userStore.role === 'editor'
@@ -64,6 +67,15 @@ const notifyOpts = [
   { label: '企业微信', value: 'wecom' },
   { label: '不通知', value: 'none' },
 ]
+const notifyLabelMap: Record<string, string> = {
+  dingtalk: '钉钉', wecom: '企业微信', none: '不通知', generic: '通用',
+}
+const lastRunStatusTypeMap: Record<string, any> = {
+  DONE: 'success', FAILED: 'error', RUNNING: 'info', PENDING: 'default', CANCELLED: 'warning',
+}
+const lastRunStatusLabelMap: Record<string, string> = {
+  DONE: '已完成', FAILED: '失败', RUNNING: '运行中', PENDING: '待执行', CANCELLED: '已取消',
+}
 
 const form = ref({ name: '', suite_id: null as number | null, cron_expr: '0 9 * * *', is_active: true, notify_type: null as string | null, notify_webhook: '' })
 
@@ -74,11 +86,13 @@ const columns = [
     title: '状态', key: 'is_active', width: 80,
     render: (r: any) => h(NTag, { type: r.is_active ? 'success' : 'default', size: 'small' }, () => r.is_active ? '启用' : '停用'),
   },
-  { title: '通知', key: 'notify_type', width: 80, render: (r: any) => r.notify_type || '-' },
-  { title: '上次运行', key: 'last_run_at', width: 155, render: (r: any) => r.last_run_at?.slice(0, 19).replace('T', ' ') || '-' },
+  { title: '通知', key: 'notify_type', width: 80, render: (r: any) => notifyLabelMap[r.notify_type] || r.notify_type || '-' },
+  { title: '上次运行', key: 'last_run_at', width: 155, render: (r: any) => formatDateTime(r.last_run_at) },
   {
     title: '上次结果', key: 'last_run_status', width: 90,
-    render: (r: any) => r.last_run_status ? h(NTag, { type: r.last_run_status === 'DONE' ? 'success' : 'error', size: 'small' }, () => r.last_run_status) : '-',
+    render: (r: any) => r.last_run_status
+      ? h(NTag, { type: lastRunStatusTypeMap[r.last_run_status] || 'default', size: 'small' }, () => lastRunStatusLabelMap[r.last_run_status] || r.last_run_status)
+      : '-',
   },
   {
     title: '操作', key: 'actions', width: 180,
@@ -135,7 +149,11 @@ async function deleteSchedule(id: number) {
 }
 
 async function triggerNow(id: number) {
-  try { await scheduleApi.trigger(id); message.success('已触发') } catch (error: any) { message.error(error.response?.data?.detail || '触发失败') }
+  try {
+    await scheduleApi.trigger(id)
+    message.success('已触发，可到回放历史查看执行进度')
+    router.push('/replay/history')
+  } catch (error: any) { message.error(error.response?.data?.detail || '触发失败') }
 }
 
 onMounted(async () => {

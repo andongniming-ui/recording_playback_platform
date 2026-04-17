@@ -7,6 +7,8 @@ import re
 import shlex
 import time
 from pathlib import Path
+from urllib.parse import urlparse
+import json
 import paramiko
 from models.application import Application
 
@@ -49,7 +51,7 @@ def test_connection(app: Application) -> dict:
         _, stdout, _ = client.exec_command("echo ok")
         out = stdout.read().decode().strip()
         client.close()
-        return {"success": out == "ok", "message": "SSH connection successful"}
+        return {"success": out == "ok", "message": "连接成功"}
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -133,6 +135,229 @@ def _mkdir_p(sftp: paramiko.SFTPClient, remote_dir: str) -> None:
             sftp.stat(current)
         except FileNotFoundError:
             sftp.mkdir(current)
+
+
+def _is_docker_mode(app: Application) -> bool:
+    """Return whether the app should be managed as a docker-compose workload."""
+    return (getattr(app, "launch_mode", "") or "").lower() == "docker_compose"
+
+
+def _resolve_agent_storage_url(app: Application, default_url: str) -> str:
+    """Resolve the AREX storage URL that the target JVM should use."""
+    if _is_docker_mode(app):
+        return (
+            getattr(app, "docker_storage_url", None)
+            or getattr(app, "arex_storage_url", None)
+            or default_url
+        )
+    return getattr(app, "arex_storage_url", None) or default_url
+
+
+def _resolve_docker_workdir(app: Application) -> str:
+    workdir = getattr(app, "docker_workdir", None) or ""
+    return workdir.strip().rstrip("/")
+
+
+def _resolve_docker_compose_file(app: Application) -> str:
+    compose_file = getattr(app, "docker_compose_file", None) or "docker-compose.yml"
+    if Path(compose_file).is_absolute():
+        return compose_file
+    workdir = _resolve_docker_workdir(app)
+    return f"{workdir}/{compose_file}" if workdir else compose_file
+
+
+def _resolve_docker_override_file(app: Application) -> str:
+    workdir = _resolve_docker_workdir(app)
+    override_file = ".arex-recorder/docker-compose.arex.override.yml"
+    return f"{workdir}/{override_file}" if workdir else override_file
+
+
+def _resolve_docker_agent_path(app: Application) -> str:
+    agent_path = getattr(app, "docker_agent_path", None) or "/opt/arex/arex-agent.jar"
+    return agent_path
+
+
+def _split_storage_host_port(storage_url: str | None, default_port: str) -> tuple[str, str]:
+    """Parse a storage URL into host and port, ignoring scheme/path/query noise."""
+    raw = (storage_url or "").strip()
+    if not raw:
+        return "", default_port
+    candidate = raw if "://" in raw else f"http://{raw}"
+    parsed = urlparse(candidate)
+    host = parsed.hostname or parsed.netloc or raw
+    port = str(parsed.port) if parsed.port else default_port
+    return host, port
+
+
+def _remote_path_exists(app: Application, remote_path: str) -> bool:
+    """Return whether a remote path exists on the Docker host."""
+    exit_code, _, _ = run_command(app, f"test -f {shlex.quote(remote_path)}", timeout=15)
+    return exit_code == 0
+
+
+def render_docker_compose_override(
+    app: Application,
+    arex_storage_url: str,
+    agent_host_path: str,
+    agent_container_path: str,
+) -> str:
+    """Render docker-compose override content for AREX agent injection.
+
+    agent_host_path is the file on the Docker host.
+    agent_container_path is the path visible inside the container/JVM.
+    """
+    service_name = getattr(app, "docker_service_name", None) or app.name
+    storage_host, storage_port = _split_storage_host_port(arex_storage_url, "8093")
+
+    sample_rate_pct = max(0, min(100, int(round(float(getattr(app, "sample_rate", 1.0) or 0) * 100))))
+    java_tool_options = (
+        f"-javaagent:{agent_container_path}"
+        f" -Darex.service.name={app.arex_app_id or app.name}"
+        f" -Darex.storage.service.host={storage_host}"
+        f" -Darex.storage.service.port={storage_port}"
+        f" -Darex.record.rate={sample_rate_pct}"
+    )
+    java_tool_options = json.dumps(java_tool_options, ensure_ascii=False)
+    agent_mount_path = _resolve_docker_agent_path(app)
+
+    return (
+        "services:\n"
+        f"  {service_name}:\n"
+        "    extra_hosts:\n"
+        "      - \"host.docker.internal:host-gateway\"\n"
+        "    environment:\n"
+        f"      JAVA_TOOL_OPTIONS: {java_tool_options}\n"
+        "    volumes:\n"
+        f"      - \"{agent_host_path}:{agent_mount_path}:ro\"\n"
+    )
+
+
+def _run_docker_compose(app: Application, command: str, timeout: int = 90) -> tuple[int, str, str]:
+    """Run a docker compose command in the target workdir."""
+    workdir = _resolve_docker_workdir(app)
+    if not workdir:
+        return 1, "", "docker_workdir is required"
+    return run_command(app, f"cd {shlex.quote(workdir)} && {command}", timeout=timeout)
+
+
+def _run_docker_compose_with_fallback(app: Application, command: str, timeout: int = 90) -> tuple[int, str, str]:
+    """Run docker compose, falling back to legacy docker-compose if needed."""
+    exit_code, out, err = _run_docker_compose(app, command, timeout=timeout)
+    if exit_code == 0:
+        return exit_code, out, err
+    if "docker compose" not in command:
+        return exit_code, out, err
+    legacy_command = command.replace("docker compose", "docker-compose", 1)
+    return _run_docker_compose(app, legacy_command, timeout=timeout)
+
+
+def deploy_docker_agent(app: Application, local_agent_jar_path: str, arex_storage_url: str) -> str:
+    """Upload AREX agent and start/recreate the docker-compose service with injected env."""
+    workdir = _resolve_docker_workdir(app)
+    service_name = getattr(app, "docker_service_name", None) or app.name
+    if not workdir:
+        return "ERROR: docker_workdir is required"
+
+    agent_host_path = f"{workdir}/.arex-recorder/arex-agent.jar"
+    agent_container_path = _resolve_docker_agent_path(app)
+    override_remote_path = _resolve_docker_override_file(app)
+    override_content = render_docker_compose_override(
+        app,
+        arex_storage_url,
+        agent_host_path,
+        agent_container_path,
+    )
+
+    try:
+        push_file(app, local_agent_jar_path, agent_host_path)
+        push_content(app, override_content, override_remote_path)
+        compose_file = _resolve_docker_compose_file(app)
+        compose_cmd = (
+            f"docker compose -f {shlex.quote(compose_file)} "
+            f"-f {shlex.quote(override_remote_path)} up -d --force-recreate {shlex.quote(service_name)}"
+        )
+        exit_code, out, err = _run_docker_compose_with_fallback(app, compose_cmd, timeout=180)
+        if exit_code != 0:
+            return f"ERROR: docker compose failed (exit {exit_code}): {err or out}".strip()
+        return f"OK: deployed docker agent into {compose_file}"
+    except Exception as exc:
+        logger.exception("deploy_docker_agent failed: %s", exc)
+        return f"ERROR: {exc}"
+
+
+def remove_docker_agent(app: Application) -> str:
+    """Remove AREX override file and recreate the docker-compose service without agent."""
+    workdir = _resolve_docker_workdir(app)
+    service_name = getattr(app, "docker_service_name", None) or app.name
+    if not workdir:
+        return "ERROR: docker_workdir is required"
+
+    override_remote_path = _resolve_docker_override_file(app)
+    compose_file = _resolve_docker_compose_file(app)
+    try:
+        run_command(app, f"rm -f {shlex.quote(override_remote_path)}")
+        compose_cmd = (
+            f"docker compose -f {shlex.quote(compose_file)} "
+            f"up -d --force-recreate {shlex.quote(service_name)}"
+        )
+        exit_code, out, err = _run_docker_compose_with_fallback(app, compose_cmd, timeout=180)
+        if exit_code != 0:
+            return f"ERROR: docker compose failed (exit {exit_code}): {err or out}".strip()
+        return f"OK: removed docker agent from {compose_file}"
+    except Exception as exc:
+        logger.exception("remove_docker_agent failed: %s", exc)
+        return f"ERROR: {exc}"
+
+
+def get_docker_agent_status(app: Application) -> dict:
+    """Check whether the docker-compose service is running with AREX agent env."""
+    workdir = _resolve_docker_workdir(app)
+    service_name = getattr(app, "docker_service_name", None) or app.name
+    if not workdir:
+        return {"status": "NOT_CONFIGURED", "pid": None, "arex_agent": False}
+
+    compose_file = _resolve_docker_compose_file(app)
+    override_remote_path = _resolve_docker_override_file(app)
+    override_exists = _remote_path_exists(app, override_remote_path)
+    if override_exists:
+        ps_cmd = (
+            f"docker compose -f {shlex.quote(compose_file)} "
+            f"-f {shlex.quote(override_remote_path)} ps -q {shlex.quote(service_name)}"
+        )
+    else:
+        ps_cmd = (
+            f"docker compose -f {shlex.quote(compose_file)} "
+            f"ps -q {shlex.quote(service_name)}"
+        )
+
+    exit_code, out, err = _run_docker_compose_with_fallback(app, ps_cmd, timeout=60)
+    if exit_code != 0 and override_exists:
+        base_ps_cmd = f"docker compose -f {shlex.quote(compose_file)} ps -q {shlex.quote(service_name)}"
+        exit_code, out, err = _run_docker_compose_with_fallback(app, base_ps_cmd, timeout=60)
+    if exit_code != 0:
+        logger.debug("get_docker_agent_status: ps failed: %s", err or out)
+        return {"status": "NOT_RUNNING", "pid": None, "arex_agent": False}
+
+    cid = out.strip()
+    if not cid:
+        return {"status": "NOT_RUNNING", "pid": None, "arex_agent": False}
+
+    inspect_cmd = (
+        "docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "
+        f"{shlex.quote(cid)}"
+    )
+    exit_code, env_out, env_err = run_command(app, inspect_cmd, timeout=60)
+    if exit_code != 0:
+        logger.debug("get_docker_agent_status: inspect failed: %s", env_err or env_out)
+        return {"status": "RUNNING", "pid": cid, "arex_agent": False, "cmdline": ""}
+
+    arex_present = "JAVA_TOOL_OPTIONS" in env_out and "-javaagent" in env_out
+    return {
+        "status": "RUNNING",
+        "pid": cid,
+        "arex_agent": arex_present,
+        "cmdline": env_out[:200],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -302,12 +527,7 @@ def inject_javaagent_param(app: Application, arex_storage_url: str, agent_remote
     # arex_app_id must match the appId in arex-storage so recordings can be synced.
     service_name = app.arex_app_id or app.name
 
-    storage_netloc = re.sub(r'^https?://', '', arex_storage_url).rstrip('/')
-    if ':' in storage_netloc:
-        storage_host, storage_port = storage_netloc.rsplit(':', 1)
-    else:
-        storage_host = storage_netloc
-        storage_port = "8080"
+    storage_host, storage_port = _split_storage_host_port(arex_storage_url, "8093")
 
     # Convert sample_rate (0.0–1.0) to integer percentage (0–100) for AREX agent.
     sample_rate_pct = max(0, min(100, int(round(app.sample_rate * 100))))

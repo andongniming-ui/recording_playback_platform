@@ -46,12 +46,6 @@ async def _validate_suite_entry(case_id: int, suite: Suite, db: AsyncSession) ->
     if not test_case:
         raise HTTPException(status_code=404, detail="Test case not found")
 
-    if suite.suite_type in {"smoke", "regression"} and test_case.governance_status != "approved":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Only approved test cases can be added to {suite.suite_type} suites",
-        )
-
     if test_case.scene_key:
         existing_result = await db.execute(
             select(TestCase.id)
@@ -272,7 +266,7 @@ async def list_test_cases(
     tags: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_viewer),
 ):
@@ -296,7 +290,7 @@ async def list_test_cases(
         ))
     if filters:
         stmt = stmt.where(and_(*filters))
-    stmt = stmt.order_by(TestCase.created_at.desc()).offset(skip).limit(limit)
+    stmt = stmt.order_by(TestCase.created_at.desc(), TestCase.id.desc()).offset(skip).limit(limit)
     result = await db.execute(stmt)
     return result.scalars().all()
 

@@ -18,6 +18,7 @@ from models.replay import ReplayJob, ReplayResult
 from models.test_case import TestCase
 from utils.assertions import assertions_all_passed, evaluate_assertions
 from utils.diff import compute_diff
+from utils.transaction_mapping import apply_transaction_mapping, normalize_transaction_mapping_configs
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,95 @@ def _collect_compare_rule_effects(rule: CompareRule) -> tuple[list[str], list[di
     return ignore_fields, diff_rule_entries, assertion_entries
 
 
+def _apply_header_transforms(headers: dict, transforms) -> dict:
+    if not isinstance(headers, dict):
+        headers = {}
+    result = {
+        str(key): "" if value is None else str(value)
+        for key, value in headers.items()
+    }
+    entries = _normalize_rule_entries(transforms)
+    for entry in entries:
+        transform_type = str(entry.get("type") or "replace").lower()
+        key = str(entry.get("key") or "").strip()
+        if not key:
+            continue
+        if transform_type == "remove":
+            matched = next((existing for existing in result if existing.lower() == key.lower()), None)
+            if matched:
+                result.pop(matched, None)
+            continue
+        value = "" if entry.get("value") is None else str(entry.get("value"))
+        matched = next((existing for existing in result if existing.lower() == key.lower()), None)
+        result[matched or key] = value
+    return result
+
+
+def _extract_diff_paths(diff_json: str | None, limit: int = 5) -> list[str]:
+    if not diff_json:
+        return []
+    try:
+        payload = json.loads(diff_json)
+    except Exception:
+        return []
+    paths: list[str] = []
+    for change_type, items in payload.items():
+        if not isinstance(items, dict):
+            continue
+        for raw_path in items.keys():
+            normalized = (
+                str(raw_path)
+                .replace("root", "")
+                .replace("']['", ".")
+                .replace("['", ".")
+                .replace("']", "")
+                .replace("[", ".")
+                .replace("]", "")
+                .lstrip(".")
+            )
+            if normalized and normalized not in paths:
+                paths.append(normalized)
+            if len(paths) >= limit:
+                return paths
+    return paths
+
+
+def _build_failure_reason(
+    *,
+    status_ok: bool,
+    expected_status: Optional[int],
+    actual_status: Optional[int],
+    diff_ok: bool,
+    diff_json: str | None,
+    assertions_ok: bool,
+    assertion_results: list[dict],
+    perf_ok: bool,
+    latency_ms: Optional[int],
+    perf_threshold_ms: Optional[int],
+) -> str:
+    if not status_ok:
+        return f"状态码不一致：期望 {expected_status}，实际 {actual_status}"
+    if not diff_ok:
+        diff_paths = _extract_diff_paths(diff_json)
+        if diff_paths:
+            return f"响应内容不一致：差异字段 {', '.join(diff_paths)}"
+        return "响应内容不一致"
+    if not assertions_ok:
+        failed_messages = [
+            str(item.get("message"))
+            for item in assertion_results
+            if isinstance(item, dict) and not item.get("passed", False) and item.get("message")
+        ]
+        if failed_messages:
+            return f"断言失败：{failed_messages[0]}"
+        return "断言失败"
+    return f"耗时超阈值：{latency_ms}ms > {perf_threshold_ms}ms"
+
+
+def _normalize_mappings(raw) -> list[dict]:
+    return normalize_transaction_mapping_configs(raw)
+
+
 async def _broadcast_progress(job_id: int, data: dict):
     conns = _ws_connections.get(job_id, set())
     dead = set()
@@ -122,6 +212,7 @@ async def run_replay_job(job_id: int):
         app = None
         target_host = None
         arex_storage_url = settings.arex_storage_url
+        transaction_mappings: list[dict] = []
         if resolved_application_id:
             app_result = await db.execute(
                 select(Application).where(Application.id == resolved_application_id)
@@ -130,6 +221,7 @@ async def run_replay_job(job_id: int):
             if app:
                 target_host = f"http://{app.ssh_host}:{app.service_port}"
                 arex_storage_url = app.arex_storage_url or settings.arex_storage_url
+                transaction_mappings = _normalize_mappings(app.transaction_mappings)
 
         compare_rule_stmt = select(CompareRule).where(CompareRule.is_active == True)
         if resolved_application_id is None:
@@ -177,8 +269,27 @@ async def run_replay_job(job_id: int):
 
     diff_rules.extend(_normalize_rule_entries(_load_json_value(job.diff_rules, f"replay job {job_id} diff_rules", default=[])))
     assertions_config.extend(_normalize_rule_entries(_load_json_value(job.assertions, f"replay job {job_id} assertions", default=[])))
+    base_ignore_fields.extend(_load_json_value(job.ignore_fields, f"replay job {job_id} ignore_fields", default=[]))
+    header_transforms = _load_json_value(job.header_transforms, f"replay job {job_id} header_transforms", default=[])
 
     perf_threshold_ms = job.perf_threshold_ms if job.perf_threshold_ms is not None else (app.default_perf_threshold_ms if app else None)
+    delay_ms = max(job.delay_ms or 0, 0)
+
+    # 流量放大：将每条 case 重复回放 repeat_count 次
+    job_repeat_count = max(1, job.repeat_count or 1)
+    if job_repeat_count > 1:
+        case_ids = case_ids * job_repeat_count
+        # 更新 total 为实际执行数
+        async with database.async_session_factory() as _db:
+            _result = await _db.execute(select(ReplayJob).where(ReplayJob.id == job_id))
+            _job = _result.scalar_one_or_none()
+            if _job:
+                _job.total = len(case_ids)
+                await _db.commit()
+
+    # 从 job 读取 target_host 覆盖
+    if job.target_host:
+        target_host = job.target_host
 
     semaphore = asyncio.Semaphore(job.concurrency)
     progress_lock = asyncio.Lock()
@@ -186,11 +297,15 @@ async def run_replay_job(job_id: int):
     passed = 0
     failed = 0
     errored = 0
+    job_smart_noise_reduction = job.smart_noise_reduction
+    job_retry_count = job.retry_count
 
     async def _run_one(case_id: int):
         nonlocal done_count, passed, failed, errored
         case = case_map.get(case_id)
         async with semaphore:
+            if delay_ms > 0:
+                await asyncio.sleep(delay_ms / 1000.0)
             result = await _execute_single(
                 job_id=job_id,
                 case_id=case_id,
@@ -203,7 +318,35 @@ async def run_replay_job(job_id: int):
                 assertions_config=assertions_config,
                 perf_threshold_ms=perf_threshold_ms,
                 use_mocks=job.use_sub_invocation_mocks,
+                smart_noise_reduction=job_smart_noise_reduction,
+                header_transforms=header_transforms,
+                transaction_mappings=transaction_mappings,
             )
+            # P1: 失败重试
+            for _attempt in range(job_retry_count):
+                if result.status not in ("FAIL", "ERROR", "TIMEOUT"):
+                    break
+                logger.info(
+                    "Replay case %s failed (status=%s), retrying (%d/%d)…",
+                    case_id, result.status, _attempt + 1, job_retry_count,
+                )
+                await asyncio.sleep(0.5)
+                result = await _execute_single(
+                    job_id=job_id,
+                    case_id=case_id,
+                    case=case,
+                    target_host=target_host,
+                    arex_storage_url=arex_storage_url,
+                    timeout_ms=job.timeout_ms,
+                    diff_rules=diff_rules,
+                    base_ignore_fields=base_ignore_fields,
+                    assertions_config=assertions_config,
+                    perf_threshold_ms=perf_threshold_ms,
+                    use_mocks=job.use_sub_invocation_mocks,
+                    smart_noise_reduction=job_smart_noise_reduction,
+                    header_transforms=header_transforms,
+                    transaction_mappings=transaction_mappings,
+                )
 
         async with progress_lock:
             done_count += 1
@@ -276,6 +419,9 @@ async def _execute_single(
     assertions_config=None,
     perf_threshold_ms: Optional[int] = None,
     use_mocks: bool = False,
+    smart_noise_reduction: bool = False,
+    header_transforms=None,
+    transaction_mappings: list[dict] | None = None,
 ) -> ReplayResult:
     """Execute one test case and save the result back into the placeholder row."""
     if not case:
@@ -319,6 +465,7 @@ async def _execute_single(
 
     base_url = target_host or "http://localhost:8080"
     url = f"{base_url}{case.request_uri}"
+    transaction_code = getattr(case, "transaction_code", None)
 
     headers = {}
     if case.request_headers:
@@ -331,6 +478,13 @@ async def _execute_single(
         for key, value in headers.items()
         if key.lower() not in ("host", "content-length")
     }
+    headers = _apply_header_transforms(headers, header_transforms)
+    mapped_request_body = apply_transaction_mapping(
+        case.request_body,
+        transaction_code,
+        transaction_mappings,
+        direction="request",
+    )
 
     start = time.monotonic()
     actual_status = None
@@ -351,7 +505,7 @@ async def _execute_single(
             resp = await client.request(
                 method=case.request_method or "GET",
                 url=url,
-                content=case.request_body.encode() if case.request_body else None,
+                content=mapped_request_body.encode() if mapped_request_body else None,
                 headers=headers,
             )
         actual_status = resp.status_code
@@ -384,8 +538,15 @@ async def _execute_single(
     diff_score = None
     assertion_results_json = None
     is_pass = False
+    mapped_actual_body = actual_body
 
     if status == "OK_GOT_RESPONSE":
+        mapped_actual_body = apply_transaction_mapping(
+            actual_body,
+            transaction_code,
+            transaction_mappings,
+            direction="response",
+        )
         ignore_fields = list(base_ignore_fields or [])
         if case.ignore_fields:
             try:
@@ -397,9 +558,10 @@ async def _execute_single(
 
         diff_json, diff_score = compute_diff(
             original=case.expected_response,
-            replayed=actual_body,
+            replayed=mapped_actual_body,
             diff_rules=diff_rules,
             ignore_fields=ignore_fields,
+            smart_noise_reduction=smart_noise_reduction,
         )
 
         combined_assertions = []
@@ -413,7 +575,7 @@ async def _execute_single(
 
         assertion_results = evaluate_assertions(
             assertions=combined_assertions,
-            replayed_body=actual_body,
+            replayed_body=mapped_actual_body,
             status_code=actual_status,
             diff_score=diff_score,
         )
@@ -434,16 +596,17 @@ async def _execute_single(
                 if not status_ok
                 else ("response_diff" if not diff_ok else ("assertion_failed" if not assertions_ok else "performance"))
             )
-            failure_reason = (
-                f"Status mismatch: expected {case.expected_status}, got {actual_status}"
-                if not status_ok
-                else ("Response mismatch"
-                if not diff_ok
-                else (
-                    "Assertion failed"
-                    if not assertions_ok
-                    else f"Latency {latency_ms}ms > threshold {perf_threshold_ms}ms"
-                ))
+            failure_reason = _build_failure_reason(
+                status_ok=status_ok,
+                expected_status=case.expected_status,
+                actual_status=actual_status,
+                diff_ok=diff_ok,
+                diff_json=diff_json,
+                assertions_ok=assertions_ok,
+                assertion_results=assertion_results,
+                perf_ok=perf_ok,
+                latency_ms=latency_ms,
+                perf_threshold_ms=perf_threshold_ms,
             )
 
     return await _save_result(
@@ -452,9 +615,10 @@ async def _execute_single(
         case=case,
         status=status,
         actual_status_code=actual_status,
-        actual_response=actual_body,
+        actual_response=mapped_actual_body if status == "OK_GOT_RESPONSE" else actual_body,
         expected_response=case.expected_response,
         diff_result=diff_json,
+        diff_score=diff_score,
         assertion_results=assertion_results_json,
         is_pass=is_pass,
         latency_ms=latency_ms,
@@ -474,6 +638,7 @@ async def _save_result(
     actual_response: Optional[str] = None,
     expected_response: Optional[str] = None,
     diff_result: Optional[str] = None,
+    diff_score: Optional[float] = None,
     assertion_results: Optional[str] = None,
     latency_ms: Optional[int] = None,
     failure_category: Optional[str] = None,
@@ -504,6 +669,7 @@ async def _save_result(
         replay_result.actual_response = actual_response
         replay_result.expected_response = expected_response
         replay_result.diff_result = diff_result
+        replay_result.diff_score = diff_score
         replay_result.assertion_results = assertion_results
         replay_result.is_pass = is_pass
         replay_result.latency_ms = latency_ms

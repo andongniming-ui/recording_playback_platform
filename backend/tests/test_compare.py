@@ -112,6 +112,43 @@ def test_diff_with_ignore_fields():
     assert score == 0.0
 
 
+def test_smart_noise_reduction_for_xml_keeps_account_number_diff():
+    from utils.diff import compute_diff
+
+    original = """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<response>
+  <service_id>OPEN_ACCOUNT</service_id>
+  <code>0000</code>
+  <msg>开户成功</msg>
+  <timestamp>1775888580157</timestamp>
+  <body>
+    <account_no>62226222000000017</account_no>
+    <customer_no>C001</customer_no>
+    <open_date>20260411142300</open_date>
+  </body>
+</response>"""
+    replayed = """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<response>
+  <service_id>OPEN_ACCOUNT</service_id>
+  <code>0000</code>
+  <msg>开户成功</msg>
+  <timestamp>1775892082536</timestamp>
+  <body>
+    <account_no>62226222000000019</account_no>
+    <customer_no>C001</customer_no>
+    <open_date>20260411152122</open_date>
+  </body>
+</response>"""
+
+    diff_json, score = compute_diff(original, replayed, smart_noise_reduction=True)
+
+    assert diff_json is not None
+    assert "account_no" in diff_json
+    assert "timestamp" not in diff_json
+    assert "open_date" not in diff_json
+    assert score > 0.0
+
+
 def test_diff_none_inputs():
     from utils.diff import compute_diff
 

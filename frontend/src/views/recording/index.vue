@@ -1,51 +1,82 @@
 ﻿<template>
-  <n-space vertical :size="12">
-    <n-space justify="space-between">
-      <n-h2 style="margin: 0">录制中心</n-h2>
+  <n-space vertical :size="16" class="recording-page">
+    <n-space justify="space-between" align="center">
+      <div>
+        <n-h2 style="margin: 0">录制中心</n-h2>
+        <n-text depth="3">按会话查看录制结果，按样本治理视图做批量处理。</n-text>
+      </div>
       <n-button v-if="canEdit" type="primary" @click="openCreateSession">+ 新建会话</n-button>
     </n-space>
 
-    <n-space>
-      <n-select
-        v-model:value="filterApplicationId"
-        :options="appOptions"
-        clearable
-        placeholder="请选择应用"
-        style="width: 220px"
-        @update:value="loadSessions"
-      />
-      <n-select
-        v-model:value="filterStatus"
-        :options="statusOptions"
-        clearable
-        placeholder="会话状态"
-        style="width: 160px"
-        @update:value="loadSessions"
-      />
-      <n-date-picker
-        v-model:value="filterDateRange"
-        type="daterange"
-        clearable
-        style="width: 260px"
-        @update:value="loadSessions"
-      />
-      <n-input
-        v-model:value="sessionSearch"
-        clearable
-        placeholder="搜索会话名称或应用"
-        style="width: 240px"
-        @keyup.enter="loadSessions"
-      />
-      <n-button @click="loadSessions">查询</n-button>
-      <n-button quaternary @click="resetFilters">重置</n-button>
-    </n-space>
+    <n-grid :cols="4" :x-gap="12" :y-gap="12" class="recording-summary">
+      <n-grid-item>
+        <n-card>
+          <n-statistic label="会话总数" :value="filteredSessions.length" />
+        </n-card>
+      </n-grid-item>
+      <n-grid-item>
+        <n-card>
+          <n-statistic label="已完成会话" :value="sessions.filter(item => item.status === 'done').length" />
+        </n-card>
+      </n-grid-item>
+      <n-grid-item>
+        <n-card>
+          <n-statistic label="治理分组" :value="recordingGroups.length" />
+        </n-card>
+      </n-grid-item>
+      <n-grid-item>
+        <n-card>
+          <n-statistic label="已选分组" :value="selectedRecordingIds.length" />
+        </n-card>
+      </n-grid-item>
+    </n-grid>
 
-    <n-data-table
-      :columns="sessionColumns"
-      :data="filteredSessions"
-      :loading="sessionsLoading"
-      :pagination="{ pageSize: 10 }"
-    />
+    <n-card title="查询条件">
+      <div class="recording-filter-grid">
+        <n-select
+          v-model:value="filterApplicationId"
+          :options="appOptions"
+          clearable
+          placeholder="请选择应用"
+          @update:value="loadSessions"
+        />
+        <n-select
+          v-model:value="filterStatus"
+          :options="statusOptions"
+          clearable
+          placeholder="会话状态"
+          @update:value="loadSessions"
+        />
+        <n-date-picker
+          v-model:value="filterDateRange"
+          type="daterange"
+          clearable
+          @update:value="loadSessions"
+        />
+        <n-input
+          v-model:value="sessionSearch"
+          clearable
+          placeholder="搜索会话名称或应用"
+          @keyup.enter="loadSessions"
+        />
+        <div class="recording-filter-actions">
+          <n-button type="primary" @click="loadSessions">查询</n-button>
+          <n-button quaternary @click="resetFilters">重置</n-button>
+        </div>
+      </div>
+    </n-card>
+
+    <n-card title="录制会话">
+      <template #header-extra>
+        <n-tag type="info" size="small">共 {{ filteredSessions.length }} 条</n-tag>
+      </template>
+      <n-data-table
+        :columns="sessionColumns"
+        :data="filteredSessions"
+        :loading="sessionsLoading"
+        :pagination="{ pageSize: 10 }"
+      />
+    </n-card>
 
     <n-card title="样本治理视图">
       <template #header-extra>
@@ -98,6 +129,17 @@
           :options="appOptions"
           placeholder="请选择应用"
         />
+      </n-form-item>
+      <n-form-item label="交易码过滤">
+        <n-input
+          v-model:value="sessionForm.recording_filter_prefixes_text"
+          type="textarea"
+          :autosize="{ minRows: 3, maxRows: 6 }"
+          placeholder="例如：A0201\n=A0201M14I\nre:^A0201.*$"
+        />
+      </n-form-item>
+      <n-form-item label="说明">
+        <n-text depth="3">推荐一行一条规则，支持前缀、精确和正则；空白表示不过滤。</n-text>
       </n-form-item>
     </n-form>
     <template #footer>
@@ -238,7 +280,7 @@
     <template #footer>
       <n-space justify="end">
         <n-button @click="showBatchResultModal = false">关闭</n-button>
-        <n-button type="primary" @click="() => { showBatchResultModal = false; router.push('/test-cases') }">
+        <n-button type="primary" @click="() => { showBatchResultModal = false; router.push('/testcases') }">
           前往测试用例库 →
         </n-button>
       </n-space>
@@ -249,13 +291,15 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NAlert, NButton, NCard, NDataTable, NDatePicker, NDrawer, NDrawerContent, NH2, NForm, NFormItem, NInput, NModal, NPopconfirm, NSpace, NSelect, NTag, useMessage } from 'naive-ui'
+import { NAlert, NButton, NCard, NDataTable, NDatePicker, NDrawer, NDrawerContent, NGrid, NGridItem, NH2, NForm, NFormItem, NInput, NModal, NPopconfirm, NSpace, NSelect, NStatistic, NTag, NText, useMessage } from 'naive-ui'
 import type { DataTableColumns, SelectOption, TagProps } from 'naive-ui'
 import { applicationApi } from '@/api/applications'
 import { formatDateTime } from '@/utils/format'
 import { recordingApi } from '@/api/recordings'
 import { testCaseApi } from '@/api/testcases'
 import { useUserStore } from '@/store/user'
+import type { RecordingSubCall } from '@/utils/recording'
+import { buildRecordingSubCallSummary, parseRecordingSubCalls } from '@/utils/recording'
 
 type SessionRow = {
   id: number
@@ -264,6 +308,7 @@ type SessionRow = {
   status: string
   total_count: number
   error_message?: string | null
+  recording_filter_prefixes?: string[] | null
   created_at: string
 }
 
@@ -276,6 +321,7 @@ type RecordingRow = {
   duplicate_count?: number | null
   response_status: number | null
   latency_ms: number | null
+  sub_calls?: RecordingSubCall[] | string | null
   recorded_at: string
 }
 
@@ -314,6 +360,7 @@ const creatingSession = ref(false)
 const sessionForm = ref({
   name: '',
   application_id: null as number | null,
+  recording_filter_prefixes_text: '',
 })
 
 const showRecordingDrawer = ref(false)
@@ -355,21 +402,24 @@ const convertForm = ref({ name: '' })
 
 const sessionStatusTagType: Record<string, NonNullable<TagProps['type']>> = {
   idle: 'default',
-  collecting: 'info',
+  active: 'info',
+  collecting: 'warning',
   done: 'success',
   error: 'error',
 }
 
 const sessionStatusLabelMap: Record<string, string> = {
-  idle: '待同步',
-  collecting: '采集中',
+  idle: '待开始',
+  active: '录制中',
+  collecting: '收集中',
   done: '已完成',
   error: '异常',
 }
 
 const statusOptions: SelectOption[] = [
-  { label: '待同步', value: 'idle' },
-  { label: '采集中', value: 'collecting' },
+  { label: '待开始', value: 'idle' },
+  { label: '录制中', value: 'active' },
+  { label: '收集中', value: 'collecting' },
   { label: '已完成', value: 'done' },
   { label: '异常', value: 'error' },
 ]
@@ -426,6 +476,12 @@ const sessionColumns: DataTableColumns<SessionRow> = [
     render: (row) => appNameMap.value[row.application_id] || `#${row.application_id}`,
   },
   {
+    title: '交易码过滤',
+    key: 'recording_filter_prefixes',
+    width: 180,
+    render: (row) => formatPrefixSummary(row.recording_filter_prefixes),
+  },
+  {
     title: '状态',
     key: 'status',
     width: 100,
@@ -452,9 +508,14 @@ const sessionColumns: DataTableColumns<SessionRow> = [
     render: (row) =>
       h(NSpace, { size: 4 }, () => [
         h(NButton, { size: 'tiny', onClick: () => router.push(`/recording/sessions/${row.id}`) }, () => '会话详情'),
-        ...(canEdit ? [h(NButton, { size: 'tiny', type: 'info', onClick: () => syncSession(row.id) }, () => '同步')] : []),
+        ...(canEdit && row.status === 'idle'
+          ? [h(NButton, { size: 'tiny', type: 'primary', onClick: () => startSession(row.id) }, () => '开始录制')]
+          : []),
+        ...(canEdit && row.status === 'active'
+          ? [h(NButton, { size: 'tiny', type: 'warning', onClick: () => stopSession(row.id) }, () => '停止录制')]
+          : []),
         h(NButton, { size: 'tiny', onClick: () => viewRecordings(row) }, () => '查看录制'),
-        ...(canEdit ? [
+        ...(canEdit && row.status !== 'active' && row.status !== 'collecting' ? [
           h(NPopconfirm, { onPositiveClick: () => deleteSession(row.id) }, {
             default: () => '确认删除该会话及其所有录制数据？',
             trigger: () => h(NButton, { size: 'tiny', type: 'error' }, () => '删除'),
@@ -478,6 +539,15 @@ const recordingColumns: DataTableColumns<RecordingRow> = [
   { title: '交易码', key: 'transaction_code', width: 140, render: (row) => row.transaction_code || '-' },
   { title: '治理状态', key: 'governance_status', width: 100, render: (row) => governanceLabelMap[row.governance_status] || row.governance_status || '-' },
   { title: '重复', key: 'duplicate_count', width: 70, render: (row) => row.duplicate_count ?? 1 },
+  {
+    title: '子调用',
+    key: 'sub_calls',
+    width: 140,
+    render: (row) => {
+      const summary = buildRecordingSubCallSummary(parseRecordingSubCalls(row.sub_calls))
+      return summary === '无细分' ? '-' : summary
+    },
+  },
   { title: '响应码', key: 'response_status', width: 80 },
   {
     title: '耗时',
@@ -627,8 +697,40 @@ function openCreateSession() {
   sessionForm.value = {
     name: '',
     application_id: null,
+    recording_filter_prefixes_text: '',
   }
   showSessionModal.value = true
+}
+
+function parsePrefixList(raw: string): string[] {
+  const text = raw.trim()
+  if (!text) {
+    return []
+  }
+
+  const hasStructuredSeparator = /[\n;；]/.test(text)
+  if (hasStructuredSeparator) {
+    return text
+      .split(/[\n;；]+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  }
+
+  if (/^(?:re:|regex:|=|\/).*/i.test(text)) {
+    return [text]
+  }
+
+  return text
+    .split(/[，,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function formatPrefixSummary(prefixes?: string[] | null) {
+  if (!prefixes || prefixes.length === 0) {
+    return '-'
+  }
+  return prefixes.join(', ')
 }
 
 async function createSession() {
@@ -639,7 +741,12 @@ async function createSession() {
 
   creatingSession.value = true
   try {
-    await recordingApi.createSession(sessionForm.value)
+    const prefixes = parsePrefixList(sessionForm.value.recording_filter_prefixes_text)
+    await recordingApi.createSession({
+      application_id: sessionForm.value.application_id,
+      name: sessionForm.value.name,
+      recording_filter_prefixes: prefixes.length > 0 ? prefixes : undefined,
+    })
     message.success('录制会话创建成功')
     showSessionModal.value = false
     await Promise.all([loadSessions(), loadRecordingGroups()])
@@ -650,13 +757,23 @@ async function createSession() {
   }
 }
 
-async function syncSession(sessionId: number) {
+async function startSession(sessionId: number) {
   try {
-    await recordingApi.syncSession(sessionId, {})
-    message.success('已开始同步录制数据')
+    await recordingApi.startSession(sessionId)
+    message.success('录制已开始')
     await Promise.all([loadSessions(), loadRecordingGroups()])
   } catch (error: any) {
-    message.error(error.response?.data?.detail || '启动录制同步失败')
+    message.error(error.response?.data?.detail || '开始录制失败')
+  }
+}
+
+async function stopSession(sessionId: number) {
+  try {
+    await recordingApi.stopSession(sessionId, {})
+    message.success('已停止录制，平台开始收集数据')
+    await Promise.all([loadSessions(), loadRecordingGroups()])
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '停止录制失败')
   }
 }
 
@@ -796,3 +913,44 @@ onMounted(async () => {
   await Promise.all([loadApps(), loadSessions(), loadRecordingGroups()])
 })
 </script>
+
+<style scoped>
+.recording-page {
+  width: 100%;
+}
+
+.recording-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr) minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.recording-filter-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-start;
+}
+
+.recording-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.95fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.recording-grid :deep(.n-card) {
+  border-radius: 16px;
+}
+
+.recording-grid :deep(.n-card-header) {
+  align-items: center;
+}
+
+@media (max-width: 1280px) {
+  .recording-filter-grid,
+  .recording-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

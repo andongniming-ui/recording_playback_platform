@@ -21,23 +21,29 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: arex-recorder-backend
     environment:
       AR_DB_TYPE: mysql
       AR_DB_URL: mysql+aiomysql://arex:arex123@db:3306/arex_recorder
-      AR_AREX_STORAGE_URL: http://host.docker.internal:8093
+      AR_AREX_STORAGE_URL: http://localhost:8000
       AR_SECRET_KEY: please-change-this
+      AR_NLS_MYSQL_HOST: 172.20.0.5
+      AR_NLS_MYSQL_USER: root
+      AR_NLS_MYSQL_PASSWORD: rootpass
     ports:
       - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./backend:/app
       - ./data:/app/data
       - ./ssh_keys:/app/ssh_keys
+      - /home/test/arex-agent:/home/test/arex-agent:ro
 
   frontend:
     build:

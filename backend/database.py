@@ -38,6 +38,7 @@ async def init_db():
     import models.schedule      # noqa: F401
     import models.suite         # noqa: F401
     import models.ci            # noqa: F401
+    import models.arex_mocker   # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

@@ -8,19 +8,26 @@ const router = createRouter({
       component: () => import('@/layouts/MainLayout.vue'),
       meta: { requiresAuth: true },
       children: [
-        { path: '', redirect: '/dashboard' },
-        { path: 'dashboard', component: () => import('@/views/dashboard/index.vue') },
-        { path: 'applications', component: () => import('@/views/applications/index.vue') },
-        { path: 'recording', component: () => import('@/views/recording/index.vue') },
-        { path: 'testcases', component: () => import('@/views/testcases/index.vue') },
-        { path: 'replay', component: () => import('@/views/replay/index.vue') },
-        { path: 'compare', component: () => import('@/views/compare/index.vue') },
-        { path: 'results', component: () => import('@/views/results/index.vue') },
-        { path: 'schedule', component: () => import('@/views/schedule/index.vue') },
-        { path: 'suites', component: () => import('@/views/suites/index.vue') },
-        { path: 'ci', component: () => import('@/views/ci/index.vue'), meta: { roles: ['admin'] } },
-        { path: 'users', component: () => import('@/views/users/index.vue'), meta: { roles: ['admin'] } },
-        { path: 'settings', component: () => import('@/views/settings/index.vue') },
+        { path: '', redirect: '/applications' },
+        { path: 'applications', component: () => import('@/views/applications/index.vue'), meta: { menuKey: 'applications' } },
+        { path: 'applications/:id', component: () => import('@/views/applications/detail.vue'), meta: { menuKey: 'applications' } },
+        { path: 'recording', component: () => import('@/views/recording/index.vue'), meta: { menuKey: 'recording' } },
+        { path: 'recording/sessions/:id', component: () => import('@/views/recording/session-detail.vue'), meta: { menuKey: 'recording' } },
+        { path: 'recording/recordings/:id', component: () => import('@/views/recording/recording-detail.vue'), meta: { menuKey: 'recording' } },
+        { path: 'testcases', component: () => import('@/views/testcases/index.vue'), meta: { menuKey: 'testcases' } },
+        { path: 'testcases/:id', component: () => import('@/views/testcases/detail.vue'), meta: { menuKey: 'testcases' } },
+        { path: 'replay', component: () => import('@/views/replay/index.vue'), meta: { menuKey: 'replay' } },
+        { path: 'replay/history', component: () => import('@/views/replay/history.vue'), meta: { menuKey: 'replay-history' } },
+        { path: 'results', component: () => import('@/views/results/index.vue'), meta: { menuKey: 'results' } },
+        { path: 'results/:jobId', component: () => import('@/views/results/job-detail.vue'), meta: { menuKey: 'results' } },
+        { path: 'dashboard', component: () => import('@/views/dashboard/index.vue'), meta: { menuKey: 'dashboard' } },
+        { path: 'suites', component: () => import('@/views/suites/index.vue'), meta: { menuKey: 'suites' } },
+        { path: 'suites/:id', component: () => import('@/views/suites/detail.vue'), meta: { menuKey: 'suites' } },
+        { path: 'schedule', component: () => import('@/views/schedule/index.vue'), meta: { menuKey: 'schedule' } },
+        { path: 'compare', component: () => import('@/views/compare/index.vue'), meta: { menuKey: 'compare' } },
+        { path: 'settings', component: () => import('@/views/settings/index.vue'), meta: { menuKey: 'settings' } },
+        { path: 'ci', component: () => import('@/views/ci/index.vue'), meta: { roles: ['admin'], menuKey: 'ci' } },
+        { path: 'users', component: () => import('@/views/users/index.vue'), meta: { roles: ['admin'], menuKey: 'users' } },
       ],
     },
     {
@@ -29,7 +36,7 @@ const router = createRouter({
     },
     {
       path: '/:pathMatch(.*)*',
-      redirect: '/dashboard',
+      redirect: '/applications',
     },
   ],
 })
@@ -48,11 +55,11 @@ router.beforeEach((to) => {
   }
 
   if (to.path === '/login' && token) {
-    return '/dashboard'
+    return '/applications'
   }
 
   if (allowedRoles.length > 0 && !allowedRoles.includes(role)) {
-    return '/dashboard'
+    return '/applications'
   }
 
   return true

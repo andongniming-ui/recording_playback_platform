@@ -40,6 +40,12 @@
     </n-grid>
 
     <n-card title="回放任务列表">
+      <template #header-extra>
+        <n-space>
+          <n-button size="small" @click="loadJobs">刷新</n-button>
+          <n-button size="small" @click="router.push('/replay/history')">回放历史</n-button>
+        </n-space>
+      </template>
       <n-data-table :columns="columns" :data="jobs" :loading="loading" :pagination="{ pageSize: 10 }" />
     </n-card>
   </n-space>
@@ -59,10 +65,12 @@
 
 <script setup lang="ts">
 import { h, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { NButton, NCard, NDataTable, NDrawer, NDrawerContent, NGrid, NGridItem, NSpace, NSelect, NStatistic, NTag, useMessage } from 'naive-ui'
 import type { DataTableColumns, SelectOption, TagProps } from 'naive-ui'
 import { applicationApi } from '@/api/applications'
 import { replayApi } from '@/api/replays'
+import { formatDateTime } from '@/utils/format'
 
 type JobRow = {
   id: number
@@ -84,6 +92,7 @@ type ResultRow = {
   failure_reason: string | null
 }
 
+const router = useRouter()
 const jobStatusTagType: Record<string, NonNullable<TagProps['type']>> = {
   DONE: 'success',
   RUNNING: 'info',
@@ -164,10 +173,11 @@ const columns: DataTableColumns<JobRow> = [
   {
     title: '操作',
     key: 'actions',
-    width: 170,
+    width: 220,
     render: (row) =>
       h(NSpace, { size: 4 }, () => [
-        h(NButton, { size: 'tiny', onClick: () => openDrawer(row.id) }, () => '查看详情'),
+        h(NButton, { size: 'tiny', onClick: () => router.push(`/results/${row.id}`) }, () => '查看详情'),
+        h(NButton, { size: 'tiny', onClick: () => openDrawer(row.id) }, () => '快速看'),
         h(NButton, { size: 'tiny', type: 'info', onClick: () => openReport(row.id) }, () => '查看报告'),
       ]),
   },
@@ -195,19 +205,21 @@ const resultColumns: DataTableColumns<ResultRow> = [
   { title: '失败原因', key: 'failure_reason', ellipsis: { tooltip: true } },
 ]
 
-function formatDateTime(value?: string) {
-  return value ? value.slice(0, 19).replace('T', ' ') : '-'
-}
 
 async function openReport(jobId: number) {
   try {
     const res = await replayApi.getReport(jobId)
     const blob = new Blob([res.data], { type: 'text/html;charset=utf-8' })
     const url = URL.createObjectURL(blob)
-    window.open(url, '_blank', 'noopener')
-    setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `replay_report_${jobId}.html`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
   } catch (error: any) {
-    message.error(error.response?.data?.detail || '加载报告失败')
+    message.error(error.response?.data?.detail || '导出报告失败')
   }
 }
 

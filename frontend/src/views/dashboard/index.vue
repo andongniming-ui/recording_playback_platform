@@ -1,5 +1,16 @@
 <template>
   <n-space vertical :size="16">
+    <n-card title="快捷入口">
+      <n-space wrap>
+        <n-button type="primary" @click="router.push('/applications')">应用管理</n-button>
+        <n-button @click="router.push('/recording')">录制中心</n-button>
+        <n-button @click="router.push('/testcases')">测试用例</n-button>
+        <n-button @click="router.push('/replay')">发起回放</n-button>
+        <n-button @click="router.push('/replay/history')">回放历史</n-button>
+        <n-button @click="router.push('/results')">执行结果</n-button>
+      </n-space>
+    </n-card>
+
     <!-- 统计卡片 -->
     <n-grid :cols="4" :x-gap="16">
       <n-grid-item>
@@ -67,8 +78,9 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, h } from 'vue'
+import { useRouter } from 'vue-router'
 import {
-  NSpace, NGrid, NGridItem, NCard, NStatistic, NSelect, NDataTable, NTag, useMessage
+  NButton, NSpace, NGrid, NGridItem, NCard, NStatistic, NSelect, NDataTable, NTag, useMessage
 } from 'naive-ui'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -76,9 +88,11 @@ import { LineChart, PieChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent, TitleComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
 import { statsApi } from '@/api/stats'
+import { formatDateTime } from '@/utils/format'
 
 use([CanvasRenderer, LineChart, PieChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent])
 
+const router = useRouter()
 const message = useMessage()
 const summary = ref<any>(null)
 const trend = ref<any[]>([])
@@ -151,7 +165,11 @@ const jobColumns = [
   },
   {
     title: '时间', key: 'created_at', width: 150,
-    render: (r: any) => r.created_at?.slice(0, 19).replace('T', ' '),
+    render: (r: any) => formatDateTime(r.created_at),
+  },
+  {
+    title: '操作', key: 'actions', width: 100,
+    render: (r: any) => h(NButton, { size: 'tiny', onClick: () => router.push(`/results/${r.id}`) }, () => '查看'),
   },
 ]
 

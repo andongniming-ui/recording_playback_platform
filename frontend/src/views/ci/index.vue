@@ -67,6 +67,8 @@
 import { ref, onMounted, h } from 'vue'
 import { NSpace, NCard, NButton, NDataTable, NTag, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NAlert, NText, NPopconfirm, useMessage } from 'naive-ui'
 import { ciApi } from '@/api/ci'
+import { formatDateTime } from '@/utils/format'
+import { API_ORIGIN } from '@/config'
 
 const message = useMessage()
 const tokens = ref<any[]>([])
@@ -76,7 +78,7 @@ const showToken = ref(false)
 const saving = ref(false)
 const newToken = ref('')
 const form = ref({ name: '', scope: 'trigger', expires_days: null as number | null })
-const baseUrl = window.location.origin
+const baseUrl = API_ORIGIN
 
 const tokenColumns = [
   { title: '名称', key: 'name' },
@@ -86,7 +88,7 @@ const tokenColumns = [
     render: (r: any) => h(NTag, { type: r.is_active ? 'success' : 'default', size: 'small' }, () => r.is_active ? '有效' : '已撤销'),
   },
   { title: '过期时间', key: 'expires_at', width: 155, render: (r: any) => r.expires_at?.slice(0, 10) || '永不过期' },
-  { title: '最后使用', key: 'last_used_at', width: 155, render: (r: any) => r.last_used_at?.slice(0, 19).replace('T', ' ') || '-' },
+  { title: '最后使用', key: 'last_used_at', width: 155, render: (r: any) => formatDateTime(r.last_used_at) },
   {
     title: '操作', key: 'actions', width: 80,
     render: (r: any) => h(NPopconfirm, { onPositiveClick: () => revokeToken(r.id) }, {

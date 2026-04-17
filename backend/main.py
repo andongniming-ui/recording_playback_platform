@@ -32,9 +32,58 @@ async def _create_default_admin():
             logger.info("Default admin user created (admin/admin123)")
 
 
+async def _migrate_db():
+    """为已有表追加新列（幂等：列已存在时跳过）。"""
+    from sqlalchemy import text
+    from database import engine
+
+    migrations = [
+        "ALTER TABLE application ADD COLUMN default_ignore_fields TEXT",
+        "ALTER TABLE application ADD COLUMN default_assertions TEXT",
+        "ALTER TABLE application ADD COLUMN transaction_mappings TEXT",
+        "ALTER TABLE application ADD COLUMN default_perf_threshold_ms INTEGER",
+        "ALTER TABLE application ADD COLUMN launch_mode VARCHAR(32) DEFAULT 'ssh_script'",
+        "ALTER TABLE application ADD COLUMN docker_workdir VARCHAR(512)",
+        "ALTER TABLE application ADD COLUMN docker_compose_file VARCHAR(512)",
+        "ALTER TABLE application ADD COLUMN docker_service_name VARCHAR(128)",
+        "ALTER TABLE application ADD COLUMN docker_storage_url VARCHAR(512)",
+        "ALTER TABLE application ADD COLUMN docker_agent_path VARCHAR(512)",
+        "ALTER TABLE replay_job ADD COLUMN use_sub_invocation_mocks BOOLEAN DEFAULT 0",
+        "ALTER TABLE replay_job ADD COLUMN diff_rules TEXT",
+        "ALTER TABLE replay_job ADD COLUMN assertions TEXT",
+        "ALTER TABLE replay_job ADD COLUMN perf_threshold_ms INTEGER",
+        "ALTER TABLE replay_job ADD COLUMN smart_noise_reduction BOOLEAN DEFAULT 0",
+        "ALTER TABLE replay_job ADD COLUMN retry_count INTEGER DEFAULT 0",
+        "ALTER TABLE replay_job ADD COLUMN ignore_fields TEXT",
+        "ALTER TABLE replay_job ADD COLUMN delay_ms INTEGER DEFAULT 0",
+        "ALTER TABLE replay_job ADD COLUMN repeat_count INTEGER DEFAULT 1",
+        "ALTER TABLE replay_job ADD COLUMN header_transforms TEXT",
+        "ALTER TABLE replay_job ADD COLUMN target_host VARCHAR(512)",
+        "ALTER TABLE replay_job ADD COLUMN webhook_url VARCHAR(512)",
+        "ALTER TABLE replay_job ADD COLUMN notify_type VARCHAR(32)",
+        "ALTER TABLE replay_result ADD COLUMN diff_score REAL",
+        "ALTER TABLE recording ADD COLUMN transaction_code VARCHAR(128)",
+        "ALTER TABLE recording ADD COLUMN scene_key VARCHAR(256)",
+        "ALTER TABLE recording ADD COLUMN dedupe_hash VARCHAR(64)",
+        "ALTER TABLE recording ADD COLUMN governance_status VARCHAR(32) DEFAULT 'raw'",
+        "ALTER TABLE recording_session ADD COLUMN recording_filter_prefixes TEXT",
+        "ALTER TABLE test_case ADD COLUMN governance_status VARCHAR(32) DEFAULT 'candidate'",
+        "ALTER TABLE test_case ADD COLUMN transaction_code VARCHAR(128)",
+        "ALTER TABLE test_case ADD COLUMN scene_key VARCHAR(256)",
+        "ALTER TABLE replay_suite ADD COLUMN suite_type VARCHAR(32) DEFAULT 'regression'",
+    ]
+    async with engine.begin() as conn:
+        for sql in migrations:
+            try:
+                await conn.execute(text(sql))
+            except Exception:
+                pass  # 列已存在，忽略
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    await _migrate_db()
     await _create_default_admin()
     from core.scheduler import scheduler, load_all_schedules
     await load_all_schedules()

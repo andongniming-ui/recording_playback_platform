@@ -23,6 +23,28 @@ export interface HeaderTransform {
   value?: string
 }
 
+export interface SubCallDiffItem {
+  type?: string | null
+  operation?: string | null
+  request?: unknown
+  response?: unknown
+}
+
+export interface SubCallDiffPair {
+  index: number
+  type: string
+  recorded: SubCallDiffItem | null
+  replayed: SubCallDiffItem | null
+  side: 'both' | 'recorded_only' | 'replayed_only'
+  response_matched: boolean | null
+}
+
+export interface SubCallDiffResult {
+  recorded: SubCallDiffItem[]
+  replayed: SubCallDiffItem[]
+  pairs: SubCallDiffPair[]
+}
+
 export const replayApi = {
   list: (params?: any) => api.get('/replays', { params }),
   create: (data: any) => api.post('/replays', data),
@@ -32,4 +54,5 @@ export const replayApi = {
   getReport: (id: number) => api.get(`/replays/${id}/report`, { responseType: 'blob' }),
   getReportUrl: (id: number) => `${API_BASE_URL}/replays/${id}/report`,
   getAnalysis: (id: number) => api.get(`/replays/${id}/analysis`),
+  getSubCallDiff: (resultId: number) => api.get<SubCallDiffResult>(`/replays/results/${resultId}/sub-call-diff`),
 }

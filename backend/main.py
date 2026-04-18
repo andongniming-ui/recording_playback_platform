@@ -71,6 +71,7 @@ async def _migrate_db():
         "ALTER TABLE test_case ADD COLUMN transaction_code VARCHAR(128)",
         "ALTER TABLE test_case ADD COLUMN scene_key VARCHAR(256)",
         "ALTER TABLE replay_suite ADD COLUMN suite_type VARCHAR(32) DEFAULT 'regression'",
+        "ALTER TABLE replay_result ADD COLUMN actual_sub_calls TEXT",
     ]
     async with engine.begin() as conn:
         for sql in migrations:

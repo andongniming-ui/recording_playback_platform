@@ -71,5 +71,6 @@ class ReplayResult(Base):
 
     failure_category: Mapped[str | None] = mapped_column(String(64))
     failure_reason: Mapped[str | None] = mapped_column(Text)
+    actual_sub_calls: Mapped[str | None] = mapped_column(Text)   # JSON list of sub-calls from replay
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

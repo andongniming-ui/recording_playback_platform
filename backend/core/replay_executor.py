@@ -15,6 +15,7 @@ from models.application import Application
 from models.compare import CompareRule
 from models.recording import Recording
 from models.replay import ReplayJob, ReplayResult
+from models.arex_mocker import ArexMocker
 from models.test_case import TestCase
 from utils.assertions import assertions_all_passed, evaluate_assertions
 from utils.diff import compute_diff
@@ -435,6 +436,7 @@ async def _execute_single(
         )
 
     mock_record_id = None
+    replay_arex_record_id = None
     if use_mocks:
         if not case.source_recording_id:
             return await _save_result(
@@ -510,6 +512,7 @@ async def _execute_single(
             )
         actual_status = resp.status_code
         actual_body = resp.text
+        replay_arex_record_id = getattr(resp, "headers", {}).get("arex-record-id")
         latency_ms = int((time.monotonic() - start) * 1000)
         status = "OK_GOT_RESPONSE"
     except httpx.TimeoutException:
@@ -609,6 +612,10 @@ async def _execute_single(
                 perf_threshold_ms=perf_threshold_ms,
             )
 
+    actual_sub_calls_json = None
+    if replay_arex_record_id and status not in ("TIMEOUT", "ERROR"):
+        actual_sub_calls_json = await _fetch_replay_sub_calls(replay_arex_record_id)
+
     return await _save_result(
         job_id=job_id,
         case_id=case_id,
@@ -624,7 +631,42 @@ async def _execute_single(
         latency_ms=latency_ms,
         failure_category=failure_category,
         failure_reason=failure_reason,
+        actual_sub_calls=actual_sub_calls_json,
     )
+
+
+async def _fetch_replay_sub_calls(record_id: str) -> Optional[str]:
+    """Wait for AREX agent to finish reporting, then fetch sub-calls by record_id."""
+    await asyncio.sleep(0.3)
+    async with database.async_session_factory() as db:
+        result = await db.execute(
+            select(ArexMocker)
+            .where(
+                ArexMocker.record_id == record_id,
+                ArexMocker.is_entry_point == False,  # noqa: E712
+            )
+            .order_by(ArexMocker.id)
+        )
+        mockers = result.scalars().all()
+    if not mockers:
+        return None
+    sub_calls = []
+    for m in mockers:
+        try:
+            mocker = json.loads(m.mocker_data)
+            category = mocker.get("categoryType") or {}
+            cat_name = category.get("name") if isinstance(category, dict) else str(category)
+            target_req = mocker.get("targetRequest") or {}
+            target_resp = mocker.get("targetResponse") or {}
+            sub_calls.append({
+                "type": cat_name or m.category_name,
+                "operation": mocker.get("operationName") or "",
+                "request": target_req.get("body") if isinstance(target_req, dict) else None,
+                "response": target_resp.get("body") if isinstance(target_resp, dict) else None,
+            })
+        except Exception:
+            pass
+    return json.dumps(sub_calls, ensure_ascii=False) if sub_calls else None
 
 
 async def _save_result(
@@ -643,6 +685,7 @@ async def _save_result(
     latency_ms: Optional[int] = None,
     failure_category: Optional[str] = None,
     failure_reason: Optional[str] = None,
+    actual_sub_calls: Optional[str] = None,
 ) -> ReplayResult:
     """Update the placeholder replay result for a case, or create one if missing."""
     async with database.async_session_factory() as db:
@@ -675,6 +718,7 @@ async def _save_result(
         replay_result.latency_ms = latency_ms
         replay_result.failure_category = failure_category
         replay_result.failure_reason = failure_reason
+        replay_result.actual_sub_calls = actual_sub_calls
 
         await db.commit()
         await db.refresh(replay_result)

@@ -837,3 +837,76 @@ def test_create_replay_job_with_target_host(client, admin_headers, tc_payload):
     )
     assert resp.status_code == 201, resp.text
     assert resp.json()["target_host"] == "http://custom-host:8080"
+
+
+@pytest.mark.asyncio
+async def test_fetch_replay_sub_calls_empty(tmp_path):
+    """When no ArexMocker rows exist for record_id, returns None."""
+    import database as db_module
+    from sqlalchemy.pool import NullPool
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/t.db", poolclass=NullPool)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    from database import Base
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    original_factory = db_module.async_session_factory
+    db_module.async_session_factory = factory
+    try:
+        from core.replay_executor import _fetch_replay_sub_calls
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await _fetch_replay_sub_calls("nonexistent-id")
+        assert result is None
+    finally:
+        db_module.async_session_factory = original_factory
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_fetch_replay_sub_calls_returns_json(tmp_path):
+    """When ArexMocker rows exist, returns JSON string of sub-calls."""
+    import database as db_module
+    from sqlalchemy.pool import NullPool
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from models.arex_mocker import ArexMocker as MockerModel
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/t2.db", poolclass=NullPool)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    from database import Base
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    mocker_data = json.dumps({
+        "categoryType": {"name": "MySQL", "entryPoint": False},
+        "operationName": "SELECT * FROM car_policy",
+        "targetRequest": {"body": {"sql": "SELECT * FROM car_policy"}},
+        "targetResponse": {"body": {"rows": [{"id": 1}]}},
+    })
+    async with factory() as session:
+        session.add(MockerModel(
+            record_id="replay-001",
+            app_id="didi-car-uat",
+            category_name="MySQL",
+            is_entry_point=False,
+            mocker_data=mocker_data,
+        ))
+        await session.commit()
+
+    original_factory = db_module.async_session_factory
+    db_module.async_session_factory = factory
+    try:
+        from core.replay_executor import _fetch_replay_sub_calls
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await _fetch_replay_sub_calls("replay-001")
+        assert result is not None
+        parsed = json.loads(result)
+        assert len(parsed) == 1
+        assert parsed[0]["type"] == "MySQL"
+        assert parsed[0]["operation"] == "SELECT * FROM car_policy"
+    finally:
+        db_module.async_session_factory = original_factory
+        await engine.dispose()

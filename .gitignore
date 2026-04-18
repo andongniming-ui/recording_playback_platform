@@ -4,3 +4,4 @@ target/
 .idea/
 ssh_keys/
 .gitignore
+data/arex_recorder.db

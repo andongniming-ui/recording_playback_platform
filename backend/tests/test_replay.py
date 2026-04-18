@@ -955,3 +955,34 @@ def test_pair_sub_calls_recorded_only():
     assert len(pairs) == 1
     assert pairs[0]["side"] == "recorded_only"
     assert pairs[0]["response_matched"] is None
+
+
+def test_pair_sub_calls_replayed_only():
+    from api.v1.replays import _pair_sub_calls
+    replayed = [{"type": "MySQL", "operation": "SELECT 2", "response": {"rows": 3}}]
+    pairs = _pair_sub_calls([], replayed)
+    assert len(pairs) == 1
+    assert pairs[0]["side"] == "replayed_only"
+    assert pairs[0]["response_matched"] is None
+
+
+def test_pair_sub_calls_response_matched_true():
+    from api.v1.replays import _pair_sub_calls
+    recorded = [{"type": "MySQL", "operation": "SELECT 1", "response": {"rows": 1}}]
+    replayed = [{"type": "MySQL", "operation": "SELECT 1", "response": {"rows": 1}}]
+    pairs = _pair_sub_calls(recorded, replayed)
+    assert len(pairs) == 1
+    assert pairs[0]["response_matched"] is True
+
+
+def test_pair_sub_calls_unequal_lengths():
+    from api.v1.replays import _pair_sub_calls
+    recorded = [
+        {"type": "MySQL", "operation": "SELECT 1", "response": {"rows": 1}},
+        {"type": "HTTP", "operation": "/api/risk", "response": {"score": 10}},
+    ]
+    replayed = [{"type": "MySQL", "operation": "SELECT 1", "response": {"rows": 1}}]
+    pairs = _pair_sub_calls(recorded, replayed)
+    assert len(pairs) == 2
+    assert pairs[0]["side"] == "both"
+    assert pairs[1]["side"] == "recorded_only"

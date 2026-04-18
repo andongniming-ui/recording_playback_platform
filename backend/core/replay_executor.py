@@ -22,7 +22,9 @@ from utils.diff import compute_diff
 from utils.transaction_mapping import apply_transaction_mapping, normalize_transaction_mapping_configs
 
 logger = logging.getLogger(__name__)
-_AREX_AGENT_FLUSH_DELAY_S = 0.3  # empirical wait for AREX agent to finish async reporting
+_AREX_AGENT_FLUSH_DELAY_S = 0.3  # empirical wait for AREX agent to finish async reporting.
+# Known limitation: under high load, agent may take >300ms to flush, causing sub-calls
+# to be silently missed (actual_sub_calls will be null, frontend shows "Agent 未上报").
 
 _ws_connections: dict[int, set] = {}
 

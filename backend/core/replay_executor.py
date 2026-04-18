@@ -22,6 +22,7 @@ from utils.diff import compute_diff
 from utils.transaction_mapping import apply_transaction_mapping, normalize_transaction_mapping_configs
 
 logger = logging.getLogger(__name__)
+_AREX_AGENT_FLUSH_DELAY_S = 0.3  # empirical wait for AREX agent to finish async reporting
 
 _ws_connections: dict[int, set] = {}
 
@@ -512,7 +513,7 @@ async def _execute_single(
             )
         actual_status = resp.status_code
         actual_body = resp.text
-        replay_arex_record_id = getattr(resp, "headers", {}).get("arex-record-id")
+        replay_arex_record_id = resp.headers.get("arex-record-id")
         latency_ms = int((time.monotonic() - start) * 1000)
         status = "OK_GOT_RESPONSE"
     except httpx.TimeoutException:
@@ -613,7 +614,7 @@ async def _execute_single(
             )
 
     actual_sub_calls_json = None
-    if replay_arex_record_id and status not in ("TIMEOUT", "ERROR"):
+    if replay_arex_record_id and status in ("OK_GOT_RESPONSE", "PASS", "FAIL"):
         actual_sub_calls_json = await _fetch_replay_sub_calls(replay_arex_record_id)
 
     return await _save_result(
@@ -637,7 +638,7 @@ async def _execute_single(
 
 async def _fetch_replay_sub_calls(record_id: str) -> Optional[str]:
     """Wait for AREX agent to finish reporting, then fetch sub-calls by record_id."""
-    await asyncio.sleep(0.3)
+    await asyncio.sleep(_AREX_AGENT_FLUSH_DELAY_S)
     async with database.async_session_factory() as db:
         result = await db.execute(
             select(ArexMocker)
@@ -664,8 +665,8 @@ async def _fetch_replay_sub_calls(record_id: str) -> Optional[str]:
                 "request": target_req.get("body") if isinstance(target_req, dict) else None,
                 "response": target_resp.get("body") if isinstance(target_resp, dict) else None,
             })
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to parse ArexMocker %s: %s", m.id, exc)
     return json.dumps(sub_calls, ensure_ascii=False) if sub_calls else None
 
 

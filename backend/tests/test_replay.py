@@ -910,3 +910,48 @@ async def test_fetch_replay_sub_calls_returns_json(tmp_path):
     finally:
         db_module.async_session_factory = original_factory
         await engine.dispose()
+
+
+def test_sub_call_diff_not_found(client, admin_headers):
+    resp = client.get("/api/v1/replays/results/99999/sub-call-diff", headers=admin_headers)
+    assert resp.status_code == 404
+
+
+def test_sub_call_diff_no_sub_calls(client, admin_headers, tc_payload):
+    tc = _create_test_case(client, admin_headers, tc_payload)
+    job_resp = _create_replay_job(client, admin_headers, [tc["id"]])
+    assert job_resp.status_code == 201
+    job_id = job_resp.json()["id"]
+
+    results_resp = client.get(f"/api/v1/replays/{job_id}/results", headers=admin_headers)
+    assert results_resp.status_code == 200
+    results = results_resp.json()
+    assert len(results) >= 1
+    result_id = results[0]["id"]
+
+    resp = client.get(f"/api/v1/replays/results/{result_id}/sub-call-diff", headers=admin_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "recorded" in data
+    assert "replayed" in data
+    assert "pairs" in data
+    assert data["replayed"] == []
+
+
+def test_pair_sub_calls_both_sides():
+    from api.v1.replays import _pair_sub_calls
+    recorded = [{"type": "MySQL", "operation": "SELECT 1", "response": {"rows": 1}}]
+    replayed = [{"type": "MySQL", "operation": "SELECT 1", "response": {"rows": 2}}]
+    pairs = _pair_sub_calls(recorded, replayed)
+    assert len(pairs) == 1
+    assert pairs[0]["side"] == "both"
+    assert pairs[0]["response_matched"] is False
+
+
+def test_pair_sub_calls_recorded_only():
+    from api.v1.replays import _pair_sub_calls
+    recorded = [{"type": "MySQL", "operation": "SELECT 1", "response": {"rows": 1}}]
+    pairs = _pair_sub_calls(recorded, [])
+    assert len(pairs) == 1
+    assert pairs[0]["side"] == "recorded_only"
+    assert pairs[0]["response_matched"] is None

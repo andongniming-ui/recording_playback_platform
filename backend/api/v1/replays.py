@@ -761,3 +761,84 @@ async def replay_progress_ws(job_id: int, websocket: WebSocket):
         pass
     finally:
         unregister_ws(job_id, websocket)
+
+
+def _pair_sub_calls(recorded: list, replayed: list) -> list:
+    """Pair recorded and replayed sub-calls by sequential index."""
+    max_len = max(len(recorded), len(replayed)) if (recorded or replayed) else 0
+    pairs = []
+    for i in range(max_len):
+        rec = recorded[i] if i < len(recorded) else None
+        rep = replayed[i] if i < len(replayed) else None
+        if rec and rep:
+            side = "both"
+            try:
+                response_matched = (
+                    json.dumps(rec.get("response"), sort_keys=True)
+                    == json.dumps(rep.get("response"), sort_keys=True)
+                )
+            except Exception:
+                response_matched = False
+        elif rec:
+            side = "recorded_only"
+            response_matched = None
+        else:
+            side = "replayed_only"
+            response_matched = None
+        pairs.append({
+            "index": i + 1,
+            "type": (rec or rep or {}).get("type") or "",
+            "recorded": rec,
+            "replayed": rep,
+            "side": side,
+            "response_matched": response_matched,
+        })
+    return pairs
+
+
+@router.get("/results/{result_id}/sub-call-diff")
+async def get_sub_call_diff(
+    result_id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_viewer),
+):
+    """Return paired sub-calls for a replay result: recorded vs replayed."""
+    result_row = await db.execute(select(ReplayResult).where(ReplayResult.id == result_id))
+    result = result_row.scalar_one_or_none()
+    if not result:
+        raise HTTPException(status_code=404, detail="Replay result not found")
+
+    # Load recorded sub-calls from source recording
+    recorded_raw = []
+    if result.test_case_id:
+        case_row = await db.execute(select(TestCase).where(TestCase.id == result.test_case_id))
+        test_case = case_row.scalar_one_or_none()
+        if test_case and test_case.source_recording_id:
+            rec_row = await db.execute(
+                select(Recording).where(Recording.id == test_case.source_recording_id)
+            )
+            recording = rec_row.scalar_one_or_none()
+            if recording and recording.sub_calls:
+                try:
+                    recorded_raw = json.loads(recording.sub_calls)
+                    if not isinstance(recorded_raw, list):
+                        recorded_raw = []
+                except Exception:
+                    recorded_raw = []
+
+    # Load replayed sub-calls stored during replay execution
+    replayed_raw = []
+    if result.actual_sub_calls:
+        try:
+            replayed_raw = json.loads(result.actual_sub_calls)
+            if not isinstance(replayed_raw, list):
+                replayed_raw = []
+        except Exception:
+            replayed_raw = []
+
+    pairs = _pair_sub_calls(recorded_raw, replayed_raw)
+    return {
+        "recorded": recorded_raw,
+        "replayed": replayed_raw,
+        "pairs": pairs,
+    }

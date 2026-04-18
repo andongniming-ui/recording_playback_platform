@@ -146,12 +146,26 @@
       <n-grid :cols="2" :x-gap="16">
         <n-grid-item>
           <n-card title="期望响应（PL2 录制）" size="small">
-            <pre class="code-block">{{ prettyText(selectedResult?.expected_response) }}</pre>
+            <n-descriptions v-if="xmlEntries(selectedResult?.expected_response)" bordered :column="1" size="small" label-placement="left">
+              <n-descriptions-item
+                v-for="entry in xmlEntries(selectedResult?.expected_response)"
+                :key="entry.key"
+                :label="entry.key"
+              >{{ entry.value }}</n-descriptions-item>
+            </n-descriptions>
+            <pre v-else class="code-block">{{ prettyText(selectedResult?.expected_response) }}</pre>
           </n-card>
         </n-grid-item>
         <n-grid-item>
           <n-card title="实际响应（VT 回放）" size="small">
-            <pre class="code-block">{{ prettyText(selectedResult?.actual_response) }}</pre>
+            <n-descriptions v-if="xmlEntries(selectedResult?.actual_response)" bordered :column="1" size="small" label-placement="left">
+              <n-descriptions-item
+                v-for="entry in xmlEntries(selectedResult?.actual_response)"
+                :key="entry.key"
+                :label="entry.key"
+              >{{ entry.value }}</n-descriptions-item>
+            </n-descriptions>
+            <pre v-else class="code-block">{{ prettyText(selectedResult?.actual_response) }}</pre>
           </n-card>
         </n-grid-item>
       </n-grid>
@@ -176,27 +190,54 @@
         </div>
       </n-card>
 
-      <n-card title="差异详情" size="small">
-        <n-space vertical>
-          <div>
-            <div class="section-title">Diff 结果</div>
-            <pre class="code-block compact">{{ prettyText(selectedResult?.diff_result) }}</pre>
-          </div>
-          <div v-if="parsedAssertionResults.length > 0">
-            <div class="section-title">断言结果</div>
-            <n-space vertical :size="6">
-              <div v-for="(item, i) in parsedAssertionResults" :key="i">
-                <n-tag :type="item.passed ? 'success' : 'error'" size="small">{{ item.passed ? '通过' : '失败' }}</n-tag>
-                <span style="margin-left:8px;font-size:12px">{{ item.message }}</span>
+      <n-tabs type="line" animated>
+        <n-tab-pane name="diff" tab="差异详情">
+          <n-card size="small" :bordered="false">
+            <n-space vertical>
+              <div>
+                <div class="section-title">Diff 结果</div>
+                <pre class="code-block compact">{{ prettyText(selectedResult?.diff_result) }}</pre>
+              </div>
+              <div v-if="parsedAssertionResults.length > 0">
+                <div class="section-title">断言结果</div>
+                <n-space vertical :size="6">
+                  <div v-for="(item, i) in parsedAssertionResults" :key="i">
+                    <n-tag :type="item.passed ? 'success' : 'error'" size="small">{{ item.passed ? '通过' : '失败' }}</n-tag>
+                    <span style="margin-left:8px;font-size:12px">{{ item.message }}</span>
+                  </div>
+                </n-space>
+              </div>
+              <div v-if="selectedResult?.failure_reason">
+                <div class="section-title">失败原因</div>
+                <template v-if="failureReasonFields(selectedResult.failure_reason)">
+                  <div style="font-size:13px;color:#555;margin-bottom:8px">
+                    {{ failureReasonPrefix(selectedResult.failure_reason) }}
+                  </div>
+                  <n-space vertical :size="4">
+                    <div
+                      v-for="field in failureReasonFields(selectedResult.failure_reason)"
+                      :key="field"
+                      style="display:flex;align-items:center;gap:8px"
+                    >
+                      <n-tag type="error" size="small" style="font-family:monospace">{{ field }}</n-tag>
+                    </div>
+                  </n-space>
+                </template>
+                <pre v-else class="code-block compact">{{ selectedResult.failure_reason }}</pre>
               </div>
             </n-space>
-          </div>
-          <div v-if="selectedResult?.failure_reason">
-            <div class="section-title">失败原因</div>
-            <pre class="code-block compact">{{ selectedResult.failure_reason }}</pre>
-          </div>
-        </n-space>
-      </n-card>
+          </n-card>
+        </n-tab-pane>
+
+        <n-tab-pane name="subcall" tab="子调用对比">
+          <n-spin :show="subCallDiffLoading">
+            <SubCallDiffPanel
+              :pairs="subCallDiff?.pairs ?? []"
+              :replayed="subCallDiff?.replayed ?? []"
+            />
+          </n-spin>
+        </n-tab-pane>
+      </n-tabs>
     </n-space>
   </n-modal>
 </template>
@@ -220,6 +261,8 @@ import {
   NSelect,
   NSpin,
   NStatistic,
+  NTabPane,
+  NTabs,
   NTag,
   useMessage,
 } from 'naive-ui'
@@ -230,6 +273,8 @@ import { recordingApi } from '@/api/recordings'
 import { testCaseApi } from '@/api/testcases'
 import { formatDateTime } from '@/utils/format'
 import SubCallPanel from '@/components/recording/SubCallPanel.vue'
+import SubCallDiffPanel from '@/components/recording/SubCallDiffPanel.vue'
+import type { SubCallDiffResult } from '@/api/replays'
 import { buildRecordingSubCallSummary, parseRecordingSubCalls } from '@/utils/recording'
 
 type ReplayJobRow = {
@@ -299,6 +344,8 @@ const analysisData = ref<any>(null)
 const sourceTestCase = ref<any | null>(null)
 const sourceRecording = ref<any | null>(null)
 const sourceRecordingSubCallSummary = ref('')
+const subCallDiff = ref<SubCallDiffResult | null>(null)
+const subCallDiffLoading = ref(false)
 
 const passRate = computed(() => {
   if (!job.value || !job.value.total) return 0
@@ -458,10 +505,55 @@ function prettyText(value?: string | null) {
   try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value }
 }
 
+/** 解析 XML 字符串为 [{key, value}] 列表；非 XML 或解析失败返回 null */
+function xmlEntries(value?: string | null): Array<{ key: string; value: string }> | null {
+  if (!value) return null
+  const trimmed = value.trim()
+  if (!trimmed.startsWith('<')) return null
+  try {
+    const doc = new DOMParser().parseFromString(trimmed, 'text/xml')
+    if (doc.querySelector('parsererror')) return null
+    const root = doc.documentElement
+    const entries: Array<{ key: string; value: string }> = []
+    for (const child of Array.from(root.children)) {
+      entries.push({ key: child.tagName, value: child.textContent ?? '' })
+    }
+    return entries.length > 0 ? entries : null
+  } catch {
+    return null
+  }
+}
+
+/** 从失败原因中提取差异字段列表；格式："...差异字段 a, b, c" */
+function failureReasonFields(reason?: string | null): string[] | null {
+  if (!reason) return null
+  const match = reason.match(/差异字段\s+(.+)$/)
+  if (!match) return null
+  return match[1].split(',').map(s => s.trim()).filter(Boolean)
+}
+
+function failureReasonPrefix(reason: string): string {
+  return reason.replace(/差异字段.+$/, '').trim().replace(/:$/, '').trim()
+}
+
 function openDiff(row: ReplayResultRow) {
   selectedResult.value = row
   showDiff.value = true
   void loadSourceRecording(row)
+  void loadSubCallDiff(row.id)
+}
+
+async function loadSubCallDiff(resultId: number) {
+  subCallDiff.value = null
+  subCallDiffLoading.value = true
+  try {
+    const res = await replayApi.getSubCallDiff(resultId)
+    subCallDiff.value = res.data
+  } catch {
+    subCallDiff.value = null
+  } finally {
+    subCallDiffLoading.value = false
+  }
 }
 
 async function loadSourceRecording(row: ReplayResultRow) {

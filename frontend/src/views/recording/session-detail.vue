@@ -9,6 +9,12 @@
         <n-button @click="loadPage">刷新</n-button>
         <n-button v-if="session" @click="router.push(`/applications/${session.application_id}`)">返回应用</n-button>
         <n-button
+          v-if="canEdit && recordings.length > 0"
+          @click="openBatchModal"
+        >
+          批量生成用例
+        </n-button>
+        <n-button
           v-if="canEdit && session && session.status === 'idle'"
           type="primary"
           @click="startSession"
@@ -83,6 +89,65 @@
       />
     </n-card>
   </n-space>
+
+  <!-- 批量生成用例 Modal（两步：前缀输入 → 冲突检测结果） -->
+  <n-modal
+    v-model:show="showBatchModal"
+    :title="batchStep === 'prefix' ? '批量生成测试用例' : '冲突检测结果'"
+    preset="card"
+    style="width: 480px"
+    :closable="!batchGenerating"
+    :mask-closable="!batchGenerating"
+  >
+    <template v-if="batchStep === 'prefix'">
+      <n-space vertical>
+        <span>将对本会话 {{ filteredRecordings.length }} 条录制生成用例</span>
+        <n-form label-placement="left" label-width="100px">
+          <n-form-item label="用例名称前缀">
+            <n-input
+              v-model:value="batchPrefix"
+              placeholder="如：滴滴计价"
+              @keyup.enter="doBatchCheck"
+            />
+          </n-form-item>
+        </n-form>
+      </n-space>
+    </template>
+    <template v-else>
+      <n-space vertical>
+        <n-alert v-if="batchCheckItems.filter(i => !i.has_existing).length > 0" type="success" :show-icon="true">
+          {{ batchCheckItems.filter(i => !i.has_existing).length }} 条可生成
+        </n-alert>
+        <n-alert v-if="batchCheckItems.filter(i => i.has_existing).length > 0" type="warning" :show-icon="true">
+          {{ batchCheckItems.filter(i => i.has_existing).length }} 条已有用例（{{
+            batchCheckItems.filter(i => i.has_existing).map(i => i.transaction_code || `#${i.recording_id}`).join('、')
+          }}），将自动跳过
+        </n-alert>
+        <n-alert v-if="batchCheckItems.filter(i => !i.has_existing).length === 0" type="info">
+          所有录制均已有对应用例，无需重复生成
+        </n-alert>
+      </n-space>
+    </template>
+    <template #footer>
+      <n-space justify="end">
+        <template v-if="batchStep === 'prefix'">
+          <n-button @click="showBatchModal = false">取消</n-button>
+          <n-button type="primary" :loading="batchChecking" @click="doBatchCheck">检测冲突 →</n-button>
+        </template>
+        <template v-else>
+          <n-button @click="batchStep = 'prefix'">返回</n-button>
+          <n-button
+            v-if="batchCheckItems.filter(i => !i.has_existing).length > 0"
+            type="primary"
+            :loading="batchGenerating"
+            @click="doBatchGenerate"
+          >
+            确认生成 →
+          </n-button>
+        </template>
+      </n-space>
+    </template>
+  </n-modal>
 
   <n-modal v-model:show="showConvertModal" title="由录制生成测试用例" preset="card" style="width: 420px">
     <n-form :model="convertForm" label-placement="left" label-width="100px">
@@ -178,6 +243,20 @@ const converting = ref(false)
 const convertingRecordingId = ref<number | null>(null)
 const convertForm = ref({ name: '' })
 const pollingTimer = ref<number | null>(null)
+
+// 批量生成用例
+const showBatchModal = ref(false)
+const batchStep = ref<'prefix' | 'check'>('prefix')
+const batchPrefix = ref('')
+const batchChecking = ref(false)
+const batchGenerating = ref(false)
+const batchCheckItems = ref<Array<{
+  recording_id: number
+  transaction_code: string | null
+  has_existing: boolean
+  existing_case_id: number | null
+  existing_case_name: string | null
+}>>([])
 
 function formatPrefixSummary(prefixes?: string[] | null) {
   if (!prefixes || prefixes.length === 0) {
@@ -382,6 +461,53 @@ async function stopSession() {
     message.error(error.response?.data?.detail || '停止录制失败')
   } finally {
     stopping.value = false
+  }
+}
+
+function openBatchModal() {
+  batchPrefix.value = ''
+  batchStep.value = 'prefix'
+  batchCheckItems.value = []
+  showBatchModal.value = true
+}
+
+async function doBatchCheck() {
+  if (!batchPrefix.value.trim()) {
+    message.warning('请填写用例名称前缀')
+    return
+  }
+  batchChecking.value = true
+  try {
+    const ids = filteredRecordings.value.map(r => r.id)
+    const res = await testCaseApi.batchCheck({ recording_ids: ids })
+    batchCheckItems.value = res.data
+    batchStep.value = 'check'
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '冲突检测失败')
+  } finally {
+    batchChecking.value = false
+  }
+}
+
+async function doBatchGenerate() {
+  const toGenerate = batchCheckItems.value.filter(i => !i.has_existing).map(i => i.recording_id)
+  if (toGenerate.length === 0) {
+    message.warning('没有可生成的用例')
+    return
+  }
+  batchGenerating.value = true
+  try {
+    const res = await testCaseApi.batchFromRecordings({
+      recording_ids: toGenerate,
+      prefix: batchPrefix.value.trim(),
+    })
+    showBatchModal.value = false
+    const { created } = res.data
+    message.success(`批量生成完成，共新增 ${created} 条用例`)
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '批量生成失败')
+  } finally {
+    batchGenerating.value = false
   }
 }
 

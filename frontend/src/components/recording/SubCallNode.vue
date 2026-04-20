@@ -8,6 +8,9 @@
         <n-tag size="small" :type="kindTagType(getRecordingSubCallKind(item))">
           {{ getRecordingSubCallKindLabel(getRecordingSubCallKind(item)) }}
         </n-tag>
+        <n-tag v-if="item.source" size="small" :type="sourceTagType(item.source)">
+          {{ getRecordingSubCallSourceLabel(item.source) }}
+        </n-tag>
         <n-tag size="small" :type="typeTagType(item.type)">
           {{ getRecordingSubCallTypeLabel(item.type) }}
         </n-tag>
@@ -17,8 +20,9 @@
     <n-descriptions bordered :column="2" size="small">
       <n-descriptions-item label="类型">{{ getRecordingSubCallTypeLabel(item.type) }}</n-descriptions-item>
       <n-descriptions-item label="分类">{{ getRecordingSubCallKindLabel(getRecordingSubCallKind(item)) }}</n-descriptions-item>
+      <n-descriptions-item label="来源">{{ item.source ? getRecordingSubCallSourceLabel(item.source) : '-' }}</n-descriptions-item>
       <n-descriptions-item label="耗时">{{ item.elapsed_ms != null ? `${item.elapsed_ms}ms` : '-' }}</n-descriptions-item>
-      <n-descriptions-item label="目标" :span="2">{{ item.target || '-' }}</n-descriptions-item>
+      <n-descriptions-item label="目标">{{ item.target || '-' }}</n-descriptions-item>
       <n-descriptions-item label="数据库">{{ item.database || '-' }}</n-descriptions-item>
       <n-descriptions-item label="操作">{{ item.operation || '-' }}</n-descriptions-item>
       <n-descriptions-item label="表名">{{ item.table || '-' }}</n-descriptions-item>
@@ -48,11 +52,11 @@
     <n-grid :cols="2" :x-gap="12" :y-gap="12" style="margin-top: 12px">
       <n-grid-item>
         <div class="section-title">请求</div>
-        <pre class="code-block">{{ formatRecordingSubCallValue(item.request) }}</pre>
+        <pre class="code-block">{{ requestText }}</pre>
       </n-grid-item>
       <n-grid-item>
         <div class="section-title">响应</div>
-        <pre class="code-block">{{ formatRecordingSubCallValue(item.response) }}</pre>
+        <pre class="code-block">{{ responseText }}</pre>
       </n-grid-item>
     </n-grid>
 
@@ -79,6 +83,7 @@ import {
   getRecordingSubCallTypeLabel,
   getRecordingSubCallKind,
   getRecordingSubCallKindLabel,
+  getRecordingSubCallSourceLabel,
 } from '@/utils/recording'
 
 defineOptions({ name: 'SubCallNode' })
@@ -100,6 +105,40 @@ const title = computed(() => {
     : formatRecordingSubCallValue(props.item.request).replace(/\s+/g, ' ').trim()
   const shortLabel = label.length > 80 ? `${label.slice(0, 80)}...` : label
   return `#${props.path} ${getRecordingSubCallKindLabel(getRecordingSubCallKind(props.item))} · ${getRecordingSubCallTypeLabel(props.item.type)}${shortLabel ? ` · ${shortLabel}` : ''}`
+})
+
+const requestText = computed(() => {
+  const type = (props.item.type || '').toLowerCase()
+  // DynamicClass has no meaningful request (only captures return value)
+  if (type === 'dynamicclass' || type === 'dynamic_class') {
+    return '（无入参，仅录制返回值）'
+  }
+  // HttpClient via RestTemplate: request field is internal metadata, not real HTTP body
+  if (type === 'httpclient' || type.includes('http')) {
+    if (props.item.request != null) {
+      const raw = formatRecordingSubCallValue(props.item.request)
+      // If it looks like RestTemplate internal metadata, show a hint
+      if (raw.includes('responseType') && raw.length < 100) {
+        return `URL: ${props.item.operation || '-'}\n（请求体未采集，RestTemplate 仅捕获响应类型元数据）`
+      }
+    }
+    return props.item.request == null ? `URL: ${props.item.operation || '-'}\n（请求体未采集）` : formatRecordingSubCallValue(props.item.request)
+  }
+  return formatRecordingSubCallValue(props.item.request)
+})
+
+const responseText = computed(() => {
+  const resp = props.item.response
+  if (resp == null) return '-'
+  // HttpClient response may be nested: { httpStatus, body, headers }
+  if (typeof resp === 'object' && !Array.isArray(resp)) {
+    const r = resp as Record<string, unknown>
+    if ('body' in r && 'httpStatus' in r) {
+      const body = typeof r.body === 'string' ? r.body : JSON.stringify(r.body, null, 2)
+      return `HTTP ${r.httpStatus}\n\n${body}`
+    }
+  }
+  return formatRecordingSubCallValue(resp)
 })
 
 function sqlText(item: RecordingSubCall) {
@@ -129,6 +168,13 @@ function kindTagType(kind?: string | null) {
   if (kind === 'RPC') return 'success'
   if (kind === 'HTTP') return 'default'
   if (kind === '消息') return 'primary'
+  return 'default'
+}
+
+function sourceTagType(source?: string | null) {
+  const normalized = (source || '').toLowerCase()
+  if (normalized === 'reconstructed') return 'error'
+  if (normalized === 'agent') return 'success'
   return 'default'
 }
 </script>

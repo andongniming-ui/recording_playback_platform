@@ -32,9 +32,9 @@ def test_create_application_persists_transaction_mappings(client, admin_headers)
         "transaction_mappings": json.dumps(
             [
                 {
-                    "transaction_code": "A0201M14I",
+                    "transaction_code": "car001_open",
                     "enabled": True,
-                    "description": "开户字段映射",
+                    "description": "基础资料字段映射",
                     "request_rules": [
                         {"type": "rename", "source": "name", "target": "cst_name"},
                         {"type": "default", "source": "branch_code", "value": "0101"},
@@ -50,14 +50,14 @@ def test_create_application_persists_transaction_mappings(client, admin_headers)
     resp = client.post("/api/v1/applications", json=payload, headers=admin_headers)
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["transaction_mappings"][0]["transaction_code"] == "A0201M14I"
+    assert body["transaction_mappings"][0]["transaction_code"] == "car001_open"
     assert body["transaction_mappings"][0]["request_rules"][0]["type"] == "rename"
     assert body["transaction_mappings"][0]["response_rules"][0]["target"] == "name"
 
     app_id = body["id"]
     fetched = client.get(f"/api/v1/applications/{app_id}", headers=admin_headers)
     assert fetched.status_code == 200
-    assert fetched.json()["transaction_mappings"][0]["description"] == "开户字段映射"
+    assert fetched.json()["transaction_mappings"][0]["description"] == "基础资料字段映射"
 
 
 def test_create_application_persists_docker_fields(client, admin_headers):

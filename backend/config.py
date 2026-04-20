@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     nls_mysql_port: int = 3306
     nls_mysql_user: str = "root"
     nls_mysql_password: str = ""
+    # didi MySQL（用于补全 JdbcTemplate 读写子调用）
+    didi_mysql_host: str = "127.0.0.1"
+    didi_mysql_port: int = 3307
+    didi_mysql_user: str = "root"
+    didi_mysql_password: str = "root123"
+    didi_mysql_db_sat: str = "didi_alpha"
+    didi_mysql_db_uat: str = "didi_beta"
 
     model_config = SettingsConfigDict(env_prefix="AR_", env_file=".env", env_file_encoding="utf-8")
 

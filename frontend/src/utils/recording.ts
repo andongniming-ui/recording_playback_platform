@@ -1,5 +1,6 @@
 export type RecordingSubCall = {
   type?: string | null
+  source?: string | null
   target?: string | null
   database?: string | null
   operation?: string | null
@@ -46,6 +47,11 @@ const KIND_LABELS: Record<string, string> = {
   http: 'HTTP',
   messaging: '消息',
   other: '其他',
+}
+
+const SOURCE_LABELS: Record<string, string> = {
+  agent: '原始录制',
+  reconstructed: '增强补建',
 }
 
 function parseJsonLike(value: string) {
@@ -127,6 +133,7 @@ function normalizeSubCall(item: unknown): RecordingSubCall {
 
   return {
     type: String(type).trim() || 'UNKNOWN',
+    source: typeof raw.source === 'string' ? raw.source : raw.source != null ? String(raw.source) : null,
     target: typeof target === 'string' ? target : target != null ? String(target) : null,
     database: typeof database === 'string' ? database : database != null ? String(database) : null,
     operation: typeof operation === 'string' ? operation : operation != null ? String(operation) : null,
@@ -236,6 +243,14 @@ export function getRecordingSubCallKind(item: RecordingSubCall) {
 export function getRecordingSubCallKindLabel(kind?: string | null): string {
   if (!kind) return KIND_LABELS.other
   return KIND_LABELS[kind] || kind
+}
+
+export function getRecordingSubCallSourceLabel(source?: string | null): string {
+  if (!source) {
+    return '未标记'
+  }
+  const normalized = source.trim().toLowerCase()
+  return SOURCE_LABELS[normalized] || source
 }
 
 export function summarizeRecordingSubCalls(subCalls: RecordingSubCall[]) {

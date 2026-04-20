@@ -11,6 +11,18 @@ from database import init_db, async_session_factory
 logger = logging.getLogger(__name__)
 
 
+def _configure_app_logging():
+    uvicorn_logger = logging.getLogger("uvicorn.error")
+    handlers = list(uvicorn_logger.handlers)
+    level = uvicorn_logger.level if uvicorn_logger.level and uvicorn_logger.level > 0 else logging.INFO
+    for logger_name in ("api", "core", "database", "integration", "utils"):
+        app_logger = logging.getLogger(logger_name)
+        app_logger.setLevel(min(level, logging.INFO))
+        if handlers:
+            app_logger.handlers = handlers
+            app_logger.propagate = False
+
+
 async def _create_default_admin():
     """Create default admin user if no users exist."""
     from sqlalchemy import select, func
@@ -83,6 +95,7 @@ async def _migrate_db():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _configure_app_logging()
     await init_db()
     await _migrate_db()
     await _create_default_admin()

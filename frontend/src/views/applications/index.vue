@@ -163,9 +163,9 @@
             :autosize="{ minRows: 6, maxRows: 14 }"
             placeholder='[
   {
-    "transaction_code": "A0201M14I",
+    "transaction_code": "car001_open",
     "enabled": true,
-    "description": "开户字段映射",
+    "description": "基础资料字段映射",
     "request_rules": [
       { "type": "rename", "source": "name", "target": "cst_name" },
       { "type": "rename", "source": "idNo", "target": "cert_no" },
@@ -178,9 +178,9 @@
     ]
   },
   {
-    "transaction_code": "A0201D008",
+    "transaction_code": "car002_apply",
     "enabled": true,
-    "description": "支用字段映射",
+    "description": "申请字段映射",
     "request_rules": [
       { "type": "rename", "source": "amount", "target": "loan_amount" }
     ],

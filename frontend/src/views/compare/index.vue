@@ -21,11 +21,11 @@
               <n-grid :cols="2" :x-gap="8" style="margin-top:8px">
                 <n-grid-item>
                   <n-text strong>期望响应</n-text>
-                  <pre style="background:#f5f5f5;padding:8px;border-radius:4px;font-size:12px;max-height:400px;overflow:auto;white-space:pre-wrap">{{ formatJson(diffData.expected_response) }}</pre>
+                  <pre style="background:#f5f5f5;padding:8px;border-radius:4px;font-size:12px;max-height:400px;overflow:auto;white-space:pre-wrap">{{ rawText(diffData.expected_response) }}</pre>
                 </n-grid-item>
                 <n-grid-item>
                   <n-text strong>实际响应</n-text>
-                  <pre style="background:#fff0f0;padding:8px;border-radius:4px;font-size:12px;max-height:400px;overflow:auto;white-space:pre-wrap">{{ formatJson(diffData.actual_response) }}</pre>
+                  <pre style="background:#fff0f0;padding:8px;border-radius:4px;font-size:12px;max-height:400px;overflow:auto;white-space:pre-wrap">{{ rawText(diffData.actual_response) }}</pre>
                 </n-grid-item>
               </n-grid>
               <n-card v-if="diffData.diff_result" title="差异详情" size="small" style="margin-top:8px">
@@ -126,6 +126,10 @@ const ruleColumns = [
 function formatJson(s: string | null) {
   if (!s) return '-'
   try { return JSON.stringify(JSON.parse(s), null, 2) } catch { return s }
+}
+
+function rawText(s: string | null) {
+  return s || '-'
 }
 
 async function loadRules() {

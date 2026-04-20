@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-# XML 请求体模板（A0201D012 还款，含 account_no / loan_no）
+# XML 请求体模板（car003_repay 还款，含 account_no / loan_no）
 _REQ_REPAY = """<REQUEST>
   <SYS_EVT_TRACE_ID>TRACE-001</SYS_EVT_TRACE_ID>
   <account_no>ACC-001</account_no>
@@ -14,7 +14,7 @@ _REQ_REPAY = """<REQUEST>
   <repayment_amount>500.00</repayment_amount>
 </REQUEST>"""
 
-# XML 请求体模板（A0201D014，XML 中无 loan_no，需从响应反查）
+# XML 请求体模板（car004_followup，XML 中无 loan_no，需从响应反查）
 _REQ_NO_LOAN = """<REQUEST>
   <SYS_EVT_TRACE_ID>TRACE-002</SYS_EVT_TRACE_ID>
   <account_no>ACC-002</account_no>
@@ -76,7 +76,7 @@ async def test_update_bank_account_child_appended():
     cursor2.execute = AsyncMock()
     # fetchone: txlog → acct_row（按 execute 顺序）
     cursor2.fetchone = AsyncMock(side_effect=[
-        ("TX-001", "A0201D012", "还款", "ACC-001", None, "SUCCESS", "2026-01-01"),  # txlog
+        ("TX-001", "car003_repay", "还款", "ACC-001", None, "SUCCESS", "2026-01-01"),  # txlog
         acct_row,   # bank_account
         None,       # bank_loan（loan_no 为空，execute 不会被调 — 但防御性加一个 None）
     ])
@@ -149,7 +149,7 @@ async def test_update_bank_loan_child_appended():
 
     cursor2.execute = _execute2
     cursor2.fetchone = AsyncMock(side_effect=[
-        ("TX-002", "A0201D012", "还款", "ACC-001", "LOAN-001", "SUCCESS", "2026-01-01"),  # txlog
+        ("TX-002", "car003_repay", "还款", "ACC-001", "LOAN-001", "SUCCESS", "2026-01-01"),  # txlog
         ("ACC-001", "500.00", "ACTIVE", "2026-01-01"),  # bank_account
         loan_row,                                        # bank_loan
     ])
@@ -180,7 +180,7 @@ async def test_update_bank_loan_child_appended():
 
 
 # ---------------------------------------------------------------------------
-# 测试 3：无 loan_no 时从 step_children 响应反查（A0201D014 场景）
+# 测试 3：无 loan_no 时从 step_children 响应反查（car004_followup 场景）
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio

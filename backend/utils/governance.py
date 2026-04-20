@@ -6,6 +6,13 @@ from xml.etree import ElementTree as ET
 GOVERNANCE_STATUSES = {"raw", "candidate", "approved", "rejected", "archived"}
 SUITE_TYPES = {"smoke", "regression"}
 TRANSACTION_CODE_KEYS = {
+    "code",
+    "trs_code",
+    "trscode",
+    "service_code",
+    "servicecode",
+    "biz_code",
+    "bizcode",
     "transaction_id",
     "transactionid",
     "service_id",

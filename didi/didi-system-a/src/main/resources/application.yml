@@ -1,0 +1,34 @@
+server:
+  port: ${DIDI_SERVER_PORT:18081}
+
+spring:
+  application:
+    name: didi-system-a
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${DIDI_DB_HOST:127.0.0.1}:${DIDI_DB_PORT:3306}/${DIDI_DB_NAME:didi_alpha}?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    username: ${DIDI_DB_USER:root}
+    password: ${DIDI_DB_PASSWORD:root123}
+  sql:
+    init:
+      mode: ${DIDI_SQL_INIT_MODE:always}
+      encoding: UTF-8
+
+didi:
+  system-name: didi-car-sat
+  variant-id: SAT
+  compare-hint: SAT_BASELINE
+  internal-base-url: http://127.0.0.1:${server.port}
+  overrides:
+    car000003:
+      message-suffix: SAT-KEEP
+    car000006:
+      dispatch-city: SHANGHAI
+    car000011:
+      amount-delta: 0.00
+    car000018:
+      message-suffix: SAT-PACK
+    car000024:
+      decision: DIRECT_PASS
+    car000029:
+      message-suffix: SAT-COUPON

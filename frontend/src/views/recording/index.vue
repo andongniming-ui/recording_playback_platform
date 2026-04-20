@@ -135,7 +135,7 @@
           v-model:value="sessionForm.recording_filter_prefixes_text"
           type="textarea"
           :autosize="{ minRows: 3, maxRows: 6 }"
-          placeholder="例如：A0201\n=A0201M14I\nre:^A0201.*$"
+          placeholder="例如：car001\n=car001_open\nre:^car001.*$"
         />
       </n-form-item>
       <n-form-item label="说明">

@@ -54,6 +54,40 @@ def test_create_replay_job(client, admin_headers, tc_payload):
     assert "id" in body
 
 
+def test_create_replay_job_allows_target_application_different_from_test_case_application(
+    client, admin_headers, tc_payload, app_payload
+):
+    source_app_resp = client.post("/api/v1/applications", json=app_payload, headers=admin_headers)
+    assert source_app_resp.status_code == 201, source_app_resp.text
+    source_app = source_app_resp.json()
+
+    target_payload = dict(app_payload)
+    target_payload["name"] = "target-app"
+    target_payload["service_port"] = 8081
+    target_app_resp = client.post("/api/v1/applications", json=target_payload, headers=admin_headers)
+    assert target_app_resp.status_code == 201, target_app_resp.text
+    target_app = target_app_resp.json()
+
+    tc = _create_test_case(
+        client,
+        admin_headers,
+        {
+            **tc_payload,
+            "application_id": source_app["id"],
+        },
+    )
+    resp = _create_replay_job(
+        client,
+        admin_headers,
+        [tc["id"]],
+        application_id=target_app["id"],
+    )
+
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["application_id"] == target_app["id"]
+
+
 def test_create_replay_job_empty_case_ids(client, admin_headers):
     resp = client.post(
         "/api/v1/replays",
@@ -328,7 +362,7 @@ async def test_execute_single_applies_transaction_mappings_for_request_and_respo
     case = SimpleNamespace(
         id=2,
         source_recording_id=None,
-        transaction_code="A0201M14I",
+        transaction_code="car001_open",
         request_method="POST",
         request_uri="/api/bank/service",
         request_headers=None,
@@ -346,7 +380,7 @@ async def test_execute_single_applies_transaction_mappings_for_request_and_respo
     )
     transaction_mappings = [
         {
-            "transaction_code": "A0201M14I",
+            "transaction_code": "car001_open",
             "enabled": True,
             "request_rules": [
                 {"type": "rename", "source": "name", "target": "cst_name"},
@@ -569,7 +603,7 @@ async def test_get_html_report_includes_mock_and_source_recording_summary():
         request_body='{"service_id":"OPEN_ACCOUNT"}',
         source_recording_id=501,
     )
-    app = SimpleNamespace(name="vt-bank-service")
+    app = SimpleNamespace(name="uat-bank-service")
     recording = SimpleNamespace(
         id=501,
         transaction_code="OPEN_ACCOUNT",
@@ -912,6 +946,54 @@ async def test_fetch_replay_sub_calls_returns_json(tmp_path):
         await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_fetch_replay_sub_calls_normalizes_repository_dynamic_class(tmp_path):
+    import database as db_module
+    from sqlalchemy.pool import NullPool
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from models.arex_mocker import ArexMocker as MockerModel
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/t3.db", poolclass=NullPool)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    from database import Base
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    mocker_data = json.dumps({
+        "categoryType": {"name": "DynamicClass", "entryPoint": False},
+        "operationName": "com.arex.demo.didi.common.repository.CarDataRepository.findDispatch",
+        "targetRequest": {"body": json.dumps(["沪A12345", "GAR001"])},
+        "targetResponse": {"body": json.dumps({"dispatch_no": "D001", "city": "SH"})},
+    })
+    async with factory() as session:
+        session.add(MockerModel(
+            record_id="replay-002",
+            app_id="didi-car-uat",
+            category_name="DynamicClass",
+            is_entry_point=False,
+            mocker_data=mocker_data,
+        ))
+        await session.commit()
+
+    original_factory = db_module.async_session_factory
+    db_module.async_session_factory = factory
+    try:
+        from core.replay_executor import _fetch_replay_sub_calls
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await _fetch_replay_sub_calls("replay-002")
+        parsed = json.loads(result)
+        assert len(parsed) == 1
+        assert parsed[0]["type"] == "MySQL"
+        assert parsed[0]["source"] == "agent"
+        assert parsed[0]["table"] == "car_dispatch"
+        assert parsed[0]["operation"] == "SELECT car_dispatch"
+        assert parsed[0]["params"]["garageCode"] == "GAR001"
+    finally:
+        db_module.async_session_factory = original_factory
+        await engine.dispose()
+
+
 def test_sub_call_diff_not_found(client, admin_headers):
     resp = client.get("/api/v1/replays/results/99999/sub-call-diff", headers=admin_headers)
     assert resp.status_code == 404
@@ -986,3 +1068,81 @@ def test_pair_sub_calls_unequal_lengths():
     assert len(pairs) == 2
     assert pairs[0]["side"] == "both"
     assert pairs[1]["side"] == "recorded_only"
+
+
+def test_pair_sub_calls_matches_by_type_and_operation_not_index():
+    from api.v1.replays import _pair_sub_calls
+    recorded = [
+        {"type": "MySQL", "operation": "SELECT car_vehicle", "response": {"plateNo": "A"}},
+        {"type": "HttpClient", "operation": "/internal/didi/risk", "response": {"riskLevel": "LOW"}},
+    ]
+    replayed = [
+        {"type": "HttpClient", "operation": "/internal/didi/risk", "response": {"riskLevel": "LOW"}},
+        {"type": "MySQL", "operation": "SELECT car_vehicle", "response": {"plateNo": "B"}},
+    ]
+
+    pairs = _pair_sub_calls(recorded, replayed)
+
+    assert len(pairs) == 2
+    assert pairs[0]["type"] == "MySQL"
+    assert pairs[0]["recorded"]["operation"] == "SELECT car_vehicle"
+    assert pairs[0]["replayed"]["operation"] == "SELECT car_vehicle"
+    assert pairs[0]["response_matched"] is False
+    assert pairs[1]["type"] == "HttpClient"
+    assert pairs[1]["recorded"]["operation"] == "/internal/didi/risk"
+    assert pairs[1]["replayed"]["operation"] == "/internal/didi/risk"
+    assert pairs[1]["response_matched"] is True
+
+
+def test_pair_sub_calls_keeps_distinct_types_unpaired():
+    from api.v1.replays import _pair_sub_calls
+    recorded = [{"type": "MySQL", "operation": "SELECT car_vehicle", "response": {"rows": 1}}]
+    replayed = [{"type": "HttpClient", "operation": "/internal/didi/risk", "response": {"riskLevel": "LOW"}}]
+
+    pairs = _pair_sub_calls(recorded, replayed)
+
+    assert len(pairs) == 2
+    assert pairs[0]["side"] == "recorded_only"
+    assert pairs[0]["type"] == "MySQL"
+    assert pairs[1]["side"] == "replayed_only"
+    assert pairs[1]["type"] == "HttpClient"
+
+
+def test_pair_sub_calls_prefers_same_request_when_operation_repeats():
+    from api.v1.replays import _pair_sub_calls
+    recorded = [
+        {
+            "type": "MySQL",
+            "operation": "SELECT car_vehicle",
+            "request": {"plateNo": "沪A10001"},
+            "response": {"vehicle_status": "ACTIVE"},
+        },
+        {
+            "type": "MySQL",
+            "operation": "SELECT car_vehicle",
+            "request": {"plateNo": "沪A10002"},
+            "response": {"vehicle_status": "INACTIVE"},
+        },
+    ]
+    replayed = [
+        {
+            "type": "MySQL",
+            "operation": "SELECT car_vehicle",
+            "request": {"plateNo": "沪A10002"},
+            "response": {"vehicle_status": "INACTIVE"},
+        },
+        {
+            "type": "MySQL",
+            "operation": "SELECT car_vehicle",
+            "request": {"plateNo": "沪A10001"},
+            "response": {"vehicle_status": "ACTIVE"},
+        },
+    ]
+
+    pairs = _pair_sub_calls(recorded, replayed)
+
+    assert len(pairs) == 2
+    assert pairs[0]["recorded"]["request"]["plateNo"] == "沪A10001"
+    assert pairs[0]["replayed"]["request"]["plateNo"] == "沪A10001"
+    assert pairs[1]["recorded"]["request"]["plateNo"] == "沪A10002"
+    assert pairs[1]["replayed"]["request"]["plateNo"] == "沪A10002"

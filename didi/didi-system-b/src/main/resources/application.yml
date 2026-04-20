@@ -1,0 +1,40 @@
+server:
+  port: ${DIDI_SERVER_PORT:18082}
+
+spring:
+  application:
+    name: didi-system-b
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${DIDI_DB_HOST:127.0.0.1}:${DIDI_DB_PORT:3306}/${DIDI_DB_NAME:didi_beta}?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    username: ${DIDI_DB_USER:root}
+    password: ${DIDI_DB_PASSWORD:root123}
+  sql:
+    init:
+      mode: ${DIDI_SQL_INIT_MODE:always}
+      encoding: UTF-8
+
+didi:
+  system-name: didi-car-uat
+  variant-id: UAT
+  compare-hint: UAT_DIFF_READY
+  internal-base-url: http://127.0.0.1:${server.port}
+  overrides:
+    car000003:
+      message-suffix: UAT-RENEW-V2
+      amount-delta: 88.00
+      risk-level: MEDIUM
+    car000006:
+      dispatch-city: SUZHOU
+      decision: MANUAL_REVIEW
+    car000011:
+      amount-delta: 120.00
+      risk-level: HIGH
+    car000018:
+      message-suffix: UAT-PACK-CHANGED
+    car000024:
+      message-suffix: UAT-MEMBER-RULE
+      decision: FALLBACK_PASS
+    car000029:
+      message-suffix: UAT-COUPON-V2
+      amount-delta: 15.00

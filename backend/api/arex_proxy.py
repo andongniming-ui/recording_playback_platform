@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from database import get_db
 from models.arex_mocker import ArexMocker
+from utils.repository_capture import get_dynamic_class_configurations
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -364,18 +365,7 @@ async def proxy_config(request: Request, path: str):
                 "timeMock": False,
                 "excludeServiceOperationSet": [],
             },
-            "dynamicClassConfigurationList": [
-                # BankJdbcRepository read methods — record DB query results as DynamicClass
-                # so they can be mocked during replay without hitting the real DB.
-                {"fullClassName": "com.cxm.nls.repository.BankJdbcRepository", "methodName": "findCustomerByIdNo", "parameterTypes": "java.lang.String", "keyFormula": "#p0"},
-                {"fullClassName": "com.cxm.nls.repository.BankJdbcRepository", "methodName": "findCustomerByNo", "parameterTypes": "java.lang.String", "keyFormula": "#p0"},
-                {"fullClassName": "com.cxm.nls.repository.BankJdbcRepository", "methodName": "findAccountByNo", "parameterTypes": "java.lang.String", "keyFormula": "#p0"},
-                {"fullClassName": "com.cxm.nls.repository.BankJdbcRepository", "methodName": "findPrimaryAccountByCustomerNo", "parameterTypes": "java.lang.String", "keyFormula": "#p0"},
-                {"fullClassName": "com.cxm.nls.repository.BankJdbcRepository", "methodName": "findLoanByNo", "parameterTypes": "java.lang.String", "keyFormula": "#p0"},
-                {"fullClassName": "com.cxm.nls.repository.BankJdbcRepository", "methodName": "findRecentStatements", "parameterTypes": "java.lang.String@int", "keyFormula": "#p0"},
-                {"fullClassName": "com.cxm.nls.repository.BankJdbcRepository", "methodName": "findRecentTransactionsByAccountNo", "parameterTypes": "java.lang.String@int", "keyFormula": "#p0"},
-                {"fullClassName": "com.cxm.nls.repository.BankJdbcRepository", "methodName": "countSubCalls", "parameterTypes": "long", "keyFormula": "#p0"},
-            ],
+            "dynamicClassConfigurationList": get_dynamic_class_configurations(),
         },
     }
 

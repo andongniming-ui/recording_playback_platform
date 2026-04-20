@@ -137,8 +137,8 @@ AREX Recorder 是一个“**录制、回放、对比**”平台。
 
 比如：
 
-- 左边发到 PL2
-- 右边发到 VT
+- 左边发到 SIT
+- 右边发到 UAT
 - 平台比较两边返回
 
 如果返回不一样，就会显示差异字段。
@@ -312,8 +312,8 @@ AREX Recorder 是一个“**录制、回放、对比**”平台。
 
 比如：
 
-- `pl2-bank-service`
-- `vt-bank-service`
+- `sit-bank-service`
+- `uat-bank-service`
 
 这类应用都要先在这里注册。
 
@@ -454,16 +454,16 @@ AREX Recorder 是一个“**录制、回放、对比**”平台。
 
 如果你的系统是靠内部字段区分接口，比如：
 
-- `<tx_code>A0201M14I</tx_code>`
-- `<rct_code>A0201M14I</rct_code>`
+- `<tx_code>car001_open</tx_code>`
+- `<rct_code>car001_open</rct_code>`
 
 你就可以在这里按规则过滤。
 
 常见写法：
 
-- `A0201`：前缀匹配
-- `=A0201M14I`：精确匹配
-- `re:^A0201.*$`：正则匹配
+- `car001`：前缀匹配
+- `=car001_open`：精确匹配
+- `re:^car001.*$`：正则匹配
 
 推荐一行一条规则。
 
@@ -785,7 +785,7 @@ AREX Recorder 是一个“**录制、回放、对比**”平台。
 
 典型场景：
 
-- PL2 vs VT
+- SIT vs UAT
 - 测试环境 vs 预发环境
 - 新版本 vs 旧版本
 
@@ -1057,9 +1057,9 @@ CI 集成是把平台接到流水线里。
 示例：
 
 ```text
-A0201
-=A0201M14I
-re:^A0201.*$
+car001
+=car001_open
+re:^car001.*$
 ```
 
 ---

@@ -1,8 +1,10 @@
 """Replay job management API."""
 import asyncio
 import json
+import re
 from datetime import datetime
 from typing import Optional
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -91,6 +93,131 @@ async def _build_result_source_context(db: AsyncSession, result: ReplayResult) -
     return context
 
 
+def _normalize_sub_call_type(value: object) -> str:
+    type_name = str(value or "").strip().lower()
+    if not type_name:
+        return ""
+    if "mysql" in type_name or "jdbc" in type_name:
+        return "mysql"
+    if "http" in type_name:
+        return "http"
+    return type_name
+
+
+def _normalize_http_operation(operation: str) -> str:
+    text = re.sub(r"\s+", " ", operation.strip())
+    if not text:
+        return ""
+
+    parts = text.split(" ", 1)
+    if len(parts) == 2 and parts[0].isalpha():
+        method = parts[0].upper()
+        target = parts[1].strip()
+    else:
+        method = ""
+        target = text
+
+    parsed = urlsplit(target)
+    if parsed.scheme and parsed.netloc:
+        normalized_target = parsed.path or "/"
+    elif target.startswith("/"):
+        normalized_target = urlsplit(target).path or target
+    else:
+        normalized_target = target
+
+    normalized_target = normalized_target.strip()
+    return f"{method} {normalized_target}".strip().lower()
+
+
+def _normalize_sub_call_operation(item: dict | None) -> str:
+    if not isinstance(item, dict):
+        return ""
+    operation = str(item.get("operation") or "").strip()
+    if not operation:
+        return ""
+    normalized_type = _normalize_sub_call_type(item.get("type"))
+    if normalized_type == "http":
+        return _normalize_http_operation(operation)
+    return re.sub(r"\s+", " ", operation).lower()
+
+
+def _normalize_sub_call_request(value: object) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ""
+        try:
+            return json.dumps(json.loads(text), ensure_ascii=False, sort_keys=True)
+        except Exception:
+            return re.sub(r"\s+", " ", text)
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        return str(value).strip()
+
+
+def _sub_call_match_score(recorded_item: dict | None, replayed_item: dict | None) -> int | None:
+    if not isinstance(recorded_item, dict) or not isinstance(replayed_item, dict):
+        return None
+
+    recorded_type = _normalize_sub_call_type(recorded_item.get("type"))
+    replayed_type = _normalize_sub_call_type(replayed_item.get("type"))
+    if recorded_type != replayed_type:
+        return None
+
+    recorded_operation = _normalize_sub_call_operation(recorded_item)
+    replayed_operation = _normalize_sub_call_operation(replayed_item)
+    if recorded_operation and replayed_operation:
+        if recorded_operation != replayed_operation:
+            return None
+        recorded_request = _normalize_sub_call_request(recorded_item.get("request"))
+        replayed_request = _normalize_sub_call_request(replayed_item.get("request"))
+        if recorded_request and replayed_request and recorded_request == replayed_request:
+            return 3
+        return 2
+
+    if recorded_operation or replayed_operation:
+        return None
+
+    recorded_request = _normalize_sub_call_request(recorded_item.get("request"))
+    replayed_request = _normalize_sub_call_request(replayed_item.get("request"))
+    if recorded_request and replayed_request:
+        if recorded_request == replayed_request:
+            return 1
+        return None
+
+    return 0
+
+
+def _build_sub_call_pair(index: int, recorded_item: dict | None, replayed_item: dict | None) -> dict:
+    if recorded_item and replayed_item:
+        side = "both"
+        try:
+            response_matched = (
+                json.dumps(recorded_item.get("response"), sort_keys=True)
+                == json.dumps(replayed_item.get("response"), sort_keys=True)
+            )
+        except Exception:
+            response_matched = False
+    elif recorded_item:
+        side = "recorded_only"
+        response_matched = None
+    else:
+        side = "replayed_only"
+        response_matched = None
+
+    return {
+        "index": index,
+        "type": (recorded_item or replayed_item or {}).get("type") or "",
+        "recorded": recorded_item,
+        "replayed": replayed_item,
+        "side": side,
+        "response_matched": response_matched,
+    }
+
+
 @router.post("", response_model=ReplayJobOut, status_code=201)
 async def create_replay_job(
     body: ReplayJobCreate,
@@ -113,19 +240,14 @@ async def create_replay_job(
             detail=f"Some case_ids do not exist: expected {len(body.case_ids)}, found {found_count}",
         )
 
-    try:
-        inferred_application_id = await infer_application_id_for_case_ids(db, body.case_ids)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
     application_id = body.application_id
-    if inferred_application_id is not None:
-        if application_id is not None and application_id != inferred_application_id:
-            raise HTTPException(
-                status_code=400,
-                detail="application_id does not match the selected test cases",
-            )
-        application_id = inferred_application_id
+    if application_id is None:
+        try:
+            inferred_application_id = await infer_application_id_for_case_ids(db, body.case_ids)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        if inferred_application_id is not None:
+            application_id = inferred_application_id
 
     job = ReplayJob(
         name=body.name,
@@ -237,35 +359,32 @@ async def get_replay_result(
 
 
 def _pair_sub_calls(recorded: list, replayed: list) -> list:
-    """Pair recorded and replayed sub-calls by sequential index."""
-    max_len = max(len(recorded), len(replayed)) if (recorded or replayed) else 0
+    """Pair recorded and replayed sub-calls by type/operation signature."""
+    recorded_items = recorded if isinstance(recorded, list) else []
+    replayed_items = replayed if isinstance(replayed, list) else []
+    unmatched_replayed = set(range(len(replayed_items)))
     pairs = []
-    for i in range(max_len):
-        rec = recorded[i] if i < len(recorded) else None
-        rep = replayed[i] if i < len(replayed) else None
-        if rec and rep:
-            side = "both"
-            try:
-                response_matched = (
-                    json.dumps(rec.get("response"), sort_keys=True)
-                    == json.dumps(rep.get("response"), sort_keys=True)
-                )
-            except Exception:
-                response_matched = False
-        elif rec:
-            side = "recorded_only"
-            response_matched = None
-        else:
-            side = "replayed_only"
-            response_matched = None
-        pairs.append({
-            "index": i + 1,
-            "type": (rec or rep or {}).get("type") or "",
-            "recorded": rec,
-            "replayed": rep,
-            "side": side,
-            "response_matched": response_matched,
-        })
+    for recorded_item in recorded_items:
+        best_index = None
+        best_score = None
+        for replayed_index, replayed_item in enumerate(replayed_items):
+            if replayed_index not in unmatched_replayed:
+                continue
+            score = _sub_call_match_score(recorded_item, replayed_item)
+            if score is None:
+                continue
+            if best_score is None or score > best_score:
+                best_score = score
+                best_index = replayed_index
+        if best_index is None:
+            pairs.append(_build_sub_call_pair(len(pairs) + 1, recorded_item, None))
+            continue
+        unmatched_replayed.remove(best_index)
+        pairs.append(_build_sub_call_pair(len(pairs) + 1, recorded_item, replayed_items[best_index]))
+
+    for replayed_index, replayed_item in enumerate(replayed_items):
+        if replayed_index in unmatched_replayed:
+            pairs.append(_build_sub_call_pair(len(pairs) + 1, None, replayed_item))
     return pairs
 
 

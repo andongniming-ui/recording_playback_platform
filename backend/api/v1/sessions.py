@@ -30,13 +30,18 @@ from utils.governance import (
     infer_transaction_code,
     normalize_governance_status,
 )
+from utils.repository_capture import (
+    NOISE_DYNAMIC_CLASS_OPERATIONS,
+    is_noise_dynamic_mocker,
+    normalize_repository_sub_call,
+)
 
 logger = logging.getLogger(__name__)
+runtime_logger = logging.getLogger("uvicorn.error")
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 HTTP_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
 REPRESENTATIVE_PRIORITY = {"approved": 4, "candidate": 3, "raw": 2, "archived": 1, "rejected": 0}
-
-
+_DIDI_COMPLEX_TRANSACTION_CODES = {f"car{index:06d}" for index in range(1, 16)}
 async def _get_app_or_404(app_id: int, db: AsyncSession) -> Application:
     result = await db.execute(select(Application).where(Application.id == app_id))
     app = result.scalar_one_or_none()
@@ -355,8 +360,90 @@ def _extract_sub_calls(detail: dict, raw: dict) -> list[dict]:
         for key in candidate_keys:
             normalized = _maybe_parse(source.get(key))
             if normalized:
-                return [_normalize_sub_call_item(item) for item in normalized if item is not None]
+                return _filter_noise_sub_calls(
+                    [_normalize_sub_call_item(item) for item in normalized if item is not None]
+                )
     return []
+
+
+def _is_noise_sub_call(item: dict | None) -> bool:
+    if not isinstance(item, dict):
+        return False
+    sub_type = str(item.get("type") or "").strip().lower()
+    operation = str(item.get("operation") or item.get("operationName") or "").strip()
+    if sub_type != "dynamicclass":
+        return False
+    return operation in NOISE_DYNAMIC_CLASS_OPERATIONS
+
+
+def _filter_noise_sub_calls(items: list[dict] | None) -> list[dict]:
+    if not items:
+        return []
+
+    filtered: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        normalized = dict(item)
+        children = normalized.get("children")
+        if isinstance(children, list):
+            cleaned_children = _filter_noise_sub_calls(children)
+            if cleaned_children:
+                normalized["children"] = cleaned_children
+            else:
+                normalized.pop("children", None)
+        if _is_noise_sub_call(normalized):
+            continue
+        filtered.append(normalized)
+    return filtered
+
+
+def _merge_sub_calls(primary: list[dict] | None, secondary: list[dict] | None) -> list[dict]:
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for group in (primary or [], secondary or []):
+        for item in group if isinstance(group, list) else [group]:
+            if not isinstance(item, dict):
+                continue
+            signature = json.dumps(item, ensure_ascii=False, sort_keys=True)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            merged.append(item)
+    return merged
+
+
+def _database_sub_call_identity(item: dict | None) -> tuple[str, str, str] | None:
+    if not isinstance(item, dict):
+        return None
+    sub_type = str(item.get("type") or "").strip().lower()
+    if sub_type not in {"mysql", "jdbc"}:
+        return None
+    operation = str(item.get("operation") or "").strip()
+    table = str(item.get("table") or "").strip()
+    if not operation or not table:
+        return None
+    return sub_type, operation, table
+
+
+def _exclude_duplicate_database_sub_calls(
+    preferred: list[dict] | None,
+    candidates: list[dict] | None,
+) -> list[dict]:
+    identities = {
+        identity
+        for identity in (_database_sub_call_identity(item) for item in (preferred or []))
+        if identity is not None
+    }
+    if not identities:
+        return candidates or []
+    filtered: list[dict] = []
+    for item in candidates or []:
+        identity = _database_sub_call_identity(item)
+        if identity is not None and identity in identities:
+            continue
+        filtered.append(item)
+    return filtered
 
 
 # BankJdbcRepository 方法名 → 实际表名
@@ -392,6 +479,303 @@ def _extract_xml_params(request_body: str | None) -> dict[str, str]:
         if m:
             params[field] = m.group(1).strip()
     return params
+
+
+def _extract_didi_xml_params(request_body: str | None) -> dict[str, str]:
+    params = {}
+    if not request_body:
+        return params
+    for field in (
+        "code",
+        "trs_code",
+        "service_code",
+        "biz_code",
+        "request_no",
+        "customer_no",
+        "plate_no",
+        "vin",
+        "policy_no",
+        "claim_no",
+        "garage_code",
+        "city",
+    ):
+        m = re.search(rf"<{field}>([^<]+)</{field}>", request_body)
+        if m:
+            params[field] = m.group(1).strip()
+    return params
+
+
+def _resolve_didi_db_name(app_id: str | None) -> str | None:
+    normalized = (app_id or "").strip().lower()
+    if normalized in {"didi-car-sat", "didi-system-a"}:
+        return settings.didi_mysql_db_sat
+    if normalized in {"didi-car-uat", "didi-system-b"}:
+        return settings.didi_mysql_db_uat
+    return None
+
+
+async def _fetch_didi_sub_calls(request_body: str | None, app_id: str) -> list[dict]:
+    db_name = _resolve_didi_db_name(app_id)
+    if not request_body or not settings.didi_mysql_host or not db_name:
+        return []
+
+    txn_code = infer_transaction_code(request_body)
+    if txn_code not in _DIDI_COMPLEX_TRANSACTION_CODES:
+        return []
+
+    params = _extract_didi_xml_params(request_body)
+    plate_no = params.get("plate_no")
+    vin = params.get("vin")
+    customer_no = params.get("customer_no")
+    policy_no = params.get("policy_no")
+    claim_no = params.get("claim_no")
+    garage_code = params.get("garage_code")
+    request_no = params.get("request_no")
+
+    async def _fetchone_dict(cursor, sql: str, sql_params: tuple) -> dict | None:
+        await cursor.execute(sql, sql_params)
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        columns = [item[0] for item in cursor.description]
+        return {
+            column: (str(value) if value is not None else None)
+            for column, value in zip(columns, row)
+        }
+
+    try:
+        import aiomysql
+
+        conn = await aiomysql.connect(
+            host=settings.didi_mysql_host,
+            port=settings.didi_mysql_port,
+            user=settings.didi_mysql_user,
+            password=settings.didi_mysql_password,
+            db=db_name,
+            connect_timeout=3,
+            charset="utf8mb4",
+        )
+        try:
+            cursor = await conn.cursor()
+
+            vehicle_row = None
+            if plate_no:
+                vehicle_row = await _fetchone_dict(
+                    cursor,
+                    "SELECT * FROM car_vehicle WHERE plate_no = %s LIMIT 1",
+                    (plate_no,),
+                )
+            elif vin:
+                vehicle_row = await _fetchone_dict(
+                    cursor,
+                    "SELECT * FROM car_vehicle WHERE vin = %s LIMIT 1",
+                    (vin,),
+                )
+
+            if not customer_no and vehicle_row:
+                customer_no = vehicle_row.get("owner_customer_no") or customer_no
+
+            customer_row = None
+            if customer_no:
+                customer_row = await _fetchone_dict(
+                    cursor,
+                    "SELECT * FROM car_customer WHERE customer_no = %s LIMIT 1",
+                    (customer_no,),
+                )
+
+            policy_row = None
+            if policy_no:
+                policy_row = await _fetchone_dict(
+                    cursor,
+                    "SELECT * FROM car_policy WHERE policy_no = %s LIMIT 1",
+                    (policy_no,),
+                )
+            elif plate_no:
+                policy_row = await _fetchone_dict(
+                    cursor,
+                    "SELECT * FROM car_policy WHERE plate_no = %s ORDER BY policy_no LIMIT 1",
+                    (plate_no,),
+                )
+
+            claim_row = None
+            if claim_no:
+                claim_row = await _fetchone_dict(
+                    cursor,
+                    "SELECT * FROM car_claim WHERE claim_no = %s LIMIT 1",
+                    (claim_no,),
+                )
+            elif plate_no:
+                claim_row = await _fetchone_dict(
+                    cursor,
+                    "SELECT * FROM car_claim WHERE plate_no = %s ORDER BY claim_no LIMIT 1",
+                    (plate_no,),
+                )
+
+            dispatch_row = None
+            if garage_code:
+                dispatch_row = await _fetchone_dict(
+                    cursor,
+                    "SELECT * FROM car_dispatch WHERE garage_code = %s ORDER BY dispatch_no LIMIT 1",
+                    (garage_code,),
+                )
+            elif plate_no:
+                dispatch_row = await _fetchone_dict(
+                    cursor,
+                    "SELECT * FROM car_dispatch WHERE plate_no = %s ORDER BY dispatch_no LIMIT 1",
+                    (plate_no,),
+                )
+
+            audit_row = None
+            if request_no:
+                audit_row = await _fetchone_dict(
+                    cursor,
+                    "SELECT * FROM car_order_audit WHERE request_no = %s ORDER BY id DESC LIMIT 1",
+                    (request_no,),
+                )
+
+            updated_vehicle_row = None
+            if plate_no:
+                updated_vehicle_row = await _fetchone_dict(
+                    cursor,
+                    "SELECT * FROM car_vehicle WHERE plate_no = %s LIMIT 1",
+                    (plate_no,),
+                )
+            elif vin:
+                updated_vehicle_row = await _fetchone_dict(
+                    cursor,
+                    "SELECT * FROM car_vehicle WHERE vin = %s LIMIT 1",
+                    (vin,),
+                )
+
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.warning("[didi_sub_calls] 查询 %s 失败: %s", app_id, exc)
+        return []
+
+    sub_calls = [
+        {
+            "type": "MySQL",
+            "source": "reconstructed",
+            "database": db_name,
+            "table": "car_vehicle",
+            "operation": "SELECT car_vehicle",
+            "request": {k: v for k, v in {"plateNo": plate_no, "vin": vin}.items() if v},
+            "params": {k: v for k, v in {"plateNo": plate_no, "vin": vin}.items() if v},
+            "response": vehicle_row or {},
+            "status": "READ",
+        },
+        {
+            "type": "MySQL",
+            "source": "reconstructed",
+            "database": db_name,
+            "table": "car_customer",
+            "operation": "SELECT car_customer",
+            "request": {"customerNo": customer_no} if customer_no else None,
+            "params": {"customerNo": customer_no} if customer_no else None,
+            "response": customer_row or {},
+            "status": "READ",
+        },
+        {
+            "type": "MySQL",
+            "source": "reconstructed",
+            "database": db_name,
+            "table": "car_policy",
+            "operation": "SELECT car_policy",
+            "request": {k: v for k, v in {"policyNo": policy_no, "plateNo": plate_no}.items() if v},
+            "params": {k: v for k, v in {"policyNo": policy_no, "plateNo": plate_no}.items() if v},
+            "response": policy_row or {},
+            "status": "READ",
+        },
+        {
+            "type": "MySQL",
+            "source": "reconstructed",
+            "database": db_name,
+            "table": "car_claim",
+            "operation": "SELECT car_claim",
+            "request": {k: v for k, v in {"claimNo": claim_no, "plateNo": plate_no}.items() if v},
+            "params": {k: v for k, v in {"claimNo": claim_no, "plateNo": plate_no}.items() if v},
+            "response": claim_row or {},
+            "status": "READ",
+        },
+        {
+            "type": "MySQL",
+            "source": "reconstructed",
+            "database": db_name,
+            "table": "car_dispatch",
+            "operation": "SELECT car_dispatch",
+            "request": {k: v for k, v in {"plateNo": plate_no, "garageCode": garage_code}.items() if v},
+            "params": {k: v for k, v in {"plateNo": plate_no, "garageCode": garage_code}.items() if v},
+            "response": dispatch_row or {},
+            "status": "READ",
+        },
+    ]
+
+    if request_no:
+        sub_calls.append(
+            {
+                "type": "MySQL",
+                "source": "reconstructed",
+                "database": db_name,
+                "table": "car_order_audit",
+                "operation": "INSERT car_order_audit",
+                "request": {
+                    key: value
+                    for key, value in {
+                        "txnCode": txn_code,
+                        "requestNo": request_no,
+                        "customerNo": customer_no,
+                        "plateNo": plate_no,
+                    }.items()
+                    if value
+                },
+                "params": {
+                    key: value
+                    for key, value in {
+                        "txnCode": txn_code,
+                        "requestNo": request_no,
+                        "customerNo": customer_no,
+                        "plateNo": plate_no,
+                    }.items()
+                    if value
+                },
+                "response": audit_row or {},
+                "status": "WRITE",
+            }
+        )
+
+    if plate_no or vin:
+        sub_calls.append(
+            {
+                "type": "MySQL",
+                "source": "reconstructed",
+                "database": db_name,
+                "table": "car_vehicle",
+                "operation": "UPDATE car_vehicle",
+                "request": {
+                    key: value
+                    for key, value in {
+                        "plateNo": plate_no,
+                        "vin": vin,
+                        "status": (updated_vehicle_row or {}).get("vehicle_status"),
+                    }.items()
+                    if value
+                },
+                "params": {
+                    key: value
+                    for key, value in {
+                        "plateNo": plate_no,
+                        "vin": vin,
+                        "status": (updated_vehicle_row or {}).get("vehicle_status"),
+                    }.items()
+                    if value
+                },
+                "response": updated_vehicle_row or {},
+                "status": "WRITE",
+            }
+        )
+
+    return sub_calls
 
 
 def _assign_jdbc_to_step(method_name: str, step_names: list[str]) -> str | None:
@@ -501,7 +885,7 @@ async def _fetch_nls_sub_calls(
                 if not req_param and "customer" in method_name.lower():
                     req_param = xml_params.get("customer_no") or xml_params.get("id_no")
                 # 如果参数仍为空，从响应中反查主键字段
-                # 如 A0201D014 XML 无 loan_no，但 findLoanByNo 响应含 loan_no
+                # 如 car004_followup XML 无 loan_no，但 findLoanByNo 响应含 loan_no
                 # 如 findCustomerByNo 响应含 customer_no
                 if not req_param and isinstance(resp_body, dict):
                     if param_key:
@@ -644,7 +1028,7 @@ async def _fetch_nls_sub_calls(
             elif "loan" in n:
                 loan_no = xml_params.get("loan_no")
                 if not loan_no:
-                    # 从 findLoanByNo 子调用响应中反查 loan_no（如 A0201D014）
+                    # 从 findLoanByNo 子调用响应中反查 loan_no（如 car004_followup）
                     kids = step_children.get(sname, [])
                     loan_resp = kids[0].get("response") if kids else None
                     if isinstance(loan_resp, dict):
@@ -691,6 +1075,96 @@ async def _fetch_nls_sub_calls(
         return []
 
 
+async def _remove_sub_invocation_recordings(session_id: int, db: AsyncSession) -> int:
+    """移除本 session 中属于其他录制的 HTTP 子调用的 Servlet entry-point 录制。
+
+    当 arex-agent 拦截到内部 HTTP 调用时，会将被调用方的 Servlet 请求也录制为独立
+    entry-point，导致录制列表里出现主调用和子调用混合的情况。本函数通过扫描
+    HttpClient 子调用 mocker 的响应头中的 arex-record-id，识别并删除这些录制。
+    """
+    result = await db.execute(
+        select(Recording.id, Recording.record_id, Recording.request_uri, Recording.request_headers)
+        .where(Recording.session_id == session_id)
+    )
+    rows = result.all()
+    session_record_ids = {row.record_id for row in rows}
+    session_id_map = {row.record_id: row.id for row in rows}
+    if not session_record_ids:
+        return 0
+
+    # Scan HttpClient mockers for arex-record-id in response headers and fallback paths
+    sub_invocation_record_ids: set[str] = set()
+    httpclient_paths: set[str] = set()
+    httpclient_result = await db.execute(
+        select(ArexMocker.mocker_data).where(
+            ArexMocker.record_id.in_(session_record_ids),
+            ArexMocker.is_entry_point == False,  # noqa: E712
+            ArexMocker.category_name == "HttpClient",
+        )
+    )
+    for mocker_json in httpclient_result.scalars().all():
+        try:
+            mocker = json.loads(mocker_json)
+            operation_name = str(mocker.get("operationName") or "").strip()
+            if operation_name:
+                httpclient_paths.add(operation_name.partition("?")[0])
+            target_response = mocker.get("targetResponse") or {}
+
+            # Method 1: targetResponse.attributes.Headers (some agent versions)
+            resp_attrs = target_response.get("attributes") or {}
+            headers: dict = resp_attrs.get("Headers") or {}
+            arex_id = headers.get("arex-record-id")
+
+            # Method 2: targetResponse.body is a JSON string containing {"headers": {...}}
+            # Used by RestTemplate instrumentation in arex-agent 0.4.x
+            if not arex_id:
+                resp_body = target_response.get("body")
+                if isinstance(resp_body, str):
+                    try:
+                        parsed_body = json.loads(resp_body)
+                        body_headers = parsed_body.get("headers") or {}
+                        arex_id = body_headers.get("arex-record-id")
+                    except Exception:
+                        pass
+
+            if isinstance(arex_id, str):
+                sub_invocation_record_ids.add(arex_id)
+            elif isinstance(arex_id, list):
+                sub_invocation_record_ids.update(arex_id)
+        except Exception:
+            pass
+
+    def _looks_like_local_internal_recording(request_uri: str | None, request_headers: str | None) -> bool:
+        uri = (request_uri or "").strip()
+        if uri.startswith("/internal/"):
+            return True
+        if not request_headers:
+            return False
+        try:
+            headers = json.loads(request_headers) if isinstance(request_headers, str) else request_headers
+        except Exception:
+            return False
+        if not isinstance(headers, dict):
+            return False
+        host = str(headers.get("host") or headers.get("Host") or "").strip().lower()
+        if not (host.startswith("127.0.0.1:") or host.startswith("localhost:")):
+            return False
+        return uri.partition("?")[0] in httpclient_paths
+
+    for row in rows:
+        if _looks_like_local_internal_recording(row.request_uri, row.request_headers) and row.record_id:
+            sub_invocation_record_ids.add(row.record_id)
+
+    to_delete = [
+        session_id_map[rid]
+        for rid in sub_invocation_record_ids
+        if rid in session_id_map
+    ]
+    if to_delete:
+        await db.execute(delete(Recording).where(Recording.id.in_(to_delete)))
+    return len(to_delete)
+
+
 async def _fetch_dynamic_class_sub_calls(record_id: str, db: AsyncSession) -> list[dict]:
     """从 arex_mocker 表查询 DynamicClass 子调用并转换为 sub_call 格式。"""
     result = await db.execute(
@@ -706,8 +1180,13 @@ async def _fetch_dynamic_class_sub_calls(record_id: str, db: AsyncSession) -> li
         except Exception:
             continue
         op_name = mocker.get("operationName") or m.category_name or "UNKNOWN"
+        repository_sub_call = normalize_repository_sub_call(mocker, m.category_name)
+        if repository_sub_call is not None:
+            sub_calls.append(repository_sub_call)
+            continue
         target_req = mocker.get("targetRequest") or {}
         target_resp = mocker.get("targetResponse") or {}
+        req_attrs = target_req.get("attributes") or {}
         req_body = target_req.get("body")
         resp_body = target_resp.get("body")
         if isinstance(resp_body, str):
@@ -715,13 +1194,30 @@ async def _fetch_dynamic_class_sub_calls(record_id: str, db: AsyncSession) -> li
                 resp_body = json.loads(resp_body)
             except Exception:
                 pass
-        sub_calls.append({
+
+        sub_call: dict = {
             "type": m.category_name or "DynamicClass",
             "operation": op_name,
             "request": req_body,
             "response": resp_body,
-        })
-    return sub_calls
+        }
+
+        # HttpClient: extract HTTP method and full endpoint from request attributes
+        cat = (m.category_name or "").lower()
+        if "http" in cat:
+            http_method = req_attrs.get("HttpMethod") or req_attrs.get("httpMethod")
+            query_string = req_attrs.get("QueryString") or req_attrs.get("queryString")
+            if http_method:
+                sub_call["method"] = http_method
+            if op_name and query_string:
+                sub_call["endpoint"] = f"{op_name}?{query_string}"
+            elif op_name:
+                sub_call["endpoint"] = op_name
+
+        if _is_noise_sub_call(sub_call) or is_noise_dynamic_mocker(op_name, m.category_name):
+            continue
+        sub_calls.append(sub_call)
+    return _filter_noise_sub_calls(sub_calls)
 
 
 async def _duplicate_count_map(db: AsyncSession, recordings: list[Recording]) -> dict[str, int]:
@@ -1125,6 +1621,15 @@ async def _sync_from_arex_storage(
                 else:
                     recorded_at = datetime.now(timezone.utc)
 
+                extracted_sub_calls = _extract_sub_calls(detail, raw)
+                dynamic_sub_calls = await _fetch_dynamic_class_sub_calls(str(record_id), db)
+                normalized_sub_calls = await _fetch_nls_sub_calls(request_body, app_id, str(record_id), db)
+                if not normalized_sub_calls:
+                    didi_sub_calls = await _fetch_didi_sub_calls(request_body, app_id)
+                    dynamic_sub_calls = _exclude_duplicate_database_sub_calls(didi_sub_calls, dynamic_sub_calls)
+                    normalized_sub_calls = _merge_sub_calls(extracted_sub_calls, didi_sub_calls)
+                    normalized_sub_calls = _merge_sub_calls(normalized_sub_calls, dynamic_sub_calls)
+
                 rec = Recording(
                     session_id=session_id,
                     application_id=application_id,
@@ -1139,17 +1644,27 @@ async def _sync_from_arex_storage(
                     scene_key=build_scene_key(transaction_code, request_method, request_uri, response_status),
                     dedupe_hash=build_dedupe_hash(transaction_code, request_method, request_uri, request_body),
                     governance_status="raw",
-                    sub_calls=json.dumps(
-                        await _fetch_nls_sub_calls(request_body, app_id, str(record_id), db)
-                        or _extract_sub_calls(detail, raw)
-                        or await _fetch_dynamic_class_sub_calls(str(record_id), db),
-                        ensure_ascii=False,
-                    ),
+                    sub_calls=json.dumps(normalized_sub_calls, ensure_ascii=False),
                     recorded_at=recorded_at,
                 )
                 db.add(rec)
+                runtime_logger.info(
+                    "同步会话 %s：收录 record_id=%s method=%s uri=%s transaction_code=%s",
+                    session_id,
+                    record_id,
+                    request_method,
+                    request_uri,
+                    transaction_code or "-",
+                )
 
             await db.commit()
+
+            # Post-processing: remove sub-invocation recordings
+            # (internal HTTP calls recorded as separate Servlet entry-points)
+            removed = await _remove_sub_invocation_recordings(session_id, db)
+            if removed:
+                logger.info("同步会话 %s：移除 %d 条子调用 Servlet 录制", session_id, removed)
+                await db.commit()
 
             # Update session status
             sess_result = await db.execute(

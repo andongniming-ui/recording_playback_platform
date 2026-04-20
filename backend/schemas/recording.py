@@ -137,6 +137,7 @@ class RecordingOut(BaseModel):
 
 class RecordingSubCall(BaseModel):
     type: Optional[str] = None
+    source: Optional[str] = None
     target: Optional[str] = None
     database: Optional[str] = None
     operation: Optional[str] = None

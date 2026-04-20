@@ -48,7 +48,6 @@
         <n-space align="center" size="small">
           <div class="topbar-date">{{ todayLabel }}</div>
           <n-button v-if="route.path !== '/dashboard'" quaternary size="small" @click="router.push('/dashboard')">总览</n-button>
-          <n-button v-if="route.path !== '/settings'" quaternary size="small" @click="router.push('/settings')">指引</n-button>
         </n-space>
       </div>
 
@@ -132,10 +131,10 @@ const menuOptions: MenuOption[] = [
 
 const visibleMenuOptions = computed(() =>
   menuOptions.filter((item) => {
-    if (item.key === 'users' || item.key === 'ci') {
-      return userStore.role === 'admin'
+    if (item.key === 'compare' || item.key === 'ci' || item.key === 'users' || item.key === 'settings') {
+      return false
     }
-    return true
+    return !(item.key === 'users' || item.key === 'ci') || userStore.role === 'admin'
   }),
 )
 

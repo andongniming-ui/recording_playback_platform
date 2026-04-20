@@ -1,11 +1,22 @@
 """Tests for recording session CRUD, recording listing, and session sync."""
 import base64
+import json
+import logging
+from datetime import datetime
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import database
 from sqlalchemy import select
-from api.v1.sessions import _sync_from_arex_storage
+from api.v1.sessions import (
+    _extract_sub_calls,
+    _fetch_didi_sub_calls,
+    _fetch_dynamic_class_sub_calls,
+    _remove_sub_invocation_recordings,
+    _sync_from_arex_storage,
+)
+from integration.arex_client import ArexClient
+from models.arex_mocker import ArexMocker
 from models.recording import Recording
 from utils.governance import infer_transaction_code
 
@@ -146,12 +157,313 @@ def test_list_recordings_empty(client, admin_headers, created_app):
 def test_infer_transaction_code_supports_transaction_id_xml():
     xml = """
     <request>
-      <transaction_id>A0201M14I</transaction_id>
+      <transaction_id>car001_open</transaction_id>
       <SYS_EVT_TRACE_ID>1234567890123456789012345</SYS_EVT_TRACE_ID>
     </request>
     """
 
-    assert infer_transaction_code(xml) == "A0201M14I"
+    assert infer_transaction_code(xml) == "car001_open"
+
+
+def test_arex_client_treats_naive_datetimes_as_utc():
+    dt = datetime.fromisoformat("2026-04-19 00:42:38.836565")
+    assert ArexClient._to_epoch_ms(dt) == 1776559358836
+
+
+@pytest.mark.asyncio
+async def test_remove_sub_invocation_recordings_falls_back_to_internal_uri_and_loopback_httpclient_path(
+    client, admin_headers, created_app
+):
+    app_id = created_app["id"]
+    sess_id = _create_session(client, app_id, admin_headers, "cleanup-internal").json()["id"]
+
+    async with database.async_session_factory() as db:
+        db.add_all(
+            [
+                Recording(
+                    session_id=sess_id,
+                    application_id=app_id,
+                    record_id="main-1",
+                    request_method="POST",
+                    request_uri="/api/car/service",
+                    request_headers='{"host":"172.25.109.28:18081"}',
+                    request_body="<request><code>car000001</code></request>",
+                    response_status=200,
+                    response_body="<response/>",
+                ),
+                Recording(
+                    session_id=sess_id,
+                    application_id=app_id,
+                    record_id="internal-1",
+                    request_method="GET",
+                    request_uri="/internal/didi/risk",
+                    request_headers='{"host":"172.25.109.28:18081"}',
+                    request_body="",
+                    response_status=200,
+                    response_body="{}",
+                ),
+                Recording(
+                    session_id=sess_id,
+                    application_id=app_id,
+                    record_id="internal-2",
+                    request_method="GET",
+                    request_uri="/api/healthz",
+                    request_headers='{"host":"127.0.0.1:18081"}',
+                    request_body="",
+                    response_status=200,
+                    response_body="{}",
+                ),
+                ArexMocker(
+                    record_id="main-1",
+                    app_id="didi-car-sat",
+                    category_name="HttpClient",
+                    is_entry_point=False,
+                    mocker_data=json.dumps(
+                        {
+                            "operationName": "/api/healthz",
+                            "targetRequest": {
+                                "body": None,
+                                "attributes": {"HttpMethod": "GET"},
+                            },
+                            "targetResponse": {
+                                "body": json.dumps({"status": "UP"}),
+                                "attributes": None,
+                            },
+                        }
+                    ),
+                    created_at_ms=1776562276902,
+                ),
+            ]
+        )
+        await db.commit()
+
+    async with database.async_session_factory() as db:
+        removed = await _remove_sub_invocation_recordings(sess_id, db)
+        await db.commit()
+
+    assert removed == 2
+
+    async with database.async_session_factory() as db:
+        rows = (
+            await db.execute(
+                select(Recording.record_id).where(Recording.session_id == sess_id).order_by(Recording.id)
+            )
+        ).scalars().all()
+    assert rows == ["main-1"]
+
+
+@pytest.mark.asyncio
+async def test_remove_sub_invocation_recordings_keeps_main_request_when_user_calls_loopback_host(
+    client, admin_headers, created_app
+):
+    app_id = created_app["id"]
+    sess_id = _create_session(client, app_id, admin_headers, "keep-loopback-main").json()["id"]
+
+    async with database.async_session_factory() as db:
+        db.add(
+            Recording(
+                session_id=sess_id,
+                application_id=app_id,
+                record_id="main-loopback",
+                request_method="POST",
+                request_uri="/api/car/service",
+                request_headers='{"host":"127.0.0.1:18081"}',
+                request_body="<request><code>car000001</code></request>",
+                response_status=200,
+                response_body="<response/>",
+            )
+        )
+        await db.commit()
+
+    async with database.async_session_factory() as db:
+        removed = await _remove_sub_invocation_recordings(sess_id, db)
+        await db.commit()
+
+    assert removed == 0
+
+    async with database.async_session_factory() as db:
+        rows = (
+            await db.execute(
+                select(Recording.record_id).where(Recording.session_id == sess_id).order_by(Recording.id)
+            )
+        ).scalars().all()
+    assert rows == ["main-loopback"]
+
+
+def test_extract_sub_calls_filters_time_noise_dynamic_class():
+    detail = {
+        "subCallInfo": [
+            {
+                "type": "DynamicClass",
+                "operationName": "java.lang.System.currentTimeMillis",
+                "response": 1776562276901,
+            },
+            {
+                "type": "HttpClient",
+                "operationName": "/internal/didi/risk",
+                "request": {"txnCode": "car000001"},
+                "response": {"decision": "AUTO_PASS"},
+            },
+        ]
+    }
+
+    sub_calls = _extract_sub_calls(detail, {})
+
+    assert len(sub_calls) == 1
+    assert sub_calls[0]["type"] == "HttpClient"
+    assert sub_calls[0]["operation"] == "/internal/didi/risk"
+
+
+@pytest.mark.asyncio
+async def test_fetch_dynamic_class_sub_calls_filters_time_noise_from_arex_mocker(
+    client, admin_headers, created_app
+):
+    app_id = created_app["id"]
+    sess_id = _create_session(client, app_id, admin_headers, "dynamic-noise").json()["id"]
+
+    async with database.async_session_factory() as db:
+        db.add_all(
+            [
+                ArexMocker(
+                    record_id="rid-1",
+                    app_id="didi-car-sat",
+                    category_name="DynamicClass",
+                    is_entry_point=False,
+                    mocker_data=json.dumps(
+                        {
+                            "operationName": "java.lang.System.currentTimeMillis",
+                            "targetRequest": {"body": None, "attributes": None},
+                            "targetResponse": {"body": "1776562276901", "attributes": None},
+                        }
+                    ),
+                    created_at_ms=1776562276901,
+                ),
+                ArexMocker(
+                    record_id="rid-1",
+                    app_id="didi-car-sat",
+                    category_name="HttpClient",
+                    is_entry_point=False,
+                    mocker_data=json.dumps(
+                        {
+                            "operationName": "/internal/didi/risk",
+                            "targetRequest": {
+                                "body": json.dumps({"txnCode": "car000001"}),
+                                "attributes": {"HttpMethod": "GET"},
+                            },
+                            "targetResponse": {
+                                "body": json.dumps({"decision": "AUTO_PASS"}),
+                                "attributes": None,
+                            },
+                        }
+                    ),
+                    created_at_ms=1776562276902,
+                ),
+            ]
+        )
+        await db.commit()
+
+    async with database.async_session_factory() as db:
+        sub_calls = await _fetch_dynamic_class_sub_calls("rid-1", db)
+
+    assert len(sub_calls) == 1
+    assert sub_calls[0]["type"] == "HttpClient"
+    assert sub_calls[0]["operation"] == "/internal/didi/risk"
+
+
+@pytest.mark.asyncio
+async def test_fetch_dynamic_class_sub_calls_normalizes_repository_methods_to_mysql(
+    client, admin_headers, created_app
+):
+    _create_session(client, created_app["id"], admin_headers, "dynamic-repository")
+
+    async with database.async_session_factory() as db:
+        db.add_all(
+            [
+                ArexMocker(
+                    record_id="rid-db-1",
+                    app_id="didi-car-sat",
+                    category_name="DynamicClass",
+                    is_entry_point=False,
+                    mocker_data=json.dumps(
+                        {
+                            "operationName": "com.arex.demo.didi.common.repository.CarDataRepository.findVehicle",
+                            "targetRequest": {
+                                "body": json.dumps(["沪A12345", "VIN001"]),
+                                "attributes": None,
+                            },
+                            "targetResponse": {
+                                "body": json.dumps({"plate_no": "沪A12345", "owner_customer_no": "C10001"}),
+                                "attributes": None,
+                            },
+                        }
+                    ),
+                    created_at_ms=1776562276910,
+                ),
+                ArexMocker(
+                    record_id="rid-db-1",
+                    app_id="didi-car-sat",
+                    category_name="DynamicClass",
+                    is_entry_point=False,
+                    mocker_data=json.dumps(
+                        {
+                            "operationName": "com.arex.demo.didi.common.repository.CarDataRepository.saveAudit",
+                            "targetRequest": {
+                                "body": json.dumps([
+                                    "car000001",
+                                    "REQ-001",
+                                    "C10001",
+                                    "沪A12345",
+                                    "LOW",
+                                    "1280.50",
+                                    "sat",
+                                ]),
+                                "attributes": None,
+                            },
+                            "targetResponse": {
+                                "body": None,
+                                "attributes": None,
+                            },
+                        }
+                    ),
+                    created_at_ms=1776562276911,
+                ),
+            ]
+        )
+        await db.commit()
+
+    async with database.async_session_factory() as db:
+        sub_calls = await _fetch_dynamic_class_sub_calls("rid-db-1", db)
+
+    assert len(sub_calls) == 2
+    assert sub_calls[0]["type"] == "MySQL"
+    assert sub_calls[0]["source"] == "agent"
+    assert sub_calls[0]["table"] == "car_vehicle"
+    assert sub_calls[0]["operation"] == "SELECT car_vehicle"
+    assert sub_calls[0]["params"]["plateNo"] == "沪A12345"
+    assert sub_calls[0]["params"]["vin"] == "VIN001"
+    assert sub_calls[1]["type"] == "MySQL"
+    assert sub_calls[1]["source"] == "agent"
+    assert sub_calls[1]["table"] == "car_order_audit"
+    assert sub_calls[1]["operation"] == "INSERT car_order_audit"
+    assert sub_calls[1]["status"] == "WRITE"
+    assert sub_calls[1]["params"]["requestNo"] == "REQ-001"
+
+
+def test_proxy_config_exposes_car_data_repository_dynamic_class_rules(client):
+    resp = client.post("/api/config/agent/load", json={"appId": "didi-car-sat"})
+    assert resp.status_code == 200
+    body = resp.json()
+    rules = body["body"]["dynamicClassConfigurationList"]
+    assert any(
+        item["fullClassName"] == "com.arex.demo.didi.common.repository.CarDataRepository"
+        and item["methodName"] == "findVehicle"
+        for item in rules
+    )
+    assert any(
+        item["fullClassName"] == "com.arex.demo.didi.common.repository.CarDataRepository"
+        and item["methodName"] == "saveAudit"
+        for item in rules
+    )
 
 
 @pytest.mark.asyncio
@@ -223,8 +535,157 @@ async def test_sync_session_keeps_total_count_as_session_total_and_parses_operat
 
 
 @pytest.mark.asyncio
-async def test_sync_recordings_extracts_transaction_code_and_supports_governance_filters(
+async def test_sync_recordings_merges_detail_http_and_repository_db_sub_calls(
     client, admin_headers, created_app
+):
+    app_id = created_app["id"]
+    sess_id = _create_session(client, app_id, admin_headers, "merge-http-db").json()["id"]
+
+    async with database.async_session_factory() as db:
+        db.add(
+            ArexMocker(
+                record_id="merge-1",
+                app_id="didi-car-sat",
+                category_name="DynamicClass",
+                is_entry_point=False,
+                mocker_data=json.dumps(
+                    {
+                        "operationName": "com.arex.demo.didi.common.repository.CarDataRepository.findCustomer",
+                        "targetRequest": {"body": json.dumps(["C10001"]), "attributes": None},
+                        "targetResponse": {"body": json.dumps({"customer_no": "C10001"}), "attributes": None},
+                    }
+                ),
+                created_at_ms=1776562276950,
+            )
+        )
+        await db.commit()
+
+    async def fake_query_recordings(*args, **kwargs):
+        return {"body": [{"recordId": "merge-1"}]}
+
+    async def fake_view_recording(record_id):
+        return {
+            "operationName": "POST /api/car/service",
+            "targetRequest": {
+                "body": "<request><transaction_id>car000001</transaction_id></request>",
+                "attributes": {
+                    "Headers": {"Content-Type": "text/xml"},
+                    "HttpMethod": "POST",
+                    "RequestPath": "/api/car/service",
+                },
+            },
+            "targetResponse": {
+                "body": "<response><code>0000</code></response>",
+            },
+            "subCallInfo": [
+                {
+                    "type": "HttpClient",
+                    "operationName": "/internal/didi/risk",
+                    "request": {"txnCode": "car000001"},
+                    "response": {"decision": "AUTO_PASS"},
+                }
+            ],
+        }
+
+    with (
+        patch("api.v1.sessions.async_session_factory", database.async_session_factory),
+        patch("integration.arex_client.ArexClient.query_recordings", new=AsyncMock(side_effect=fake_query_recordings)),
+        patch("integration.arex_client.ArexClient.view_recording", new=AsyncMock(side_effect=fake_view_recording)),
+    ):
+        await _sync_from_arex_storage(
+            session_id=sess_id,
+            application_id=app_id,
+            begin_time=None,
+            end_time=None,
+            page_size=50,
+            page_index=0,
+        )
+
+    resp = client.get(f"/api/v1/sessions/{sess_id}/recordings", headers=admin_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    sub_calls = body[0]["sub_calls"]
+    assert len(sub_calls) == 2
+    assert any(item["type"] == "HttpClient" and item["operation"] == "/internal/didi/risk" for item in sub_calls)
+    assert any(item["type"] == "MySQL" and item["operation"] == "SELECT car_customer" for item in sub_calls)
+
+
+@pytest.mark.asyncio
+async def test_fetch_didi_sub_calls_reconstructs_complex_transaction_db_steps():
+    request_body = """
+    <request>
+      <code>car000001</code>
+      <request_no>REQ-car000001-live</request_no>
+      <customer_no>C10001</customer_no>
+      <plate_no>沪A10001</plate_no>
+      <vin>VIN0000000000000001</vin>
+      <policy_no>P10001</policy_no>
+      <claim_no>CL10001</claim_no>
+      <garage_code>G001</garage_code>
+      <city>SHANGHAI</city>
+    </request>
+    """
+
+    cursor = AsyncMock()
+    cursor.description = []
+    desc_by_sql = {
+        "FROM car_vehicle": [("plate_no",), ("owner_customer_no",), ("vehicle_status",)],
+        "FROM car_customer": [("customer_no",), ("tier_level",)],
+        "FROM car_policy": [("policy_no",), ("policy_status",)],
+        "FROM car_claim": [("claim_no",), ("claim_status",)],
+        "FROM car_dispatch": [("dispatch_no",), ("city",)],
+        "FROM car_order_audit": [("request_no",), ("txn_code",), ("plate_no",)],
+    }
+
+    async def _execute(sql, params=None):
+        for marker, desc in desc_by_sql.items():
+            if marker in sql:
+                cursor.description = desc
+                return
+
+    cursor.execute = _execute
+    cursor.fetchone = AsyncMock(side_effect=[
+        ("沪A10001", "C10001", "ACTIVE"),
+        ("C10001", "VIP"),
+        ("P10001", "VALID"),
+        ("CL10001", "OPEN"),
+        ("D10001", "SHANGHAI"),
+        ("REQ-car000001-live", "car000001", "沪A10001"),
+        ("沪A10001", "C10001", "ACTIVE"),
+    ])
+
+    conn = AsyncMock()
+    conn.cursor = AsyncMock(return_value=cursor)
+    conn.close = MagicMock()
+
+    with patch("api.v1.sessions.settings") as mock_settings, \
+         patch("aiomysql.connect", AsyncMock(return_value=conn)):
+        mock_settings.didi_mysql_host = "127.0.0.1"
+        mock_settings.didi_mysql_port = 3307
+        mock_settings.didi_mysql_user = "root"
+        mock_settings.didi_mysql_password = "root123"
+        mock_settings.didi_mysql_db_sat = "didi_alpha"
+        mock_settings.didi_mysql_db_uat = "didi_beta"
+
+        sub_calls = await _fetch_didi_sub_calls(request_body, "didi-car-sat")
+
+    assert len(sub_calls) == 7
+    assert sub_calls[0]["operation"] == "SELECT car_vehicle"
+    assert sub_calls[0]["source"] == "reconstructed"
+    assert sub_calls[0]["response"]["plate_no"] == "沪A10001"
+    assert sub_calls[1]["operation"] == "SELECT car_customer"
+    assert sub_calls[1]["response"]["tier_level"] == "VIP"
+    assert sub_calls[5]["operation"] == "INSERT car_order_audit"
+    assert sub_calls[5]["source"] == "reconstructed"
+    assert sub_calls[5]["status"] == "WRITE"
+    assert sub_calls[6]["operation"] == "UPDATE car_vehicle"
+    assert sub_calls[6]["params"]["status"] == "ACTIVE"
+
+
+@pytest.mark.asyncio
+async def test_sync_recordings_extracts_transaction_code_and_supports_governance_filters(
+    client, admin_headers, created_app, caplog
 ):
     app_id = created_app["id"]
     sess_id = _create_session(client, app_id, admin_headers).json()["id"]
@@ -250,14 +711,15 @@ async def test_sync_recordings_extracts_transaction_code_and_supports_governance
         patch("integration.arex_client.ArexClient.query_recordings", new=AsyncMock(side_effect=fake_query_recordings)),
         patch("integration.arex_client.ArexClient.view_recording", new=AsyncMock(side_effect=fake_view_recording)),
     ):
-        await _sync_from_arex_storage(
-            session_id=sess_id,
-            application_id=app_id,
-            begin_time=None,
-            end_time=None,
-            page_size=50,
-            page_index=0,
-        )
+        with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+            await _sync_from_arex_storage(
+                session_id=sess_id,
+                application_id=app_id,
+                begin_time=None,
+                end_time=None,
+                page_size=50,
+                page_index=0,
+            )
 
     resp = client.get(
         f"/api/v1/sessions/{sess_id}/recordings?transaction_code=OPEN_ACCOUNT",
@@ -269,6 +731,9 @@ async def test_sync_recordings_extracts_transaction_code_and_supports_governance
     assert all(item["transaction_code"] == "OPEN_ACCOUNT" for item in body)
     assert all(item["governance_status"] == "raw" for item in body)
     assert all(item["duplicate_count"] == 2 for item in body)
+    assert "同步会话" in caplog.text
+    assert "transaction_code=OPEN_ACCOUNT" in caplog.text
+    assert "uri=/api/bank/service" in caplog.text
 
     update_resp = client.patch(
         f"/api/v1/sessions/recordings/{body[0]['id']}",
@@ -399,8 +864,8 @@ async def test_sync_recordings_filters_by_transaction_code_rules(
         "/api/v1/sessions",
         json={
             "application_id": app_id,
-            "name": "filter-a0201",
-            "recording_filter_prefixes": ["A0201", "=B0301M01A", "re:^C0901.*$"],
+            "name": "filter-car001",
+            "recording_filter_prefixes": ["car001", "=car002_detail", "re:^car003.*$"],
         },
         headers=admin_headers,
     )
@@ -412,10 +877,10 @@ async def test_sync_recordings_filters_by_transaction_code_rules(
 
     async def fake_view_recording(record_id):
         mapping = {
-            "keep-prefix": ("A0201M14I", "tx_code"),
-            "keep-exact": ("B0301M01A", "rct_code"),
-            "keep-regex": ("C0901XYZ", "tx_code"),
-            "drop-1": ("D0101X01", "rct_code"),
+            "keep-prefix": ("car001_open", "tx_code"),
+            "keep-exact": ("car002_detail", "rct_code"),
+            "keep-regex": ("car003_query", "tx_code"),
+            "drop-1": ("car004_misc", "rct_code"),
         }
         code, tag_name = mapping[record_id]
         return {
@@ -432,7 +897,7 @@ async def test_sync_recordings_filters_by_transaction_code_rules(
         await _sync_from_arex_storage(
             session_id=sess_id,
             application_id=app_id,
-            recording_filter_prefixes=["A0201", "=B0301M01A", "re:^C0901.*$"],
+            recording_filter_prefixes=["car001", "=car002_detail", "re:^car003.*$"],
             begin_time=None,
             end_time=None,
             page_size=50,
@@ -442,13 +907,13 @@ async def test_sync_recordings_filters_by_transaction_code_rules(
     resp = client.get(f"/api/v1/sessions/{sess_id}", headers=admin_headers)
     assert resp.status_code == 200
     assert resp.json()["total_count"] == 3
-    assert resp.json()["recording_filter_prefixes"] == ["A0201", "=B0301M01A", "re:^C0901.*$"]
+    assert resp.json()["recording_filter_prefixes"] == ["car001", "=car002_detail", "re:^car003.*$"]
 
     recordings_resp = client.get(f"/api/v1/sessions/{sess_id}/recordings", headers=admin_headers)
     assert recordings_resp.status_code == 200
     recordings = recordings_resp.json()
     assert len(recordings) == 3
-    assert {item["transaction_code"] for item in recordings} == {"A0201M14I", "B0301M01A", "C0901XYZ"}
+    assert {item["transaction_code"] for item in recordings} == {"car001_open", "car002_detail", "car003_query"}
 
 
 @pytest.mark.asyncio

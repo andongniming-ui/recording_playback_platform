@@ -145,27 +145,13 @@
 
       <n-grid :cols="2" :x-gap="16">
         <n-grid-item>
-          <n-card title="期望响应（PL2 录制）" size="small">
-            <n-descriptions v-if="xmlEntries(selectedResult?.expected_response)" bordered :column="1" size="small" label-placement="left">
-              <n-descriptions-item
-                v-for="entry in xmlEntries(selectedResult?.expected_response)"
-                :key="entry.key"
-                :label="entry.key"
-              >{{ entry.value }}</n-descriptions-item>
-            </n-descriptions>
-            <pre v-else class="code-block">{{ prettyText(selectedResult?.expected_response) }}</pre>
+          <n-card title="期望响应（SIT 录制）" size="small">
+            <pre class="code-block">{{ rawText(selectedResult?.expected_response) }}</pre>
           </n-card>
         </n-grid-item>
         <n-grid-item>
-          <n-card title="实际响应（VT 回放）" size="small">
-            <n-descriptions v-if="xmlEntries(selectedResult?.actual_response)" bordered :column="1" size="small" label-placement="left">
-              <n-descriptions-item
-                v-for="entry in xmlEntries(selectedResult?.actual_response)"
-                :key="entry.key"
-                :label="entry.key"
-              >{{ entry.value }}</n-descriptions-item>
-            </n-descriptions>
-            <pre v-else class="code-block">{{ prettyText(selectedResult?.actual_response) }}</pre>
+          <n-card title="实际响应（UAT 回放）" size="small">
+            <pre class="code-block">{{ rawText(selectedResult?.actual_response) }}</pre>
           </n-card>
         </n-grid-item>
       </n-grid>
@@ -505,23 +491,8 @@ function prettyText(value?: string | null) {
   try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value }
 }
 
-/** 解析 XML 字符串为 [{key, value}] 列表；非 XML 或解析失败返回 null */
-function xmlEntries(value?: string | null): Array<{ key: string; value: string }> | null {
-  if (!value) return null
-  const trimmed = value.trim()
-  if (!trimmed.startsWith('<')) return null
-  try {
-    const doc = new DOMParser().parseFromString(trimmed, 'text/xml')
-    if (doc.querySelector('parsererror')) return null
-    const root = doc.documentElement
-    const entries: Array<{ key: string; value: string }> = []
-    for (const child of Array.from(root.children)) {
-      entries.push({ key: child.tagName, value: child.textContent ?? '' })
-    }
-    return entries.length > 0 ? entries : null
-  } catch {
-    return null
-  }
+function rawText(value?: string | null) {
+  return value || '-'
 }
 
 /** 从失败原因中提取差异字段列表；格式："...差异字段 a, b, c" */

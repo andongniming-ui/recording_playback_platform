@@ -1,1 +1,0 @@
-import{b as t}from"./index-B6sC-FX3.js";const i={list:s=>t.get("/suites",{params:s}),create:s=>t.post("/suites",s),autoSmoke:s=>t.post("/suites/auto-smoke",s),get:s=>t.get(`/suites/${s}`),update:(s,e)=>t.put(`/suites/${s}`,e),delete:s=>t.delete(`/suites/${s}`),setCases:(s,e)=>t.put(`/suites/${s}/cases`,e),run:(s,e)=>t.post(`/suites/${s}/run`,e)};export{i as s};

@@ -24,6 +24,7 @@ def _make_app(**kwargs):
     app.arex_app_id = kwargs.get("arex_app_id", None)
     app.ssh_user = kwargs.get("ssh_user", "ubuntu")
     app.sample_rate = kwargs.get("sample_rate", 1.0)
+    app.jvm_process_name = kwargs.get("jvm_process_name", None)
     return app
 
 
@@ -295,7 +296,7 @@ class TestDetectJavaVersion:
             return (0, 'openjdk version "1.8.0_362" 2023-01-17\n', "")
 
         with patch("integration.ssh_executor.run_command", side_effect=fake_run):
-            ver = detect_java_version(MagicMock())
+            ver = detect_java_version(_make_app())
         assert ver == "1.8.0_362"
 
     def test_detect_jdk11(self):
@@ -306,7 +307,7 @@ class TestDetectJavaVersion:
             return (0, 'openjdk version "11.0.18" 2023-01-17\n', "")
 
         with patch("integration.ssh_executor.run_command", side_effect=fake_run):
-            ver = detect_java_version(MagicMock())
+            ver = detect_java_version(_make_app())
         assert ver == "11.0.18"
 
     def test_detect_returns_none_on_failure(self):
@@ -314,7 +315,7 @@ class TestDetectJavaVersion:
         from integration.ssh_executor import detect_java_version
 
         with patch("integration.ssh_executor.run_command", side_effect=Exception("timeout")):
-            ver = detect_java_version(MagicMock())
+            ver = detect_java_version(_make_app())
         assert ver is None
 
     def test_detect_prefers_running_jvm_binary_over_host_default_java(self):
@@ -367,6 +368,47 @@ exec $JAVA_HOME/bin/java -jar app.jar
              patch("integration.ssh_executor.discover_pid", return_value=None):
             ver = detect_java_version(app)
         assert ver == "1.8.0_402"
+
+
+class TestFindStartupScript:
+
+    def test_prefers_running_process_cwd(self):
+        """When the JVM is already running, use its cwd before scanning ~/start.sh."""
+        from integration.ssh_executor import _find_startup_script
+
+        def fake_run(app_, cmd, timeout=30):
+            if "readlink -f /proc/4321/cwd" in cmd:
+                return (0, "/home/test/arex-recorder/didi/didi-system-a/start.sh", "")
+            if "find ~" in cmd or "ls ~" in cmd:
+                return (0, "/home/test/N-LS/start.sh", "")
+            return (0, "", "")
+
+        app = _make_app()
+        app.jvm_process_name = "didi-system-a-1.0.0.jar"
+        with patch("integration.ssh_executor.run_command", side_effect=fake_run), \
+             patch("integration.ssh_executor.discover_pid", return_value=4321):
+            script = _find_startup_script(app)
+
+        assert script == "/home/test/arex-recorder/didi/didi-system-a/start.sh"
+
+    def test_falls_back_to_jar_directory_when_process_not_running(self):
+        """If the process is not running, locate the startup script via the target jar name."""
+        from integration.ssh_executor import _find_startup_script
+
+        def fake_run(app_, cmd, timeout=30):
+            if "-maxdepth 6 -type f -name" in cmd:
+                return (0, "/home/test/arex-recorder/didi/didi-system-a/start.sh", "")
+            if "find ~" in cmd or "ls ~" in cmd:
+                return (0, "/home/test/N-LS/start.sh", "")
+            return (0, "", "")
+
+        app = _make_app()
+        app.jvm_process_name = "didi-system-a-1.0.0.jar"
+        with patch("integration.ssh_executor.run_command", side_effect=fake_run), \
+             patch("integration.ssh_executor.discover_pid", return_value=None):
+            script = _find_startup_script(app)
+
+        assert script == "/home/test/arex-recorder/didi/didi-system-a/start.sh"
 
 
 # ---------------------------------------------------------------------------

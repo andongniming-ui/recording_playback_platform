@@ -38,14 +38,14 @@
         <n-select
           v-model:value="runConfig.target_application_id"
           :options="appOptions"
-          placeholder="默认使用用例所属应用（PL2）"
+          placeholder="默认使用用例所属应用（SIT）"
           clearable
           filterable
         />
       </n-form-item>
       <n-form-item label="">
         <n-text depth="3" style="font-size:12px">
-          选择与用例不同的应用可回放到其他环境（如 VT），用于差异对比
+          选择与用例不同的应用可回放到其他环境（如 UAT），用于差异对比
         </n-text>
       </n-form-item>
       <n-form-item label="忽略字段">

@@ -19,11 +19,12 @@ from models.arex_mocker import ArexMocker
 from models.test_case import TestCase
 from utils.assertions import assertions_all_passed, evaluate_assertions
 from utils.diff import compute_diff
+from utils.repository_capture import is_noise_dynamic_mocker, normalize_repository_sub_call
 from utils.transaction_mapping import apply_transaction_mapping, normalize_transaction_mapping_configs
 
 logger = logging.getLogger(__name__)
-_AREX_AGENT_FLUSH_DELAY_S = 0.3  # empirical wait for AREX agent to finish async reporting.
-# Known limitation: under high load, agent may take >300ms to flush, causing sub-calls
+_AREX_AGENT_FLUSH_DELAY_S = 1.0  # empirical wait for AREX agent to finish async reporting.
+# Known limitation: under high load, agent may take >1s to flush, causing sub-calls
 # to be silently missed (actual_sub_calls will be null, frontend shows "Agent 未上报").
 
 _ws_connections: dict[int, set] = {}
@@ -659,11 +660,18 @@ async def _fetch_replay_sub_calls(record_id: str) -> Optional[str]:
             mocker = json.loads(m.mocker_data)
             category = mocker.get("categoryType") or {}
             cat_name = category.get("name") if isinstance(category, dict) else str(category)
+            operation_name = mocker.get("operationName") or ""
+            if is_noise_dynamic_mocker(operation_name, cat_name or m.category_name):
+                continue
+            repository_sub_call = normalize_repository_sub_call(mocker, cat_name or m.category_name)
+            if repository_sub_call is not None:
+                sub_calls.append(repository_sub_call)
+                continue
             target_req = mocker.get("targetRequest") or {}
             target_resp = mocker.get("targetResponse") or {}
             sub_calls.append({
                 "type": cat_name or m.category_name,
-                "operation": mocker.get("operationName") or "",
+                "operation": operation_name,
                 "request": target_req.get("body") if isinstance(target_req, dict) else None,
                 "response": target_resp.get("body") if isinstance(target_resp, dict) else None,
             })

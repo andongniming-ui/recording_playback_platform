@@ -406,6 +406,40 @@ def _detect_java_version_with_command(app: Application, command: str) -> str | N
 
 def _find_startup_script(app: Application) -> str | None:
     """Find the target JVM startup script, if present."""
+    pid = discover_pid(app)
+    if pid is not None:
+        _, out0, _ = run_command(
+            app,
+            (
+                f'cwd="$(readlink -f /proc/{pid}/cwd 2>/dev/null)"; '
+                'for f in "$cwd/start.sh" "$cwd/startup.sh"; do '
+                '[ -f "$f" ] && printf "%s" "$f" && exit 0; '
+                'done'
+            ),
+        )
+        script_path = out0.strip()
+        if script_path:
+            return script_path
+
+    if app.jvm_process_name:
+        jar_name = shlex.quote(app.jvm_process_name)
+        _, out_jar, _ = run_command(
+            app,
+            (
+                f'jar_path="$(find ~ -maxdepth 6 -type f -name {jar_name} 2>/dev/null | head -1)"; '
+                'if [ -n "$jar_path" ]; then '
+                'jar_dir="$(dirname "$jar_path")"; '
+                'for f in "$jar_dir/start.sh" "$(dirname "$jar_dir")/start.sh" '
+                '"$jar_dir/startup.sh" "$(dirname "$jar_dir")/startup.sh"; do '
+                '[ -f "$f" ] && printf "%s" "$f" && exit 0; '
+                'done; '
+                'fi'
+            ),
+        )
+        script_path = out_jar.strip()
+        if script_path:
+            return script_path
+
     _, out1, _ = run_command(
         app,
         'find ~ -maxdepth 3 \\( -name "start.sh" -o -name "startup.sh" \\) 2>/dev/null | head -1',

@@ -50,25 +50,29 @@
       </n-form>
     </n-card>
 
-    <n-grid :cols="2" :x-gap="16">
-      <n-grid-item>
-        <n-card title="请求头">
-          <pre class="code-block">{{ prettyText(recording?.request_headers) }}</pre>
-        </n-card>
-      </n-grid-item>
-      <n-grid-item>
-        <n-card title="请求体">
-          <pre class="code-block">{{ prettyText(recording?.request_body) }}</pre>
-        </n-card>
-      </n-grid-item>
-      <n-grid-item>
-        <n-card title="响应体" style="height:100%">
-          <pre class="code-block">{{ prettyText(recording?.response_body) }}</pre>
-        </n-card>
-      </n-grid-item>
-    </n-grid>
+    <n-card title="主调用详情">
+      <n-space vertical :size="16">
+        <n-grid :cols="2" :x-gap="16">
+          <n-grid-item>
+            <n-card title="请求头" size="small">
+              <pre class="code-block">{{ prettyText(recording?.request_headers) }}</pre>
+            </n-card>
+          </n-grid-item>
+          <n-grid-item>
+            <n-card title="请求体" size="small">
+              <pre class="code-block">{{ prettyText(recording?.request_body) }}</pre>
+            </n-card>
+          </n-grid-item>
+          <n-grid-item :span="2">
+            <n-card title="响应体" size="small">
+              <pre class="code-block">{{ prettyText(recording?.response_body) }}</pre>
+            </n-card>
+          </n-grid-item>
+        </n-grid>
 
-    <SubCallPanel :sub-calls="recording?.sub_calls" />
+        <SubCallPanel :sub-calls="recording?.sub_calls" />
+      </n-space>
+    </n-card>
   </n-space>
 
   <n-modal v-model:show="showConvertModal" title="由录制生成测试用例" preset="card" style="width: 420px">

@@ -1,0 +1,1483 @@
+{
+  "info": {
+    "name": "Loan System API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "客户基础资质校验",
+      "item": [
+        {
+          "name": "LOAN_QUALIFY - 正常客户-应通过",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUALIFY\", \"params\": {\"customerId\": \"C001\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUALIFY - 年龄=60边界(Bug1触发)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUALIFY\", \"params\": {\"customerId\": \"C002\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUALIFY - 年龄=18下界",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUALIFY\", \"params\": {\"customerId\": \"C003\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUALIFY - 年龄=61超限",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUALIFY\", \"params\": {\"customerId\": \"C004\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUALIFY - 状态FROZEN",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUALIFY\", \"params\": {\"customerId\": \"C005\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUALIFY - 负债比0.53(Bug3)+征信80(Bug2)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUALIFY\", \"params\": {\"customerId\": \"C006\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUALIFY - 收入4999低于门槛",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUALIFY\", \"params\": {\"customerId\": \"C007\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUALIFY - 收入=5000刚好门槛",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUALIFY\", \"params\": {\"customerId\": \"C008\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUALIFY - 高收入低负债优质客户",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUALIFY\", \"params\": {\"customerId\": \"C009\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUALIFY - 黑名单客户",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUALIFY\", \"params\": {\"customerId\": \"C010\", \"productId\": \"P001\"}}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "征信分查询与风险评级",
+      "item": [
+        {
+          "name": "LOAN_CREDIT - 正常客户-应通过",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_CREDIT\", \"params\": {\"customerId\": \"C001\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_CREDIT - 年龄=60边界(Bug1触发)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_CREDIT\", \"params\": {\"customerId\": \"C002\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_CREDIT - 年龄=18下界",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_CREDIT\", \"params\": {\"customerId\": \"C003\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_CREDIT - 年龄=61超限",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_CREDIT\", \"params\": {\"customerId\": \"C004\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_CREDIT - 状态FROZEN",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_CREDIT\", \"params\": {\"customerId\": \"C005\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_CREDIT - 负债比0.53(Bug3)+征信80(Bug2)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_CREDIT\", \"params\": {\"customerId\": \"C006\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_CREDIT - 收入4999低于门槛",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_CREDIT\", \"params\": {\"customerId\": \"C007\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_CREDIT - 收入=5000刚好门槛",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_CREDIT\", \"params\": {\"customerId\": \"C008\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_CREDIT - 高收入低负债优质客户",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_CREDIT\", \"params\": {\"customerId\": \"C009\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_CREDIT - 黑名单客户",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_CREDIT\", \"params\": {\"customerId\": \"C010\", \"productId\": \"P001\"}}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "收入规则校验",
+      "item": [
+        {
+          "name": "LOAN_INCOME - 正常客户-应通过",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_INCOME\", \"params\": {\"customerId\": \"C001\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_INCOME - 年龄=60边界(Bug1触发)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_INCOME\", \"params\": {\"customerId\": \"C002\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_INCOME - 年龄=18下界",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_INCOME\", \"params\": {\"customerId\": \"C003\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_INCOME - 年龄=61超限",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_INCOME\", \"params\": {\"customerId\": \"C004\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_INCOME - 状态FROZEN",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_INCOME\", \"params\": {\"customerId\": \"C005\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_INCOME - 负债比0.53(Bug3)+征信80(Bug2)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_INCOME\", \"params\": {\"customerId\": \"C006\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_INCOME - 收入4999低于门槛",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_INCOME\", \"params\": {\"customerId\": \"C007\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_INCOME - 收入=5000刚好门槛",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_INCOME\", \"params\": {\"customerId\": \"C008\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_INCOME - 高收入低负债优质客户",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_INCOME\", \"params\": {\"customerId\": \"C009\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_INCOME - 黑名单客户",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_INCOME\", \"params\": {\"customerId\": \"C010\", \"productId\": \"P001\"}}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "授信额度测算",
+      "item": [
+        {
+          "name": "LOAN_QUOTA - 正常客户-应通过",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUOTA\", \"params\": {\"customerId\": \"C001\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUOTA - 年龄=60边界(Bug1触发)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUOTA\", \"params\": {\"customerId\": \"C002\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUOTA - 年龄=18下界",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUOTA\", \"params\": {\"customerId\": \"C003\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUOTA - 年龄=61超限",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUOTA\", \"params\": {\"customerId\": \"C004\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUOTA - 状态FROZEN",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUOTA\", \"params\": {\"customerId\": \"C005\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUOTA - 负债比0.53(Bug3)+征信80(Bug2)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUOTA\", \"params\": {\"customerId\": \"C006\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUOTA - 收入4999低于门槛",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUOTA\", \"params\": {\"customerId\": \"C007\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUOTA - 收入=5000刚好门槛",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUOTA\", \"params\": {\"customerId\": \"C008\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUOTA - 高收入低负债优质客户",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUOTA\", \"params\": {\"customerId\": \"C009\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_QUOTA - 黑名单客户",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_QUOTA\", \"params\": {\"customerId\": \"C010\", \"productId\": \"P001\"}}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "综合准入评估",
+      "item": [
+        {
+          "name": "LOAN_ADMIT - 正常客户-应通过",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_ADMIT\", \"params\": {\"customerId\": \"C001\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_ADMIT - 年龄=60边界(Bug1触发)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_ADMIT\", \"params\": {\"customerId\": \"C002\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_ADMIT - 年龄=18下界",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_ADMIT\", \"params\": {\"customerId\": \"C003\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_ADMIT - 年龄=61超限",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_ADMIT\", \"params\": {\"customerId\": \"C004\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_ADMIT - 状态FROZEN",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_ADMIT\", \"params\": {\"customerId\": \"C005\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_ADMIT - 负债比0.53(Bug3)+征信80(Bug2)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_ADMIT\", \"params\": {\"customerId\": \"C006\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_ADMIT - 收入4999低于门槛",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_ADMIT\", \"params\": {\"customerId\": \"C007\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_ADMIT - 收入=5000刚好门槛",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_ADMIT\", \"params\": {\"customerId\": \"C008\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_ADMIT - 高收入低负债优质客户",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_ADMIT\", \"params\": {\"customerId\": \"C009\", \"productId\": \"P001\"}}"
+            }
+          }
+        },
+        {
+          "name": "LOAN_ADMIT - 黑名单客户",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:28081/loan/gateway/json",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "28081",
+              "path": [
+                "loan",
+                "gateway",
+                "json"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnCode\": \"LOAN_ADMIT\", \"params\": {\"customerId\": \"C010\", \"productId\": \"P001\"}}"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

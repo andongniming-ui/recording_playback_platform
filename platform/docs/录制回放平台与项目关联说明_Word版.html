@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>录制回放平台与项目关联说明</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --paper: #ffffff;
+      --text: #1f2937;
+      --muted: #667085;
+      --line: #dbe3ef;
+      --brand: #14324a;
+      --accent: #1f8f5f;
+      --accent-soft: #edf8f2;
+      --info: #eef4ff;
+      --shadow: 0 16px 42px rgba(15, 23, 42, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background:
+        linear-gradient(180deg, rgba(20, 50, 74, 0.06), transparent 260px),
+        var(--bg);
+      color: var(--text);
+      font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.75;
+    }
+
+    .page {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 28px 20px 48px;
+    }
+
+    .sheet {
+      background: var(--paper);
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .cover {
+      padding: 54px 56px 38px;
+      background:
+        radial-gradient(circle at top right, rgba(31, 143, 95, 0.14), transparent 30%),
+        linear-gradient(135deg, #14324a 0%, #0e2232 100%);
+      color: #fff;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      font-size: 13px;
+      letter-spacing: 0.04em;
+    }
+
+    .cover h1 {
+      margin: 18px 0 10px;
+      font-size: 40px;
+      line-height: 1.15;
+    }
+
+    .cover p {
+      margin: 0;
+      max-width: 820px;
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 26px;
+    }
+
+    .meta-card {
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+    }
+
+    .meta-card .label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(255, 255, 255, 0.72);
+    }
+
+    .meta-card .value {
+      margin-top: 6px;
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .content {
+      padding: 42px 56px 56px;
+    }
+
+    .toc {
+      margin-bottom: 28px;
+      padding: 18px 20px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(180deg, #fbfcfe 0%, #f7f9fc 100%);
+    }
+
+    .toc h2 {
+      margin: 0 0 12px;
+      color: var(--brand);
+      font-size: 22px;
+    }
+
+    .toc ol {
+      margin: 0;
+      padding-left: 22px;
+      columns: 2;
+      column-gap: 34px;
+    }
+
+    .toc li {
+      margin: 0 0 6px;
+      break-inside: avoid;
+    }
+
+    h2.section-title {
+      margin: 34px 0 14px;
+      padding-left: 12px;
+      border-left: 5px solid var(--accent);
+      color: var(--brand);
+      font-size: 26px;
+      line-height: 1.25;
+    }
+
+    h3 {
+      margin: 22px 0 10px;
+      color: #274057;
+      font-size: 20px;
+    }
+
+    p { margin: 10px 0; }
+    ul, ol { padding-left: 24px; }
+    li { margin: 6px 0; }
+
+    .callout {
+      margin: 16px 0;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: var(--info);
+    }
+
+    .callout strong {
+      color: var(--brand);
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin: 18px 0 8px;
+    }
+
+    .summary-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px;
+      background: #fff;
+    }
+
+    .summary-card h4 {
+      margin: 0 0 8px;
+      color: var(--brand);
+      font-size: 18px;
+    }
+
+    .summary-card p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .flow {
+      margin: 18px 0 8px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fbfcfe;
+    }
+
+    .flow-row {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+      align-items: stretch;
+      margin-bottom: 12px;
+    }
+
+    .flow-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .flow-box {
+      min-height: 90px;
+      padding: 14px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      font-weight: 600;
+      color: var(--brand);
+    }
+
+    .flow-box.accent {
+      background: var(--accent-soft);
+      border-color: #cce8d8;
+    }
+
+    .arrow-row {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-weight: 700;
+      text-align: center;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 18px;
+      font-size: 15px;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f2f6fb;
+      color: var(--brand);
+      text-align: left;
+    }
+
+    code {
+      padding: 0 6px;
+      border-radius: 6px;
+      background: #f3f5f8;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 0.94em;
+    }
+
+    .footer {
+      margin-top: 34px;
+      padding-top: 18px;
+      border-top: 1px dashed var(--line);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      .page {
+        max-width: none;
+        padding: 0;
+      }
+
+      .sheet {
+        box-shadow: none;
+        border: none;
+        border-radius: 0;
+      }
+
+      .cover {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .meta,
+      .summary-grid,
+      .flow-row,
+      .arrow-row {
+        grid-template-columns: 1fr;
+      }
+
+      .toc ol {
+        columns: 1;
+      }
+
+      .content,
+      .cover {
+        padding-left: 22px;
+        padding-right: 22px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="sheet">
+      <section class="cover">
+        <div class="eyebrow">管理汇报版</div>
+        <h1>录制回放平台与项目关联说明</h1>
+        <p>本说明面向非技术管理者，重点回答：平台为什么能录到项目请求、平台和项目如何关联、实际项目如何接入，并说明该方案在回归验证和质量管控中的管理价值。</p>
+        <div class="meta">
+          <div class="meta-card">
+            <div class="label">适用对象</div>
+            <div class="value">领导汇报 / 项目立项 / 接入沟通</div>
+          </div>
+          <div class="meta-card">
+            <div class="label">说明范围</div>
+            <div class="value">主请求、子调用、数据库调用录制</div>
+          </div>
+          <div class="meta-card">
+            <div class="label">示例对象</div>
+            <div class="value">didi-system-a / didi-system-b</div>
+          </div>
+        </div>
+      </section>
+
+      <main class="content">
+        <section class="toc">
+          <h2>目录</h2>
+          <ol>
+            <li>一句话结论</li>
+            <li>角色分工</li>
+            <li>工作流程图</li>
+            <li>平台为什么能录到请求</li>
+            <li>平台和项目如何关联</li>
+            <li>实际项目接入条件</li>
+            <li>实际项目接入步骤</li>
+            <li>常见失败原因</li>
+            <li>管理价值</li>
+          </ol>
+        </section>
+
+        <h2 class="section-title">1. 一句话结论</h2>
+        <p>录制回放平台之所以能录到 <code>didi</code> 项目的主请求、HTTP 子调用和数据库调用，不是因为平台直接去“监听”项目，而是因为项目启动时挂载了一个 Java Agent。这个 Agent 像一支“录音笔”，在项目运行过程中采集链路数据，并把采集结果回传给录制回放平台。</p>
+
+        <div class="callout">
+          <strong>可以这样理解：</strong> 业务系统负责处理请求，Agent 负责录制，平台负责接收、整理、展示和回放。
+        </div>
+
+        <h2 class="section-title">2. 角色分工</h2>
+        <div class="summary-grid">
+          <div class="summary-card">
+            <h4>业务项目</h4>
+            <p>例如 <code>didi-system-a</code>、<code>didi-system-b</code>。负责真实处理业务请求，产生主流程、子调用和数据库操作。</p>
+          </div>
+          <div class="summary-card">
+            <h4>AREX Agent</h4>
+            <p>挂在 Java 进程里的采集组件。负责记录主请求、HTTP 子调用、数据库调用，并上报给平台。</p>
+          </div>
+          <div class="summary-card">
+            <h4>录制回放平台</h4>
+            <p>负责接收录制数据、管理录制会话、查看链路明细、生成测试资产并进行回放比对。</p>
+          </div>
+        </div>
+
+        <h2 class="section-title">3. 工作流程图</h2>
+        <div class="flow">
+          <div class="flow-row">
+            <div class="flow-box">用户或测试工具发送请求<br />POST /api/car/service</div>
+            <div class="flow-box">didi 项目收到请求</div>
+            <div class="flow-box accent">AREX Agent 采集主请求</div>
+            <div class="flow-box">项目执行业务逻辑</div>
+            <div class="flow-box">项目产生响应</div>
+          </div>
+          <div class="arrow-row">
+            <div>↓</div>
+            <div>↓</div>
+            <div>↓</div>
+            <div>↙ ↘</div>
+            <div>↓</div>
+          </div>
+          <div class="flow-row">
+            <div class="flow-box">项目内部发起 HTTP 子调用</div>
+            <div class="flow-box">项目执行数据库查询或更新</div>
+            <div class="flow-box accent">Agent 采集子调用与数据库调用</div>
+            <div class="flow-box">录制数据上报到平台</div>
+            <div class="flow-box">平台按录制会话归档并展示</div>
+          </div>
+        </div>
+
+        <h2 class="section-title">4. 平台为什么能录到请求</h2>
+        <h3>4.1 主请求</h3>
+        <p>当外部调用业务接口时，例如 <code>POST /api/car/service</code>，请求先进入业务项目。由于 Agent 已经随着 Java 服务一起启动，它能在进程内部看到这次请求，因此可以记录请求体、响应体、状态码等信息。</p>
+
+        <h3>4.2 子调用</h3>
+        <p>复杂交易在处理过程中，往往会继续访问下游服务。在当前示例中，业务处理时会发起内部 HTTP 调用：</p>
+        <ul>
+          <li><code>GET /internal/didi/risk</code></li>
+          <li><code>GET /internal/didi/pricing</code></li>
+        </ul>
+        <p>这些虽然是系统内部自己调用自己，但本质上仍然是一次真实 HTTP 请求，因此 Agent 也能录到。</p>
+
+        <h3>4.3 数据库调用</h3>
+        <p>复杂交易还会访问 MySQL，例如查询车辆信息、查询客户信息、写入审计表、更新车辆状态。这些数据库动作通过 JDBC 执行，Agent 可以在运行过程中识别并采集。</p>
+
+        <h2 class="section-title">5. 平台和项目如何关联</h2>
+        <p>平台和项目真正关联起来，核心只有三件事：</p>
+        <table>
+          <thead>
+            <tr>
+              <th>关键条件</th>
+              <th>大白话解释</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>项目启动时挂载 Agent</td>
+              <td>相当于把“录音笔”装进业务项目里。没有这一步，平台录不到任何请求。</td>
+            </tr>
+            <tr>
+              <td>Agent 知道平台地址</td>
+              <td>相当于告诉录音笔“录完发到哪里”。地址或端口不对，平台就收不到数据。</td>
+            </tr>
+            <tr>
+              <td>平台和项目使用同一个应用标识</td>
+              <td>相当于给录制数据贴上项目姓名标签。这样平台才能把数据归到正确项目下。</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2 class="section-title">6. 实际项目接入条件</h2>
+        <ul>
+          <li>项目是 Java 服务，最好是 Spring Boot 类项目。</li>
+          <li>项目启动方式可控，能够修改启动脚本、启动命令或容器启动参数。</li>
+          <li>项目所在机器能访问录制回放平台的地址和端口。</li>
+          <li>项目使用常见的数据库访问方式和 HTTP 调用方式，便于 Agent 识别。</li>
+          <li>平台侧已创建应用，并配置好对应应用标识。</li>
+        </ul>
+
+        <h2 class="section-title">7. 实际项目接入步骤</h2>
+        <ol>
+          <li>先部署录制回放平台，并确认平台页面和后端可正常访问。</li>
+          <li>准备好 <code>arex-agent.jar</code>。</li>
+          <li>修改业务项目启动命令，挂载 <code>-javaagent</code>。</li>
+          <li>配置 Agent 上报目标地址和应用标识。</li>
+          <li>启动业务项目，确认 Agent 初始化成功。</li>
+          <li>在平台中创建对应应用。</li>
+          <li>在平台中开始录制。</li>
+          <li>发送真实业务请求。</li>
+          <li>停止录制并同步结果。</li>
+          <li>在平台中查看主请求、子调用、数据库调用和后续回放结果。</li>
+        </ol>
+
+        <h2 class="section-title">8. 常见失败原因</h2>
+        <ul>
+          <li>没有挂载 <code>-javaagent</code>。</li>
+          <li>平台地址或端口配置错误。</li>
+          <li>平台没有先启动，导致 Agent 启动时无法建立录制链路。</li>
+          <li>平台应用标识与项目应用标识不一致。</li>
+          <li>网络、防火墙或容器网络导致平台与项目不通。</li>
+          <li>业务请求虽然到了项目，但录制数据没有成功上报平台。</li>
+        </ul>
+
+        <h2 class="section-title">9. 管理价值</h2>
+        <div class="summary-grid">
+          <div class="summary-card">
+            <h4>沉淀真实测试资产</h4>
+            <p>把真实业务请求沉淀下来，形成后续可重复使用的测试样本，而不是只看一次性日志。</p>
+          </div>
+          <div class="summary-card">
+            <h4>保留完整交易链路</h4>
+            <p>不仅能看到入口请求，还能看到子调用和数据库行为，定位问题更快。</p>
+          </div>
+          <div class="summary-card">
+            <h4>支撑发布回归验证</h4>
+            <p>后续版本发布时，可以对同一批录制数据进行回放，快速判断是否出现回归问题。</p>
+          </div>
+        </div>
+
+        <div class="callout">
+          <strong>管理层可以这样理解：</strong> 这套方案的核心价值，不是“多打了一些日志”，而是把真实交易沉淀成可重复执行、可持续复用、可量化对比的测试资产。
+        </div>
+
+        <h2 class="section-title">10. 总结</h2>
+        <p>录制回放平台和业务项目的关联，本质上就是三步：</p>
+        <ol>
+          <li>在业务项目里挂载 Agent。</li>
+          <li>让 Agent 把录制数据发回平台。</li>
+          <li>用统一的应用标识把平台和项目对应起来。</li>
+        </ol>
+        <p>一旦接入成功，平台就能把“主请求 + 子调用 + 数据库调用”作为一条完整交易链路统一管理，并进一步用于录制沉淀、回放验证和问题排查。</p>
+
+        <div class="footer">
+          文档位置：<code>docs/录制回放平台与项目关联说明_Word版.html</code><br />
+          适合直接浏览、打印，或另存为 PDF / Word 后用于汇报材料。
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

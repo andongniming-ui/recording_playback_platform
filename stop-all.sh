@@ -2,7 +2,7 @@
 # 停止所有服务
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG_DIR="$ROOT_DIR/logs"
+LOG_DIR="$ROOT_DIR/runtime/logs"
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 

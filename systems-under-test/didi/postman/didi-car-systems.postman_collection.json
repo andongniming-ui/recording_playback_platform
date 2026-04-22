@@ -1,0 +1,888 @@
+{
+  "info": {
+    "_postman_id": "fdb4cfef-4c91-4f3f-b4f5-9e78c5e8b001",
+    "name": "didi Car Systems",
+    "description": "AREX Recorder demo target systems. Import into Postman and select a didi-system environment. Each request auto-generates an 18-digit tra_id and sends it in the XML body so logs can be searched end-to-end.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:18081"
+    },
+    {
+      "key": "traId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Complex Transactions",
+      "description": "car000001 ~ car000015. These requests will produce HTTP sub-calls and JDBC activity.",
+      "item": [
+        {
+          "name": "car000001 车险试算",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <code>car000001</code>\n  <request_no>REQ-car000001</request_no>\n  <customer_no>C10001</customer_no>\n  <plate_no>沪A10001</plate_no>\n  <vin>VIN0000000000000001</vin>\n  <policy_no>P10001</policy_no>\n  <claim_no>CL10001</claim_no>\n  <garage_code>G001</garage_code>\n  <city>SHANGHAI</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "交易码字段：code\n子调用：GET /internal/didi/risk, GET /internal/didi/pricing\n数据库：car_vehicle, car_customer, car_policy, car_claim, car_dispatch, car_order_audit\ntra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000002 车险出单",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <code>car000002</code>\n  <request_no>REQ-car000002</request_no>\n  <customer_no>C10001</customer_no>\n  <plate_no>沪A10001</plate_no>\n  <vin>VIN0000000000000001</vin>\n  <policy_no>P10001</policy_no>\n  <claim_no>CL10001</claim_no>\n  <garage_code>G001</garage_code>\n  <city>SHANGHAI</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000003 车险续保",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <code>car000003</code>\n  <request_no>REQ-car000003</request_no>\n  <customer_no>C10002</customer_no>\n  <plate_no>苏B20002</plate_no>\n  <vin>VIN0000000000000002</vin>\n  <policy_no>P10002</policy_no>\n  <claim_no>CL10002</claim_no>\n  <garage_code>G002</garage_code>\n  <city>SUZHOU</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "A/B 默认有受控差异\ntra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000004 理赔报案",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <code>car000004</code>\n  <request_no>REQ-car000004</request_no>\n  <customer_no>C10003</customer_no>\n  <plate_no>浙C30003</plate_no>\n  <vin>VIN0000000000000003</vin>\n  <policy_no>P10003</policy_no>\n  <claim_no>CL10003</claim_no>\n  <garage_code>G003</garage_code>\n  <city>HANGZHOU</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000005 理赔定损",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <code>car000005</code>\n  <request_no>REQ-car000005</request_no>\n  <customer_no>C10003</customer_no>\n  <plate_no>浙C30003</plate_no>\n  <vin>VIN0000000000000003</vin>\n  <policy_no>P10003</policy_no>\n  <claim_no>CL10003</claim_no>\n  <garage_code>G003</garage_code>\n  <city>HANGZHOU</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000006 道路救援派单",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <trs_code>car000006</trs_code>\n  <request_no>REQ-car000006</request_no>\n  <customer_no>C10002</customer_no>\n  <plate_no>苏B20002</plate_no>\n  <vin>VIN0000000000000002</vin>\n  <policy_no>P10002</policy_no>\n  <claim_no>CL10002</claim_no>\n  <garage_code>G002</garage_code>\n  <city>SUZHOU</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "A/B 默认有受控差异\ntra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000007 维修估价",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <trs_code>car000007</trs_code>\n  <request_no>REQ-car000007</request_no>\n  <customer_no>C10002</customer_no>\n  <plate_no>苏B20002</plate_no>\n  <vin>VIN0000000000000002</vin>\n  <policy_no>P10002</policy_no>\n  <claim_no>CL10002</claim_no>\n  <garage_code>G002</garage_code>\n  <city>SUZHOU</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000008 维修确认",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <trs_code>car000008</trs_code>\n  <request_no>REQ-car000008</request_no>\n  <customer_no>C10002</customer_no>\n  <plate_no>苏B20002</plate_no>\n  <vin>VIN0000000000000002</vin>\n  <policy_no>P10002</policy_no>\n  <claim_no>CL10002</claim_no>\n  <garage_code>G002</garage_code>\n  <city>SUZHOU</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000009 二手车估值",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <trs_code>car000009</trs_code>\n  <request_no>REQ-car000009</request_no>\n  <customer_no>C10001</customer_no>\n  <plate_no>沪A10001</plate_no>\n  <vin>VIN0000000000000001</vin>\n  <policy_no>P10001</policy_no>\n  <claim_no>CL10001</claim_no>\n  <garage_code>G001</garage_code>\n  <city>SHANGHAI</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000010 车贷预审",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <trs_code>car000010</trs_code>\n  <request_no>REQ-car000010</request_no>\n  <customer_no>C10001</customer_no>\n  <plate_no>沪A10001</plate_no>\n  <vin>VIN0000000000000001</vin>\n  <policy_no>P10001</policy_no>\n  <claim_no>CL10001</claim_no>\n  <garage_code>G001</garage_code>\n  <city>SHANGHAI</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000011 车贷放款确认",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <service_code>car000011</service_code>\n  <request_no>REQ-car000011</request_no>\n  <customer_no>C10003</customer_no>\n  <plate_no>浙C30003</plate_no>\n  <vin>VIN0000000000000003</vin>\n  <policy_no>P10003</policy_no>\n  <claim_no>CL10003</claim_no>\n  <garage_code>G003</garage_code>\n  <city>HANGZHOU</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "A/B 默认有受控差异\ntra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000012 延保查询",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <service_code>car000012</service_code>\n  <request_no>REQ-car000012</request_no>\n  <customer_no>C10001</customer_no>\n  <plate_no>沪A10001</plate_no>\n  <vin>VIN0000000000000001</vin>\n  <policy_no>P10001</policy_no>\n  <claim_no>CL10001</claim_no>\n  <garage_code>G001</garage_code>\n  <city>SHANGHAI</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000013 违章代办",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <service_code>car000013</service_code>\n  <request_no>REQ-car000013</request_no>\n  <customer_no>C10002</customer_no>\n  <plate_no>苏B20002</plate_no>\n  <vin>VIN0000000000000002</vin>\n  <policy_no>P10002</policy_no>\n  <claim_no>CL10002</claim_no>\n  <garage_code>G002</garage_code>\n  <city>SUZHOU</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000014 电池健康检测",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <biz_code>car000014</biz_code>\n  <request_no>REQ-car000014</request_no>\n  <customer_no>C10001</customer_no>\n  <plate_no>沪A10001</plate_no>\n  <vin>VIN0000000000000001</vin>\n  <policy_no>P10001</policy_no>\n  <claim_no>CL10001</claim_no>\n  <garage_code>G001</garage_code>\n  <city>SHANGHAI</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000015 充电订单创建",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <biz_code>car000015</biz_code>\n  <request_no>REQ-car000015</request_no>\n  <customer_no>C10001</customer_no>\n  <plate_no>沪A10001</plate_no>\n  <vin>VIN0000000000000001</vin>\n  <policy_no>P10001</policy_no>\n  <claim_no>CL10001</claim_no>\n  <garage_code>G001</garage_code>\n  <city>SHANGHAI</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Simple Transactions",
+      "description": "car000016 ~ car000030. These requests are lightweight, without DB and HTTP sub-calls.",
+      "item": [
+        {
+          "name": "car000016 车辆画像查询",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <code>car000016</code>\n  <request_no>REQ-car000016</request_no>\n  <customer_no>C10001</customer_no>\n  <plate_no>沪A10001</plate_no>\n  <city>SHANGHAI</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000017 配件库存查询",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <code>car000017</code>\n  <request_no>REQ-car000017</request_no>\n  <customer_no>C10001</customer_no>\n  <plate_no>沪A10001</plate_no>\n  <city>SHANGHAI</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000018 保养套餐查询",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <code>car000018</code>\n  <request_no>REQ-car000018</request_no>\n  <customer_no>C10001</customer_no>\n  <plate_no>沪A10001</plate_no>\n  <city>SHANGHAI</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "A/B 默认有受控差异\ntra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000019 门店营业时间查询",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <code>car000019</code>\n  <request_no>REQ-car000019</request_no>\n  <customer_no>C10001</customer_no>\n  <plate_no>沪A10001</plate_no>\n  <city>SHANGHAI</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000020 试驾预约提交",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <code>car000020</code>\n  <request_no>REQ-car000020</request_no>\n  <customer_no>C10001</customer_no>\n  <plate_no>沪A10001</plate_no>\n  <city>SHANGHAI</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000021 新能源补贴测算",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <trs_code>car000021</trs_code>\n  <request_no>REQ-car000021</request_no>\n  <customer_no>C10002</customer_no>\n  <plate_no>苏B20002</plate_no>\n  <city>SUZHOU</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000022 停车费试算",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <trs_code>car000022</trs_code>\n  <request_no>REQ-car000022</request_no>\n  <customer_no>C10002</customer_no>\n  <plate_no>苏B20002</plate_no>\n  <city>SUZHOU</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000023 车机版本查询",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <trs_code>car000023</trs_code>\n  <request_no>REQ-car000023</request_no>\n  <customer_no>C10002</customer_no>\n  <plate_no>苏B20002</plate_no>\n  <city>SUZHOU</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000024 会员权益校验",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <trs_code>car000024</trs_code>\n  <request_no>REQ-car000024</request_no>\n  <customer_no>C10002</customer_no>\n  <plate_no>苏B20002</plate_no>\n  <city>SUZHOU</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "A/B 默认有受控差异\ntra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000025 预约洗车",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <trs_code>car000025</trs_code>\n  <request_no>REQ-car000025</request_no>\n  <customer_no>C10002</customer_no>\n  <plate_no>苏B20002</plate_no>\n  <city>SUZHOU</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000026 牌照归属地查询",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <service_code>car000026</service_code>\n  <request_no>REQ-car000026</request_no>\n  <customer_no>C10003</customer_no>\n  <plate_no>浙C30003</plate_no>\n  <city>HANGZHOU</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000027 充电站列表查询",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <service_code>car000027</service_code>\n  <request_no>REQ-car000027</request_no>\n  <customer_no>C10003</customer_no>\n  <plate_no>浙C30003</plate_no>\n  <city>HANGZHOU</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000028 积分兑换测算",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <service_code>car000028</service_code>\n  <request_no>REQ-car000028</request_no>\n  <customer_no>C10003</customer_no>\n  <plate_no>浙C30003</plate_no>\n  <city>HANGZHOU</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000029 优惠券核销校验",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <biz_code>car000029</biz_code>\n  <request_no>REQ-car000029</request_no>\n  <customer_no>C10001</customer_no>\n  <plate_no>沪A10001</plate_no>\n  <city>SHANGHAI</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "A/B 默认有受控差异\ntra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        },
+        {
+          "name": "car000030 售后评价提交",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <tra_id>{{traId}}</tra_id>\n  <biz_code>car000030</biz_code>\n  <request_no>REQ-car000030</request_no>\n  <customer_no>C10001</customer_no>\n  <plate_no>沪A10001</plate_no>\n  <city>SHANGHAI</city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/car/service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "car",
+                "service"
+              ]
+            },
+            "description": "tra_id：每次发送前自动生成 18 位数字，可用于串联主请求、HTTP 子调用、数据库调用日志"
+          }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "let traId = String(Math.floor(Math.random() * 9) + 1);",
+          "while (traId.length < 18) {",
+          "  traId += String(Math.floor(Math.random() * 10));",
+          "}",
+          "pm.collectionVariables.set(\"traId\", traId);",
+          "pm.variables.set(\"traId\", traId);"
+        ]
+      }
+    }
+  ]
+}

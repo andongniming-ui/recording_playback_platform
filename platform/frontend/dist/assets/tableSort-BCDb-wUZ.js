@@ -1,0 +1,1 @@
+function u(e,n="descend"){return{columnKey:e,order:n}}function d(e,n){return e.columnKey===n?e.order:!1}function t(e,n,r="descend"){return!(e!=null&&e.columnKey)||!e.order?u(n,r):{columnKey:String(e.columnKey),order:e.order}}function c(e){return e==="ascend"?"asc":"desc"}export{u as d,d as r,c as t,t as u};

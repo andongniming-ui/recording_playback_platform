@@ -1,0 +1,9 @@
+server:
+  port: 28083
+
+logging:
+  level:
+    root: INFO
+    com.arex.demo.loan.mock: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"

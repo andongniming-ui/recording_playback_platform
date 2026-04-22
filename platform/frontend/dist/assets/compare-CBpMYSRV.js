@@ -1,0 +1,1 @@
+import{b as r}from"./index-BZmDg5FO.js";const a={list:e=>r.get("/compare-rules",{params:e}),create:e=>r.post("/compare-rules",e),update:(e,p)=>r.put(`/compare-rules/${e}`,p),delete:e=>r.delete(`/compare-rules/${e}`)};export{a as c};

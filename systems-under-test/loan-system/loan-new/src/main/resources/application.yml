@@ -1,0 +1,30 @@
+server:
+  port: 28082
+
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3307/loan_beta?useSSL=false&characterEncoding=utf8mb4&allowPublicKeyRetrieval=true
+    username: root
+    password: root123
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+      data-locations: classpath:data.sql
+
+# New system: "OPTIMIZED" values that introduce 4 subtle bugs
+loan:
+  variant:
+    label: "new"
+    age-check-mode: "EXCLUSIVE"      # Bug1: <=60 -> <60
+    risk-grade-mode: "EXCLUSIVE"     # Bug2: >=80 -> >80 for LOW risk
+    max-debt-ratio: 0.55             # Bug3: 0.50 -> 0.55
+    credit-adjust-factor: 0.75       # Bug4: 0.80 -> 0.75
+
+logging:
+  level:
+    root: INFO
+    com.arex.demo.loan: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"

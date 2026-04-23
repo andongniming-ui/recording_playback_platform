@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>录制回放平台项目能力与真实性验证报告</title>
+  <style>
+    :root {
+      --bg: #eef3f8;
+      --surface: rgba(255, 255, 255, 0.92);
+      --surface-strong: #ffffff;
+      --ink: #142235;
+      --muted: #5e7086;
+      --line: rgba(25, 54, 88, 0.12);
+      --accent: #0d5ea8;
+      --accent-soft: rgba(13, 94, 168, 0.10);
+      --accent-deep: #083d6e;
+      --good: #136c46;
+      --good-soft: rgba(19, 108, 70, 0.12);
+      --warn: #9a6a12;
+      --warn-soft: rgba(154, 106, 18, 0.12);
+      --shadow: 0 18px 48px rgba(16, 41, 68, 0.10);
+      --radius-xl: 28px;
+      --radius-lg: 20px;
+      --radius-md: 14px;
+      --content-width: 1240px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: "PingFang SC", "Hiragino Sans GB", "Source Han Sans SC", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(13, 94, 168, 0.15), transparent 28%),
+        radial-gradient(circle at right 20%, rgba(6, 68, 118, 0.10), transparent 24%),
+        linear-gradient(180deg, #f6f9fc 0%, var(--bg) 100%);
+    }
+
+    body {
+      padding: 36px 20px 56px;
+    }
+
+    .page {
+      max-width: var(--content-width);
+      margin: 0 auto;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 34px 36px 30px;
+      border-radius: var(--radius-xl);
+      background:
+        linear-gradient(135deg, rgba(8, 61, 110, 0.96), rgba(13, 94, 168, 0.92)),
+        linear-gradient(135deg, #0a3f72, #145da0);
+      color: #f8fbff;
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -80px -100px auto;
+      width: 320px;
+      height: 320px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255, 255, 255, 0.20), rgba(255, 255, 255, 0));
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      font-size: 13px;
+      letter-spacing: 0.06em;
+    }
+
+    h1 {
+      margin: 18px 0 12px;
+      font-size: 38px;
+      line-height: 1.18;
+      font-weight: 700;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 880px;
+      color: rgba(248, 251, 255, 0.92);
+      font-size: 16px;
+      line-height: 1.8;
+    }
+
+    .hero-grid,
+    .grid-4,
+    .grid-3,
+    .grid-2 {
+      display: grid;
+      gap: 18px;
+    }
+
+    .hero-grid {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      margin-top: 28px;
+    }
+
+    .grid-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .grid-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .metric {
+      padding: 18px 18px 16px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.10);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(12px);
+    }
+
+    .metric .label {
+      font-size: 13px;
+      color: rgba(248, 251, 255, 0.72);
+    }
+
+    .metric .value {
+      margin-top: 10px;
+      font-size: 30px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .metric .meta {
+      margin-top: 8px;
+      font-size: 12px;
+      color: rgba(248, 251, 255, 0.70);
+      line-height: 1.6;
+    }
+
+    .section {
+      margin-top: 22px;
+      padding: 28px;
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      border: 1px solid rgba(255, 255, 255, 0.60);
+      box-shadow: 0 10px 30px rgba(17, 40, 66, 0.06);
+      backdrop-filter: blur(14px);
+    }
+
+    .section-header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .section h2 {
+      margin: 0;
+      font-size: 25px;
+      line-height: 1.2;
+    }
+
+    .section-header p,
+    .section > p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.8;
+    }
+
+    .callout {
+      padding: 16px 18px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, #f9fbfd, #f2f6fa);
+      color: var(--muted);
+      line-height: 1.8;
+    }
+
+    .card {
+      padding: 20px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: var(--surface-strong);
+    }
+
+    .card h3 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.8;
+    }
+
+    .tag-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent-deep);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .tag.good {
+      background: var(--good-soft);
+      color: var(--good);
+    }
+
+    .tag.warn {
+      background: var(--warn-soft);
+      color: var(--warn);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: var(--surface-strong);
+    }
+
+    th, td {
+      padding: 14px 14px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      line-height: 1.75;
+      font-size: 14px;
+    }
+
+    th {
+      background: #f4f8fb;
+      color: var(--accent-deep);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    .strong {
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .list {
+      margin: 0;
+      padding-left: 20px;
+      color: var(--muted);
+      line-height: 1.85;
+    }
+
+    .list li + li {
+      margin-top: 6px;
+    }
+
+    .path {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 7px 11px;
+      border-radius: 10px;
+      background: #f1f5f9;
+      border: 1px solid rgba(20, 34, 53, 0.08);
+      color: var(--accent-deep);
+      font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 14px;
+    }
+
+    .timeline-step {
+      display: grid;
+      grid-template-columns: 44px 1fr;
+      gap: 14px;
+      align-items: start;
+    }
+
+    .timeline-step .dot {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+      color: #fff;
+      font-weight: 700;
+      box-shadow: 0 8px 18px rgba(13, 94, 168, 0.20);
+    }
+
+    .timeline-step .content {
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .timeline-step h3 {
+      margin: 0 0 8px;
+      font-size: 17px;
+    }
+
+    .timeline-step p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.8;
+    }
+
+    .footnote {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.8;
+    }
+
+    .footer {
+      margin-top: 26px;
+      padding: 18px 22px;
+      border-radius: 18px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.70);
+      border: 1px solid var(--line);
+      font-size: 13px;
+      line-height: 1.8;
+    }
+
+    @media (max-width: 1100px) {
+      .hero-grid,
+      .grid-4,
+      .grid-3,
+      .grid-2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 720px) {
+      body {
+        padding: 18px 12px 32px;
+      }
+
+      .hero,
+      .section {
+        padding: 22px 18px;
+      }
+
+      h1 {
+        font-size: 28px;
+      }
+
+      .hero-grid,
+      .grid-4,
+      .grid-3,
+      .grid-2 {
+        grid-template-columns: 1fr;
+      }
+
+      .section-header {
+        display: block;
+      }
+
+      table {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+    }
+
+    @media print {
+      body {
+        background: #ffffff;
+        padding: 0;
+      }
+
+      .hero,
+      .section,
+      .footer {
+        box-shadow: none;
+        backdrop-filter: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <div class="eyebrow">录制回放平台 · 项目能力与真实性验证报告</div>
+      <h1>当前可以做什么、能测什么，以及数据是否真实</h1>
+      <p>
+        本报告基于当前代码、启动脚本、运行日志和平台数据库整理，重点回答四个问题：
+        项目具备哪些核心功能、可覆盖哪些业务场景、当前可以测试哪些系统及其接入条件，以及已抓取数据是否来自真实业务链路、可以从哪些位置交叉验证。
+      </p>
+      <div class="hero-grid">
+        <div class="metric">
+          <div class="label">截至时间</div>
+          <div class="value">2026-04-22</div>
+          <div class="meta">结论基于当前仓库与本地运行数据</div>
+        </div>
+        <div class="metric">
+          <div class="label">已在线接入应用</div>
+          <div class="value">2 套</div>
+          <div class="meta">`didi-system-a`、`didi-system-b` 在线</div>
+        </div>
+        <div class="metric">
+          <div class="label">原始采集数据</div>
+          <div class="value">1,023</div>
+          <div class="meta">`arex_mocker` 原始录制条目</div>
+        </div>
+        <div class="metric">
+          <div class="label">已沉淀录制</div>
+          <div class="value">95</div>
+          <div class="meta">同步进入 `recording` 的有效录制</div>
+        </div>
+        <div class="metric">
+          <div class="label">测试资产</div>
+          <div class="value">30</div>
+          <div class="meta">已生成测试用例，已执行 21 次回放任务</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h2>一、核心结论</h2>
+        </div>
+      </div>
+      <div class="grid-3">
+        <div class="card">
+          <h3>1. 当前平台已经具备完整主链路</h3>
+          <p>
+            对 `didi` 样例系统，平台已实现“真实请求录制 -> 原始数据落库 -> 录制同步 -> 测试用例沉淀 -> 回放比对”的完整闭环，
+            不是停留在页面展示或单点录包。
+          </p>
+        </div>
+        <div class="card">
+          <h3>2. 当前最适合的目标系统是 Java 服务</h3>
+          <p>
+            平台最适配并已验证的是 Java / Spring Boot 服务，尤其适合带 HTTP 接口、内部 HTTP 子调用、MySQL/JDBC 访问的系统；
+            对多环境同接口比对尤其有效。
+          </p>
+        </div>
+        <div class="card">
+          <h3>3. 已抓到的数据可验证为真实链路数据</h3>
+          <p>
+            现有数据可以从业务日志、平台原始表、平台录制表、测试用例、回放结果以及业务数据库 6 个层面做交叉验证，
+            可追溯到同一笔交易。
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h2>二、项目现有功能</h2>
+          <p>按当前代码和数据库模型，项目已具备以下可落地能力。</p>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>能力模块</th>
+            <th>当前能力说明</th>
+            <th>价值</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="strong">应用接入与 Agent 管理</td>
+            <td>支持 `ssh_script` 与 `docker_compose` 两种接入方式，能管理宿主机、进程名、服务端口、AREX App ID、Agent 状态。</td>
+            <td>减少人工登机改启动参数，便于统一纳管。</td>
+          </tr>
+          <tr>
+            <td class="strong">真实流量录制</td>
+            <td>通过 Java Agent 无侵入采集主请求、主响应、HTTP 子调用、数据库调用，并先落入原始表 `arex_mocker`。</td>
+            <td>把真实交易沉淀成可追溯、可复用的测试资产。</td>
+          </tr>
+          <tr>
+            <td class="strong">录制会话与同步</td>
+            <td>支持开始/停止录制、按时间窗口同步、按交易码前缀过滤、按 `record_id` 去重、保留 `sub_calls` 子调用链路。</td>
+            <td>控制录制边界，提升样本质量。</td>
+          </tr>
+          <tr>
+            <td class="strong">测试用例库</td>
+            <td>可将录制结果沉淀为测试用例，保存请求、预期响应、忽略字段、断言规则、性能阈值、标签和治理状态。</td>
+            <td>形成可长期复用的回归资产。</td>
+          </tr>
+          <tr>
+            <td class="strong">回放执行</td>
+            <td>支持并发、超时、失败重试、目标地址覆盖、请求头改写、重复回放，并可选择启用子调用 Mock。</td>
+            <td>适合回归、冒烟、双环境比对。</td>
+          </tr>
+          <tr>
+            <td class="strong">差异分析</td>
+            <td>内置差异对比与断言引擎，支持忽略动态字段、数值容差、正则匹配、类型对比、性能断言与失败分类。</td>
+            <td>减少时间戳、流水号等噪音干扰，聚焦真实差异。</td>
+          </tr>
+          <tr>
+            <td class="strong">套件、定时、CI</td>
+            <td>支持测试套件、Cron 定时任务、Webhook 通知、CI Token 触发，可接 Jenkins / GitHub Actions。</td>
+            <td>可从单次验证走向持续回归。</td>
+          </tr>
+          <tr>
+            <td class="strong">权限与统计</td>
+            <td>具备 RBAC 权限控制、Dashboard 统计、近期任务与趋势统计能力。</td>
+            <td>适合团队协作和日常运营使用。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h2>三、可以覆盖的场景</h2>
+          <p>平台当前最适合解决的是“真实请求驱动的回归验证”和“多环境差异定位”。</p>
+        </div>
+      </div>
+      <div class="grid-4">
+        <div class="card">
+          <h3>版本回归</h3>
+          <p>把历史真实请求沉淀成用例，在新版本或新环境上回放，快速发现功能回归、返回值变化和性能波动。</p>
+        </div>
+        <div class="card">
+          <h3>双环境比对</h3>
+          <p>适合“老系统 vs 新系统”“基线环境 vs 对比环境”的一致性验证，尤其适合接口相同但内部实现不同的场景。</p>
+        </div>
+        <div class="card">
+          <h3>复杂链路追踪</h3>
+          <p>不只看入口返回，还能看到内部 HTTP 子调用和数据库操作，适合分析复杂交易为何出现差异。</p>
+        </div>
+        <div class="card">
+          <h3>定时回归 / 持续验证</h3>
+          <p>适合每日回归、发版前冒烟、接口稳定性巡检，以及接入流水线后的自动触发验证。</p>
+        </div>
+      </div>
+      <div class="tag-list">
+        <span class="tag">生产流量沉淀为测试资产</span>
+        <span class="tag">接口升级前后对比</span>
+        <span class="tag">疑难问题复现</span>
+        <span class="tag">关键交易长期守护</span>
+        <span class="tag">多团队共享回归样本</span>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h2>四、当前可以测试哪些系统</h2>
+          <p>区分“当前已验证接入”与“可快速扩展接入”，避免把现状和潜力混写。</p>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>系统</th>
+            <th>现状</th>
+            <th>当前可覆盖内容</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="strong">didi-system-a / didi-system-b</td>
+            <td><span class="tag good">已接入并在线</span></td>
+            <td>
+              30 个交易码；其中 15 个复杂交易可覆盖主请求、HTTP 子调用、数据库调用；支持完整录制回放链路。
+            </td>
+            <td>
+              当前平台数据库中已登记 2 套应用，Agent 状态均为 `online`，是目前最成熟、最完整的验证对象。
+            </td>
+          </tr>
+          <tr>
+            <td class="strong">waimai-base / waimai-compare</td>
+            <td><span class="tag good">可快速纳入</span></td>
+            <td>
+              30 个交易码；支持 JSON / XML 网关；适合下单、定价、风控、配送时效等场景。
+            </td>
+            <td>
+              启动脚本已包含 `-javaagent` 参数，说明具备 AREX 接入能力；但当前尚未纳入平台应用清单，补登记后即可进入标准链路。
+            </td>
+          </tr>
+          <tr>
+            <td class="strong">loan-old / loan-new / loan-mock</td>
+            <td><span class="tag warn">当前偏功能比对</span></td>
+            <td>
+              5 个信贷交易码；适合边界值、规则变化、缺陷定位和新旧系统差异验证。
+            </td>
+            <td>
+              当前启动脚本未挂 Agent，现阶段适合接口层测试与差异演示；如需纳入录制回放，需要补 `-javaagent` 接入。
+            </td>
+          </tr>
+          <tr>
+            <td class="strong">外部业务系统</td>
+            <td><span class="tag">平台重点适配对象</span></td>
+            <td>
+              Java / Spring Boot HTTP 服务；最好具备内部 HTTP 调用、MySQL/JDBC 调用、同接口多环境部署。
+            </td>
+            <td>
+              当前平台主链路最适合这类系统；尤其适合做真实交易回归、核心交易守护和环境迁移验证。
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="footnote">
+        当前平台代码对自动注入路径的兼容重点在 JDK 8 / 11 场景；如果目标系统启动方式可控、接口入口稳定、日志与数据库可核对，接入效果最好。
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h2>五、测试外部系统时，需要对方提供什么</h2>
+          <p>分成“必需项”和“建议项”。必需项缺失时，平台很难形成闭环；建议项会直接影响验证效率和可信度。</p>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h3>必需项</h3>
+          <ul class="list">
+            <li>被测服务的访问地址、端口、环境信息。</li>
+            <li>服务启动方式可控：能修改 `start.sh`、启动命令或 Docker Compose 参数，以便挂载 `-javaagent`。</li>
+            <li>服务所在机器的 SSH 信息或容器工作目录信息，用于平台纳管。</li>
+            <li>应用标识、进程名、服务端口，便于平台识别并同步录制数据。</li>
+            <li>基础调用样本：接口文档、示例请求、测试账号、必要的业务测试数据。</li>
+            <li>网络连通：业务系统所在机器能够访问录制平台。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>建议项</h3>
+          <ul class="list">
+            <li>日志中保留统一业务标识，如 `traceId`、`traId`、`request_no`、交易码。</li>
+            <li>提供业务数据库只读账号，便于核对落库结果是否与录制一致。</li>
+            <li>明确关键交易清单和高优先级场景，先从高价值交易录制。</li>
+            <li>准备一套稳定的基线环境和一套对比环境，便于做回放差异验证。</li>
+            <li>提前约定哪些字段属于动态字段，便于配置忽略规则，减少误报。</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout" style="margin-top: 18px;">
+        对方如果只能提供接口地址，而无法修改启动参数、无法挂 Agent、也无法提供日志或数据库核对渠道，
+        则可以做普通接口测试，但很难发挥本平台“真实录制回放”的核心价值。
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h2>六、已抓到的数据是否真实，可以从哪里验证</h2>
+          <p>结论：可以验证为真实链路数据，而且当前仓库里已经有可核对的证据。</p>
+        </div>
+      </div>
+      <div class="timeline">
+        <div class="timeline-step">
+          <div class="dot">1</div>
+          <div class="content">
+            <h3>先看业务日志：入口请求真实到达了业务系统</h3>
+            <p>
+              `didi-system-a.log` 和 `didi-system-b.log` 中，能够看到真实请求进入入口接口
+              `/api/car/service`，并打印 `traId`、交易码、请求报文、响应报文、耗时。
+              例如 `traId=912359029940924300`、`traId=802217746546676000` 等都能在日志中直接定位。
+            </p>
+            <div class="path">/home/recording_playback_platform/runtime/logs/didi-system-a.log</div>
+            <div class="path">/home/recording_playback_platform/runtime/logs/didi-system-b.log</div>
+          </div>
+        </div>
+        <div class="timeline-step">
+          <div class="dot">2</div>
+          <div class="content">
+            <h3>再看子调用和数据库日志：同一笔交易的内部动作也真实发生</h3>
+            <p>
+              同一份 `didi` 日志里，能看到同一个 `traId` 对应的 HTTP 子调用请求 / 响应，以及数据库查询 / 更新。
+              这说明采集的不是单纯入口包，而是完整业务链路。
+            </p>
+            <p>
+              例如日志中可见：
+              数据库查询 `findVehicle / findPolicy / findClaim / findDispatch`，
+              HTTP 子调用 `/internal/didi/risk`、`/internal/didi/pricing`，
+              以及数据库更新 `saveAudit`、`updateVehicleStatus`。
+            </p>
+          </div>
+        </div>
+        <div class="timeline-step">
+          <div class="dot">3</div>
+          <div class="content">
+            <h3>看平台原始表：Agent 上传的原始录制并未丢失</h3>
+            <p>
+              平台数据库中存在 `arex_mocker` 原始表，目前已有 <span class="strong">1,023</span> 条原始采集记录。
+              该表保留 `record_id`、`app_id`、类别、原始 JSON 数据，属于最靠近 Agent 上报的一层。
+            </p>
+            <p>
+              例如 `record_id = AREX-172-20-0-1-1833767948` 在原始表中可以同时看到
+              `Servlet`、`HttpClient`、`DynamicClass` 多种类别数据，说明同一笔交易的入口、子调用、数据库行为都已被采集。
+            </p>
+            <div class="path">平台表：arex_mocker</div>
+          </div>
+        </div>
+        <div class="timeline-step">
+          <div class="dot">4</div>
+          <div class="content">
+            <h3>看同步后的录制表：原始数据已转成可用测试资产</h3>
+            <p>
+              平台数据库中 `recording` 表目前已有 <span class="strong">95</span> 条有效录制，
+              保留了请求方法、请求地址、请求体、响应体、交易码、子调用链路等关键字段。
+            </p>
+            <p>
+              仍以上述 `record_id = AREX-172-20-0-1-1833767948` 为例，`recording` 表里对应记录的交易码为
+              `car000015`，请求体和响应体中都能看到同一笔 `tra_id = 802217746546676000`，可直接与业务日志交叉核对。
+            </p>
+            <div class="path">平台表：recording / recording_session</div>
+          </div>
+        </div>
+        <div class="timeline-step">
+          <div class="dot">5</div>
+          <div class="content">
+            <h3>看测试用例和回放结果：录制资产已能继续用于回归</h3>
+            <p>
+              平台中已生成 <span class="strong">30</span> 个测试用例，并已累计执行 <span class="strong">21</span> 次回放任务、
+              形成 <span class="strong">75</span> 条回放结果。这说明录制数据已经进入可复用、可回归的阶段。
+            </p>
+            <div class="path">平台表：test_case / replay_job / replay_result</div>
+          </div>
+        </div>
+        <div class="timeline-step">
+          <div class="dot">6</div>
+          <div class="content">
+            <h3>最后看业务数据库：可核对业务副作用是否真实落库</h3>
+            <p>
+              对 `didi` 样例，日志中已经能看到 `saveAudit` 和 `updateVehicleStatus` 两类数据库写操作。
+              如果进一步登录业务库 `didi_alpha` / `didi_beta`，可以按 `request_no`、`txn_code`、`plate_no`、`quoted_amount`
+              等字段核对业务落库结果。
+            </p>
+            <p>
+              这意味着：不仅请求是真的，连处理后的数据库副作用也可以验证为真实发生。
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="callout" style="margin-top: 18px;">
+        换句话说，平台不是“自己拼了一份测试数据”。当前链路是：业务系统真实接收请求 ->
+        Agent 采集并上报原始 mocker -> 平台原始表落库 -> 平台录制表整理 -> 生成测试用例和回放结果。
+        这条链路可以被逐层核验。
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h2>七、建议的管理口径</h2>
+          <p>如果对外或内部汇报，可采用下面这组比较稳妥的表述。</p>
+        </div>
+      </div>
+      <div class="grid-3">
+        <div class="card">
+          <h3>当前已验证</h3>
+          <p>
+            已验证平台能够对 Java 业务系统完成真实请求录制、链路采集、测试资产沉淀和回放差异分析，
+            其中 `didi` 样例已形成完整闭环。
+          </p>
+        </div>
+        <div class="card">
+          <h3>当前可扩展</h3>
+          <p>
+            `waimai` 已具备快速接入条件，`loan-system` 具备业务验证价值但需补 Agent；
+            对外部 Java 系统接入可复制同样路径。
+          </p>
+        </div>
+        <div class="card">
+          <h3>真实性判断</h3>
+          <p>
+            当前平台抓取的数据可从业务日志、平台原始表、平台录制表、业务数据库四个核心层面相互印证，
+            具备真实性和可追溯性。
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <div class="footer">
+      报告依据：当前仓库代码、启动脚本、运行日志、SQLite 数据库。<br>
+      关键参考对象：`application`、`arex_mocker`、`recording`、`test_case`、`replay_job`、`replay_result` 等表，以及 `runtime/logs` 下业务与平台日志。
+    </div>
+  </div>
+</body>
+</html>

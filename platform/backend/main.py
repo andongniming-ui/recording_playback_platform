@@ -12,14 +12,39 @@ logger = logging.getLogger(__name__)
 
 
 def _configure_app_logging():
+    formatter = logging.Formatter(
+        fmt="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    root_logger = logging.getLogger()
+    uvicorn_root_logger = logging.getLogger("uvicorn")
     uvicorn_logger = logging.getLogger("uvicorn.error")
-    handlers = list(uvicorn_logger.handlers)
-    level = uvicorn_logger.level if uvicorn_logger.level and uvicorn_logger.level > 0 else logging.INFO
+    uvicorn_access_logger = logging.getLogger("uvicorn.access")
+    known_loggers = (
+        root_logger,
+        uvicorn_root_logger,
+        uvicorn_logger,
+        uvicorn_access_logger,
+    )
+    all_handlers = []
+    app_handlers = []
+
+    for known_logger in known_loggers:
+        for handler in known_logger.handlers:
+            if handler not in all_handlers:
+                all_handlers.append(handler)
+            if known_logger is not uvicorn_access_logger and handler not in app_handlers:
+                app_handlers.append(handler)
+
+    for handler in all_handlers:
+        handler.setFormatter(formatter)
+
+    level = uvicorn_root_logger.level if uvicorn_root_logger.level and uvicorn_root_logger.level > 0 else logging.INFO
     for logger_name in ("api", "core", "database", "integration", "utils"):
         app_logger = logging.getLogger(logger_name)
         app_logger.setLevel(min(level, logging.INFO))
-        if handlers:
-            app_logger.handlers = handlers
+        if app_handlers:
+            app_logger.handlers = app_handlers
             app_logger.propagate = False
 
 
@@ -80,6 +105,7 @@ async def _migrate_db():
         "ALTER TABLE recording ADD COLUMN scene_key VARCHAR(256)",
         "ALTER TABLE recording ADD COLUMN dedupe_hash VARCHAR(64)",
         "ALTER TABLE recording ADD COLUMN governance_status VARCHAR(32) DEFAULT 'raw'",
+        "ALTER TABLE arex_mocker ADD COLUMN created_at DATETIME",
         "ALTER TABLE recording_session ADD COLUMN recording_filter_prefixes TEXT",
         "ALTER TABLE test_case ADD COLUMN governance_status VARCHAR(32) DEFAULT 'candidate'",
         "ALTER TABLE test_case ADD COLUMN transaction_code VARCHAR(128)",
@@ -95,11 +121,39 @@ async def _migrate_db():
                 pass  # 列已存在，忽略
 
 
+async def _backfill_arex_mocker_created_at():
+    """Populate Beijing display time for legacy arex_mocker rows."""
+    from sqlalchemy import select
+    from models.arex_mocker import ArexMocker
+    from utils.timezone import from_epoch_ms_beijing
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(ArexMocker).where(
+                ArexMocker.created_at.is_(None),
+                ArexMocker.created_at_ms.is_not(None),
+            )
+        )
+        rows = result.scalars().all()
+        updated = 0
+        for row in rows:
+            try:
+                row.created_at = from_epoch_ms_beijing(row.created_at_ms)
+                updated += 1
+            except Exception:
+                continue
+
+        if updated:
+            await db.commit()
+            logger.info("Backfilled arex_mocker.created_at for %d rows", updated)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _configure_app_logging()
     await init_db()
     await _migrate_db()
+    await _backfill_arex_mocker_created_at()
     await _create_default_admin()
     from core.scheduler import scheduler, load_all_schedules
     await load_all_schedules()

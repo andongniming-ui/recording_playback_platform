@@ -1,6 +1,6 @@
 ﻿"""CI/CD integration API: token management, trigger replay, poll result."""
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -14,6 +14,7 @@ from models.ci import CiToken
 from models.replay import ReplayJob, ReplayResult
 from models.suite import Suite, SuiteCase
 from schemas.ci import CiResultResponse, CiTokenCreate, CiTokenOut, CiTriggerRequest
+from utils.timezone import now_beijing
 
 router = APIRouter(prefix="/ci", tags=["ci"])
 
@@ -31,9 +32,9 @@ async def _get_ci_token(
     tokens = result.scalars().all()
     for token in tokens:
         if verify_password(plain_token, token.token_hash):
-            if token.expires_at and token.expires_at < datetime.now(timezone.utc):
+            if token.expires_at and token.expires_at < now_beijing():
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="CI token expired")
-            token.last_used_at = datetime.now(timezone.utc)
+            token.last_used_at = now_beijing()
             await db.commit()
             return token
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid CI token")
@@ -54,7 +55,7 @@ async def create_token(
     plain_token = secrets.token_urlsafe(32)
     expires_at = None
     if body.expires_days:
-        expires_at = datetime.now(timezone.utc) + timedelta(days=body.expires_days)
+        expires_at = now_beijing() + timedelta(days=body.expires_days)
 
     token = CiToken(
         name=body.name,

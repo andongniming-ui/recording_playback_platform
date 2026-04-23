@@ -23,6 +23,7 @@ from utils.assertions import assertions_all_passed, evaluate_assertions
 from utils.diff import compute_diff
 from utils.governance import infer_transaction_code
 from utils.repository_capture import is_noise_dynamic_mocker, normalize_repository_sub_call
+from utils.timezone import now_beijing
 from utils.transaction_mapping import apply_transaction_mapping, normalize_transaction_mapping_configs
 
 logger = logging.getLogger(__name__)
@@ -508,11 +509,9 @@ async def run_replay_job(job_id: int):
         compare_rules_result = await db.execute(compare_rule_stmt.order_by(CompareRule.id))
         compare_rules = compare_rules_result.scalars().all()
 
-        from datetime import datetime, timezone
-
         job.status = "RUNNING"
         job.total = len(case_ids)
-        job.started_at = datetime.now(timezone.utc)
+        job.started_at = now_beijing()
         await db.commit()
 
     base_ignore_fields = _load_json_value(
@@ -656,8 +655,6 @@ async def run_replay_job(job_id: int):
     await asyncio.gather(*[_run_one(case_id) for case_id in case_ids])
 
     async with database.async_session_factory() as db:
-        from datetime import datetime, timezone
-
         job_result = await db.execute(select(ReplayJob).where(ReplayJob.id == job_id))
         job = job_result.scalar_one_or_none()
         if job:
@@ -665,7 +662,7 @@ async def run_replay_job(job_id: int):
             job.passed = passed
             job.failed = failed
             job.errored = errored
-            job.finished_at = datetime.now(timezone.utc)
+            job.finished_at = now_beijing()
             await db.commit()
 
     await _broadcast_progress(
@@ -909,7 +906,12 @@ async def _execute_single(
             )
 
     if fail_on_sub_call_diff and is_pass and actual_sub_calls_json:
+        # Only compare sub-calls when the test case originates from a recording.
+        # If there is no source_recording_id (manually created case) or the
+        # recording cannot be found, skip the check entirely – we have no
+        # baseline to compare against and must not mark the result as FAIL.
         expected_sub_calls_json = None
+        recording_found = False
         if case and case.source_recording_id:
             async with database.async_session_factory() as _sc_db:
                 _rec = (await _sc_db.execute(
@@ -917,7 +919,8 @@ async def _execute_single(
                 )).scalar_one_or_none()
                 if _rec:
                     expected_sub_calls_json = _rec.sub_calls
-        if _sub_calls_have_diff(expected_sub_calls_json, actual_sub_calls_json):
+                    recording_found = True
+        if recording_found and _sub_calls_have_diff(expected_sub_calls_json, actual_sub_calls_json):
             is_pass = False
             status = "FAIL"
             failure_category = "sub_call_diff"

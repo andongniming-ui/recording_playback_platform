@@ -1,3 +1,4 @@
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 from config import settings
@@ -10,6 +11,17 @@ engine = create_async_engine(
     echo=settings.debug,
     future=True,
 )
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _configure_connection_timezone(dbapi_connection, _connection_record):
+    if settings.db_type != "mysql":
+        return
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("SET time_zone = '+08:00'")
+    finally:
+        cursor.close()
 
 async_session_factory = async_sessionmaker(
     engine,

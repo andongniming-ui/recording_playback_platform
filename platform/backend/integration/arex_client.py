@@ -3,7 +3,9 @@ AREX Storage REST API client.
 Replaces repeater_client.py — no Hessian, no SFTP, pure async HTTP.
 """
 import httpx
-from datetime import datetime, timezone
+from datetime import datetime
+
+from utils.timezone import ensure_beijing_datetime
 
 
 class ArexClientError(Exception):
@@ -128,9 +130,8 @@ class ArexClient:
     @staticmethod
     def _to_epoch_ms(dt: datetime) -> int:
         """Convert datetime to epoch milliseconds."""
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return int(dt.timestamp() * 1000)
+        localized = ensure_beijing_datetime(dt)
+        return int(localized.timestamp() * 1000) if localized else 0
 
     async def _post(self, path: str, body: dict) -> dict:
         """POST to arex-storage; raise ArexClientError on failure."""

@@ -7,6 +7,7 @@ class TestCaseCreate(BaseModel):
     name: str
     description: Optional[str] = None
     application_id: Optional[int] = None
+    source_recording_id: Optional[int] = None  # link to originating recording
     governance_status: str = "candidate"
     transaction_code: Optional[str] = None
     scene_key: Optional[str] = None

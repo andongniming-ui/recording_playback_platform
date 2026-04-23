@@ -24,7 +24,10 @@ Local endpoints handled natively:
 """
 import json
 import logging
-from datetime import datetime, timezone
+import re
+from collections import Counter
+from datetime import datetime
+from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 import zstandard as zstd
@@ -35,7 +38,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from database import get_db
 from models.arex_mocker import ArexMocker
-from utils.repository_capture import get_dynamic_class_configurations
+from utils.repository_capture import (
+    get_dynamic_class_configurations,
+    is_noise_dynamic_mocker,
+    normalize_repository_sub_call,
+)
+from utils.timezone import now_beijing, from_epoch_ms_beijing
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -44,6 +52,14 @@ SUCCESS_RESPONSE = b'{"responseStatusType":{"responseCode":0,"responseDesc":"suc
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _log_info(message: str, *args) -> None:
+    logger.info(message, *args)
+
+
+def _log_warning(message: str, *args) -> None:
+    logger.warning(message, *args)
+
 
 def _decompress(data: bytes) -> bytes:
     """Try zstd decompress; fall back to raw bytes."""
@@ -63,6 +79,212 @@ def _is_proxy_mode() -> bool:
     if not url:
         return False
     return not (url.startswith("http://localhost") or url.startswith("http://127.0.0.1"))
+
+
+def _client_host(request: Request) -> str:
+    return request.client.host if request.client else "-"
+
+
+def _truncate(value, limit: int = 240) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+    else:
+        try:
+            text = json.dumps(value, ensure_ascii=False)
+        except Exception:
+            text = str(value).strip()
+    if not text:
+        return None
+    return text if len(text) <= limit else f"{text[:limit]}..."
+
+
+def _parse_body_json_or_text(value):
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        return text
+
+
+def _extract_txn_fields_from_text(text: str | None) -> dict[str, str]:
+    if not text:
+        return {}
+
+    pairs: dict[str, str] = {}
+    for field in ("tra_id", "request_no", "txn_code", "code", "biz_code"):
+        match = re.search(rf"<{field}>([^<]+)</{field}>", text)
+        if match:
+            pairs[field] = match.group(1).strip()
+    return pairs
+
+
+def _extract_http_context(mocker: dict) -> tuple[str | None, dict[str, str], str | None]:
+    target_request = mocker.get("targetRequest") or {}
+    request_body = target_request.get("body") if isinstance(target_request, dict) else None
+    request_payload = _parse_body_json_or_text(request_body)
+    attrs = target_request.get("attributes") or {}
+    request_path = attrs.get("RequestPath") or attrs.get("requestPath") or mocker.get("operationName")
+    http_method = attrs.get("HttpMethod") or attrs.get("httpMethod")
+
+    context: dict[str, str] = {}
+    if isinstance(request_payload, str):
+        context.update(_extract_txn_fields_from_text(request_payload))
+    elif isinstance(request_payload, dict):
+        for key in ("traId", "tra_id", "requestNo", "request_no", "txnCode", "txn_code", "code", "biz_code"):
+            value = request_payload.get(key)
+            if value not in (None, ""):
+                context[key] = str(value)
+
+    if request_path:
+        parsed = urlparse(request_path)
+        query_params = parse_qs(parsed.query)
+        for key in ("traId", "requestNo", "txnCode", "code", "bizCode", "plateNo"):
+            value = query_params.get(key)
+            if value and value[0]:
+                context[key] = unquote(value[0])
+
+    request_summary = _truncate(request_payload)
+    if request_path and http_method:
+        request_summary = f"{http_method} {request_path}" + (f", body={request_summary}" if request_summary else "")
+    elif request_path:
+        request_summary = request_path + (f", body={request_summary}" if request_summary else "")
+
+    target_response = mocker.get("targetResponse") or {}
+    response_body = target_response.get("body") if isinstance(target_response, dict) else None
+    response_summary = _truncate(_parse_body_json_or_text(response_body))
+    return request_summary, context, response_summary
+
+
+def _extract_repository_context(mocker: dict) -> tuple[str | None, dict[str, str], str | None]:
+    normalized = normalize_repository_sub_call(mocker, str((mocker.get("categoryType") or {}).get("name") or ""))
+    if not normalized:
+        return None, {}, None
+
+    params = normalized.get("params")
+    request = normalized.get("request")
+    response = normalized.get("response")
+
+    context: dict[str, str] = {}
+    source = params if isinstance(params, dict) else request if isinstance(request, dict) else {}
+    for key in ("requestNo", "txnCode", "plateNo", "customerNo", "policyNo", "claimNo", "garageCode", "status"):
+        value = source.get(key) if isinstance(source, dict) else None
+        if value not in (None, ""):
+            context[key] = str(value)
+
+    request_summary = (
+        f"{normalized.get('operation')} "
+        f"table={normalized.get('table')} "
+        f"params={_truncate(params if params is not None else request)}"
+    )
+    response_summary = _truncate(response)
+    return request_summary, context, response_summary
+
+
+def _detail_lines_for_mockers(mockers: list[dict]) -> list[str]:
+    details: list[str] = []
+    for mocker in mockers:
+        if not isinstance(mocker, dict):
+            continue
+
+        category = mocker.get("categoryType") or {}
+        category_name = category if isinstance(category, str) else str(category.get("name") or "UNKNOWN")
+        operation = str(mocker.get("operationName") or "").strip()
+        record_id = str(mocker.get("recordId") or "").strip() or "-"
+
+        if is_noise_dynamic_mocker(operation, category_name):
+            continue
+
+        if category_name in {"Servlet", "HttpClient"}:
+            request_summary, context, response_summary = _extract_http_context(mocker)
+        elif category_name == "DynamicClass":
+            request_summary, context, response_summary = _extract_repository_context(mocker)
+            if not request_summary:
+                continue
+        else:
+            continue
+
+        context_pairs = []
+        for key in ("tra_id", "traId", "request_no", "requestNo", "txn_code", "txnCode", "code", "biz_code", "bizCode", "plateNo"):
+            value = context.get(key)
+            if value:
+                context_pairs.append(f"{key}={value}")
+        context_suffix = f" {' '.join(context_pairs)}" if context_pairs else ""
+        response_suffix = f" response={response_summary}" if response_summary else ""
+        details.append(
+            f"[arex_proxy] detail record_id={record_id} type={category_name} op={operation or '-'}"
+            f"{context_suffix} request={request_summary or '-'}{response_suffix}"
+        )
+    return details[:10]
+
+
+def _summarize_mockers(mockers: list[dict]) -> dict:
+    app_ids: set[str] = set()
+    record_ids: list[str] = []
+    categories: Counter[str] = Counter()
+    operations: list[str] = []
+    entry_points = 0
+
+    for mocker in mockers:
+        if not isinstance(mocker, dict):
+            continue
+        app_id = str(mocker.get("appId") or "").strip()
+        if app_id:
+            app_ids.add(app_id)
+
+        record_id = str(mocker.get("recordId") or mocker.get("id") or "").strip()
+        if record_id and record_id not in record_ids and len(record_ids) < 5:
+            record_ids.append(record_id)
+
+        category = mocker.get("categoryType") or {}
+        if isinstance(category, str):
+            category_name = category
+            is_entry_point = False
+        else:
+            category_name = str(category.get("name") or "UNKNOWN")
+            is_entry_point = bool(category.get("entryPoint", False))
+        categories[category_name] += 1
+        entry_points += int(is_entry_point)
+
+        operation = str(mocker.get("operationName") or "").strip()
+        if operation and operation not in operations and len(operations) < 5:
+            operations.append(operation)
+
+    return {
+        "count": len(mockers),
+        "entry_points": entry_points,
+        "app_ids": sorted(app_ids),
+        "record_ids": record_ids,
+        "categories": dict(categories),
+        "operations": operations,
+    }
+
+
+def _summarize_config_body(body: dict | None) -> dict:
+    body = body if isinstance(body, dict) else {}
+    app_id = str(body.get("appId") or body.get("id") or body.get("serviceName") or "").strip()
+    agent_status = (
+        body.get("agentStatus")
+        or body.get("status")
+        or body.get("agentState")
+        or body.get("state")
+    )
+    host = body.get("host") or body.get("hostName") or body.get("hostname")
+    return {
+        "app_id": app_id or "-",
+        "agent_status": str(agent_status) if agent_status not in (None, "") else "-",
+        "host": str(host) if host not in (None, "") else "-",
+        "keys": sorted(body.keys())[:8],
+    }
 
 
 async def _proxy(request: Request, path: str) -> Response:
@@ -112,6 +334,7 @@ async def _store_mocker(mocker: dict, db: AsyncSession) -> None:
             created_at_ms = int(created_at_ms)
         except (ValueError, TypeError):
             created_at_ms = None
+    created_at = from_epoch_ms_beijing(created_at_ms) if created_at_ms is not None else now_beijing()
 
 
     db.add(ArexMocker(
@@ -121,6 +344,7 @@ async def _store_mocker(mocker: dict, db: AsyncSession) -> None:
         is_entry_point=is_entry_point,
         mocker_data=json.dumps(mocker, ensure_ascii=False),
         created_at_ms=created_at_ms,
+        created_at=created_at,
     ))
 
 
@@ -143,9 +367,22 @@ async def save_mocker(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         mocker = json.loads(decompressed)
     except Exception as e:
-        logger.warning("[arex_proxy] save parse error: %s", e)
+        _log_warning("[arex_proxy] save parse error: %s", e)
         return Response(content=SUCCESS_RESPONSE, status_code=200, media_type="application/json")
 
+    summary = _summarize_mockers([mocker])
+    _log_info(
+        "[arex_proxy] save client=%s count=%d entry_points=%d apps=%s categories=%s record_ids=%s operations=%s",
+        _client_host(request),
+        summary["count"],
+        summary["entry_points"],
+        summary["app_ids"],
+        summary["categories"],
+        summary["record_ids"],
+        summary["operations"],
+    )
+    for detail in _detail_lines_for_mockers([mocker]):
+        _log_info("%s", detail)
     await _store_mocker(mocker, db)
     await db.commit()
     return Response(content=SUCCESS_RESPONSE, status_code=200, media_type="application/json")
@@ -159,7 +396,7 @@ async def batch_save_mockers(request: Request, db: AsyncSession = Depends(get_db
     try:
         parsed = json.loads(decompressed)
     except Exception as e:
-        logger.warning("[arex_proxy] batchSaveMockers parse error: %s, raw=%s", e, raw[:100])
+        _log_warning("[arex_proxy] batchSaveMockers parse error: %s, raw=%s", e, raw[:100])
         return Response(content=SUCCESS_RESPONSE, status_code=200, media_type="application/json")
 
     if isinstance(parsed, list):
@@ -168,6 +405,20 @@ async def batch_save_mockers(request: Request, db: AsyncSession = Depends(get_db
         mockers = parsed.get("mockerList") or parsed.get("list") or [parsed]
     else:
         mockers = [parsed]
+
+    summary = _summarize_mockers(mockers)
+    _log_info(
+        "[arex_proxy] batchSaveMockers client=%s count=%d entry_points=%d apps=%s categories=%s record_ids=%s operations=%s",
+        _client_host(request),
+        summary["count"],
+        summary["entry_points"],
+        summary["app_ids"],
+        summary["categories"],
+        summary["record_ids"],
+        summary["operations"],
+    )
+    for detail in _detail_lines_for_mockers(mockers):
+        _log_info("%s", detail)
 
     if _is_proxy_mode():
         # Proxy mode: forward each mocker individually to arex-storage
@@ -213,7 +464,7 @@ async def query_replay_case(request: Request, db: AsyncSession = Depends(get_db)
     body = await request.json()
     app_id = body.get("appId", "")
     begin_time_ms = body.get("beginTime")
-    end_time_ms = body.get("endTime") or int(datetime.now(timezone.utc).timestamp() * 1000)
+    end_time_ms = body.get("endTime") or int(now_beijing().timestamp() * 1000)
     page_size = int(body.get("pageSize") or 50)
     page_index = int(body.get("pageIndex") or 0)
 
@@ -272,7 +523,7 @@ async def count_by_range(request: Request, db: AsyncSession = Depends(get_db)):
     body = await request.json()
     app_id = body.get("appId", "")
     begin_time_ms = body.get("beginTime")
-    end_time_ms = body.get("endTime") or int(datetime.now(timezone.utc).timestamp() * 1000)
+    end_time_ms = body.get("endTime") or int(now_beijing().timestamp() * 1000)
 
     stmt = select(func.count()).select_from(ArexMocker).where(
         ArexMocker.app_id == app_id,
@@ -340,7 +591,16 @@ async def proxy_config(request: Request, path: str):
         app_id = body.get("appId") or body.get("id") or ""
     except Exception:
         body = {}
-    logger.info("[arex_proxy] config path=%s body=%s", path, raw_body[:500] if raw_body else b"")
+    config_summary = _summarize_config_body(body)
+    _log_info(
+        "[arex_proxy] config client=%s path=%s app_id=%s agent_status=%s host=%s keys=%s",
+        _client_host(request),
+        path,
+        config_summary["app_id"] or app_id or "-",
+        config_summary["agent_status"],
+        config_summary["host"],
+        config_summary["keys"],
+    )
 
     # agentStatus: agent is reporting status, just ack it
     if "agentStatus" in path:

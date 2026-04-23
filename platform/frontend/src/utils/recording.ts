@@ -62,14 +62,13 @@ function parseJsonLike(value: string) {
   }
 }
 
-function formatUtcLikeDateTime(value: string): string | null {
+function formatLocalLikeDateTime(value: string): string | null {
   const text = value.trim()
   if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(text)) {
     return null
   }
   const normalized = text.replace(' ', 'T')
-  const utc = normalized.endsWith('Z') ? normalized : `${normalized}Z`
-  const parsed = new Date(utc)
+  const parsed = new Date(normalized)
   if (Number.isNaN(parsed.getTime())) {
     return null
   }
@@ -90,7 +89,7 @@ function annotateDateTimes(value: unknown, keyHint?: string): unknown {
     if (!shouldFormat) {
       return value
     }
-    return formatUtcLikeDateTime(value) ?? value
+    return formatLocalLikeDateTime(value) ?? value
   }
   if (Array.isArray(value)) {
     return value.map((item) => annotateDateTimes(item, keyHint))

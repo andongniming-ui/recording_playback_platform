@@ -4,6 +4,7 @@ import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from utils.timezone import now_beijing
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,6 @@ def _make_job_id(schedule_id: int) -> str:
 
 async def _run_scheduled_replay(schedule_id: int, ignore_active: bool = False):
     """Execute a scheduled replay job."""
-    from datetime import datetime, timezone
     import core.replay_executor as replay_executor
     from sqlalchemy import select
 
@@ -43,7 +43,7 @@ async def _run_scheduled_replay(schedule_id: int, ignore_active: bool = False):
             case_ids = list(suite_case_result.scalars().all())
 
         if not case_ids:
-            schedule.last_run_at = datetime.now(timezone.utc)
+            schedule.last_run_at = now_beijing()
             schedule.last_run_status = "FAILED"
             await db.commit()
             logger.warning("Schedule %s: no cases found in suite %s", schedule_id, schedule.suite_id)
@@ -52,14 +52,14 @@ async def _run_scheduled_replay(schedule_id: int, ignore_active: bool = False):
         try:
             application_id = await infer_application_id_for_case_ids(db, case_ids)
         except ValueError as exc:
-            schedule.last_run_at = datetime.now(timezone.utc)
+            schedule.last_run_at = now_beijing()
             schedule.last_run_status = "FAILED"
             await db.commit()
             logger.warning("Schedule %s: %s", schedule_id, exc)
             return
 
         if application_id is None:
-            schedule.last_run_at = datetime.now(timezone.utc)
+            schedule.last_run_at = now_beijing()
             schedule.last_run_status = "FAILED"
             await db.commit()
             logger.warning(
@@ -69,7 +69,7 @@ async def _run_scheduled_replay(schedule_id: int, ignore_active: bool = False):
             return
 
         job = ReplayJob(
-            name=f"[Scheduled] {schedule.name} - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}",
+            name=f"[Scheduled] {schedule.name} - {now_beijing().strftime('%Y-%m-%d %H:%M')}",
             application_id=application_id,
             status="PENDING",
             concurrency=5,
@@ -94,7 +94,7 @@ async def _run_scheduled_replay(schedule_id: int, ignore_active: bool = False):
         notify_webhook = schedule.notify_webhook
         schedule_name = schedule.name
 
-        schedule.last_run_at = datetime.now(timezone.utc)
+        schedule.last_run_at = now_beijing()
         schedule.last_run_status = "RUNNING"
         await db.commit()
 

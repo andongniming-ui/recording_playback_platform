@@ -4,7 +4,7 @@ import base64
 import json
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -38,6 +38,7 @@ from utils.repository_capture import (
     is_noise_dynamic_mocker,
     normalize_repository_sub_call,
 )
+from utils.timezone import BEIJING_TZ, ensure_beijing_datetime, from_epoch_ms_beijing, now_beijing
 
 logger = logging.getLogger(__name__)
 runtime_logger = logging.getLogger("uvicorn.error")
@@ -50,12 +51,8 @@ _ACTIVE_PREVIEW_LOOKBACK = timedelta(minutes=5)
 _ACTIVE_PREVIEW_PAGE_SIZE = 200
 
 
-def _ensure_utc_datetime(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+def _ensure_local_datetime(value: datetime | None) -> datetime | None:
+    return ensure_beijing_datetime(value)
 
 
 def _normalize_sort_order(value: str | None) -> str:
@@ -1305,7 +1302,7 @@ async def _serialize_recordings(db: AsyncSession, recordings: list[Recording]) -
 
 
 def _representative_sort_key(recording: Recording) -> tuple[int, datetime, int]:
-    recorded_at = recording.recorded_at or datetime.min.replace(tzinfo=timezone.utc)
+    recorded_at = recording.recorded_at or datetime.min.replace(tzinfo=BEIJING_TZ)
     return (
         REPRESENTATIVE_PRIORITY.get(recording.governance_status or "raw", 0),
         recorded_at,
@@ -1497,7 +1494,7 @@ async def debug_arex_storage(
     app_id = app.arex_app_id or app.name
     client = ArexClient(arex_url)
 
-    now = datetime.now(timezone.utc)
+    now = now_beijing()
     begin_time = now - timedelta(hours=24)
 
     try:
@@ -1535,7 +1532,7 @@ async def _enqueue_collection(
     db: AsyncSession,
 ):
     recording_filter_prefixes = _normalize_recording_filter_prefixes(sess.recording_filter_prefixes)
-    now = datetime.now(timezone.utc)
+    now = now_beijing()
     sess.status = "collecting"
     sess.end_time = None
     sess.error_message = None
@@ -1567,7 +1564,7 @@ async def start_recording(
     if sess.status != "idle":
         raise HTTPException(status_code=409, detail=f"Session is not idle: {sess.status}")
 
-    now = datetime.now(timezone.utc)
+    now = now_beijing()
     sess.status = "active"
     sess.start_time = now
     sess.end_time = None
@@ -1632,7 +1629,7 @@ async def _sync_from_arex_storage(
         client = ArexClient(arex_url)
 
         # Default time range: last 7 days
-        now = datetime.now(timezone.utc)
+        now = now_beijing()
         if not begin_time:
             from datetime import timedelta
             begin_time = now - timedelta(days=7)
@@ -1717,11 +1714,11 @@ async def _sync_from_arex_storage(
                     )
                     if record_time_ms:
                         try:
-                            recorded_at = datetime.fromtimestamp(int(record_time_ms) / 1000, tz=timezone.utc)
+                            recorded_at = from_epoch_ms_beijing(record_time_ms)
                         except (ValueError, TypeError):
-                            recorded_at = datetime.now(timezone.utc)
+                            recorded_at = now_beijing()
                     else:
-                        recorded_at = datetime.now(timezone.utc)
+                        recorded_at = now_beijing()
 
                     extracted_sub_calls = _extract_sub_calls(detail, raw)
                     dynamic_sub_calls = await _fetch_dynamic_class_sub_calls(str(record_id), db)
@@ -1787,7 +1784,7 @@ async def _sync_from_arex_storage(
                 sess.error_message = None
                 if finalize_session:
                     sess.status = "done"
-                    sess.end_time = datetime.now(timezone.utc)
+                    sess.end_time = now_beijing()
                 await db.commit()
 
         except ArexClientError as e:
@@ -1819,14 +1816,14 @@ async def _sync_active_session_preview(session_id: int, db: AsyncSession) -> Non
     if sess.status != "active" or not sess.start_time:
         return
 
-    session_start_time = _ensure_utc_datetime(sess.start_time)
+    session_start_time = _ensure_local_datetime(sess.start_time)
     if session_start_time is None:
         return
 
     latest_result = await db.execute(
         select(func.max(Recording.recorded_at)).where(Recording.session_id == session_id)
     )
-    latest_recorded_at = _ensure_utc_datetime(latest_result.scalar_one_or_none())
+    latest_recorded_at = _ensure_local_datetime(latest_result.scalar_one_or_none())
     begin_time = session_start_time
     if latest_recorded_at:
         begin_time = max(session_start_time, latest_recorded_at - _ACTIVE_PREVIEW_LOOKBACK)
@@ -1837,7 +1834,7 @@ async def _sync_active_session_preview(session_id: int, db: AsyncSession) -> Non
             application_id=sess.application_id,
             recording_filter_prefixes=_normalize_recording_filter_prefixes(sess.recording_filter_prefixes),
             begin_time=begin_time,
-            end_time=datetime.now(timezone.utc),
+            end_time=now_beijing(),
             page_size=_ACTIVE_PREVIEW_PAGE_SIZE,
             page_index=0,
             finalize_session=False,

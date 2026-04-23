@@ -1,5 +1,5 @@
 """Statistics API for dashboard and reporting."""
-from datetime import datetime, timezone, timedelta
+from datetime import timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -11,6 +11,7 @@ from models.replay import ReplayJob, ReplayResult
 from models.application import Application
 from models.test_case import TestCase
 from core.security import require_viewer
+from utils.timezone import now_beijing
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 FINISHED_JOB_STATUSES = ("DONE", "FAILED")
@@ -27,7 +28,7 @@ async def get_pass_rate_trend(
     Return daily pass rate for the last N days.
     Response: [{"date": "2026-04-01", "total": 100, "passed": 90, "pass_rate": 0.9}]
     """
-    end = datetime.now(timezone.utc)
+    end = now_beijing()
     start = end - timedelta(days=days)
 
     stmt = select(ReplayJob).where(
@@ -77,7 +78,7 @@ async def get_summary(
     apps_count = (await db.execute(select(func.count()).select_from(Application))).scalar()
     cases_count = (await db.execute(select(func.count()).select_from(TestCase))).scalar()
 
-    thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+    thirty_days_ago = now_beijing() - timedelta(days=30)
     jobs_result = await db.execute(
         select(ReplayJob).where(
             and_(ReplayJob.created_at >= thirty_days_ago, ReplayJob.status.in_(FINISHED_JOB_STATUSES))
@@ -108,7 +109,7 @@ async def get_app_summary(
     apps_result = await db.execute(select(Application))
     apps = apps_result.scalars().all()
 
-    thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+    thirty_days_ago = now_beijing() - timedelta(days=30)
     summaries = []
     for app in apps:
         # Count test cases
@@ -155,7 +156,7 @@ async def get_failure_types(
     Failure type distribution for the last N days.
     Response: [{"category": "diff", "count": 45}, {"category": "assertion", "count": 12}]
     """
-    start = datetime.now(timezone.utc) - timedelta(days=days)
+    start = now_beijing() - timedelta(days=days)
 
     # Join results with jobs to filter by date and application
     stmt = (

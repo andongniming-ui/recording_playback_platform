@@ -2,6 +2,7 @@ from datetime import datetime
 from sqlalchemy import String, Integer, Boolean, DateTime, Text, Float, func
 from sqlalchemy.orm import Mapped, mapped_column
 from database import Base
+from utils.timezone import current_time_for_update
 
 
 class Application(Base):
@@ -45,5 +46,5 @@ class Application(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=datetime.utcnow
+        DateTime, server_default=func.now(), onupdate=current_time_for_update
     )

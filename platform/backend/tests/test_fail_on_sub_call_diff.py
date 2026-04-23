@@ -200,7 +200,7 @@ async def test_fail_on_sub_call_diff_true_downgrades_pass_to_fail(client, admin_
 
     request_mock = AsyncMock(return_value=DummyResponse())
 
-    async def _fake_fetch_sub_calls(record_id, case=None):
+    async def _fake_fetch_sub_calls(record_id, case=None, anchor_created_at_ms=None):
         return actual_sub_calls_differ
 
     with patch("httpx.AsyncClient.request", request_mock), \

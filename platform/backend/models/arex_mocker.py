@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, Text, BigInteger
+from sqlalchemy import Column, Integer, String, Boolean, Text, BigInteger, DateTime
 from database import Base
 
 
@@ -18,3 +18,4 @@ class ArexMocker(Base):
     is_entry_point = Column(Boolean, default=False, nullable=False)
     mocker_data = Column(Text, nullable=False)   # full mocker JSON
     created_at_ms = Column(BigInteger, nullable=True, index=True)  # epoch ms from agent
+    created_at = Column(DateTime, nullable=True, index=True)  # Beijing time for display/query

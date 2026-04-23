@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>didi 系统接口验证操作手册</title>
+    <style>
+      :root {
+        --bg: #f5f7fb;
+        --panel: #ffffff;
+        --text: #1f2937;
+        --muted: #5f6b7a;
+        --line: #d8e0ea;
+        --brand: #1d4ed8;
+        --brand-soft: #e8f0ff;
+        --ok: #0f766e;
+        --warn: #9a3412;
+        --shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family:
+          "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+        background:
+          radial-gradient(
+            circle at top right,
+            rgba(29, 78, 216, 0.08),
+            transparent 28%
+          ),
+          linear-gradient(180deg, #f8fbff 0%, var(--bg) 100%);
+        color: var(--text);
+        line-height: 1.65;
+      }
+
+      .page {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 32px 20px 56px;
+      }
+
+      .hero {
+        background: linear-gradient(
+          135deg,
+          #163b82 0%,
+          #2457b8 58%,
+          #4b7ee5 100%
+        );
+        color: #fff;
+        border-radius: 24px;
+        padding: 32px;
+        box-shadow: var(--shadow);
+      }
+
+      .hero h1 {
+        margin: 0 0 10px;
+        font-size: 32px;
+        line-height: 1.2;
+        letter-spacing: 0.3px;
+      }
+
+      .hero p {
+        margin: 0;
+        max-width: 760px;
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 15px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 18px;
+        margin-top: 22px;
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        padding: 22px;
+        box-shadow: var(--shadow);
+      }
+
+      h2 {
+        margin: 0 0 14px;
+        font-size: 22px;
+        color: #12233f;
+      }
+
+      h3 {
+        margin: 0 0 10px;
+        font-size: 17px;
+        color: #16335f;
+      }
+
+      p {
+        margin: 8px 0 0;
+      }
+
+      ul,
+      ol {
+        margin: 10px 0 0;
+        padding-left: 20px;
+      }
+
+      li + li {
+        margin-top: 6px;
+      }
+
+      .label {
+        display: inline-block;
+        padding: 5px 10px;
+        border-radius: 999px;
+        background: var(--brand-soft);
+        color: var(--brand);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+        text-transform: uppercase;
+      }
+
+      .kv {
+        display: grid;
+        grid-template-columns: 120px 1fr;
+        gap: 10px 14px;
+        margin-top: 14px;
+        align-items: start;
+      }
+
+      .kv div:nth-child(odd) {
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      code,
+      .mono {
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 0.95em;
+        background: #f1f5f9;
+        border-radius: 8px;
+        padding: 2px 7px;
+        word-break: break-all;
+      }
+
+      .callout {
+        margin-top: 16px;
+        padding: 14px 16px;
+        border-radius: 16px;
+        border: 1px solid #cfe0ff;
+        background: #f5f9ff;
+      }
+
+      .ok {
+        border-color: #bfe6d8;
+        background: #f2fbf7;
+        color: var(--ok);
+      }
+
+      .warn {
+        border-color: #f0d0b5;
+        background: #fff7f0;
+        color: var(--warn);
+      }
+
+      a {
+        color: var(--brand);
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      .footer {
+        margin-top: 26px;
+        color: var(--muted);
+        font-size: 13px;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <section class="hero">
+        <div class="label">didi 系统</div>
+        <h1>接口验证操作手册</h1>
+        <p>
+          本手册面向测试人员使用。当前 didi
+          两套被测系统及录制平台均已完成部署与配置，测试人员无需自行配置环境，只需打开
+          ApiPost 分享链接，选择接口并发送请求即可完成验证。
+        </p>
+      </section>
+
+      <div class="grid">
+        <section class="card">
+          <h2>一、使用入口</h2>
+          <div class="kv">
+            <div>ApiPost 链接</div>
+            <div>
+              <a
+                href="https://docs.apipost.net/docs/detail/6223d84470ca000?target_id=1ec7886370b0f4&locale=zh-cn"
+                target="_blank"
+                >https://docs.apipost.net/docs/detail/6223d84470ca000?target_id=1ec7886370b0f4&locale=zh-cn</a
+              >
+            </div>
+            <div>平台地址</div>
+            <div>
+              <a
+                href="http://chenduizhang.cloud/login?redirect=/applications"
+                target="_blank"
+                >https://chenduizhang.cloud</a
+              >
+            </div>
+            <div>平台账号</div>
+            <div><span class="mono">admin</span></div>
+            <div>平台密码</div>
+            <div><span class="mono">admin123</span></div>
+          </div>
+          <div class="callout ok">
+            didi
+            两个系统已提前配置完成，无需测试人员再做挂载、环境地址配置或数据库初始化。
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>二、系统说明</h2>
+          <div class="kv">
+            <div>系统 A</div>
+            <div><span class="mono">didi-system-a</span>，基线系统</div>
+            <div>系统 B</div>
+            <div><span class="mono">didi-system-b</span>，对比系统</div>
+            <div>统一入口</div>
+            <div><span class="mono">POST /api/car/service</span></div>
+            <div>请求格式</div>
+            <div>XML</div>
+            <div>返回格式</div>
+            <div>XML</div>
+          </div>
+          <div class="callout">
+            ApiPost 分享链接中已整理 didi
+            全部接口。测试时按页面中现有接口直接发送即可。
+          </div>
+        </section>
+      </div>
+
+      <section class="card" style="margin-top: 18px">
+        <h2>三、测试步骤</h2>
+        <ol>
+          <li>打开 ApiPost 分享链接。</li>
+          <li>
+            在左侧选择需要验证的接口，建议优先测试
+            <span class="mono">car000001</span>。
+          </li>
+          <li>直接点击发送，请求参数已在接口文档中准备好。</li>
+          <li>
+            观察返回结果是否为成功 XML，重点关注：
+            <ul>
+              <li>
+                <span class="mono">&lt;status&gt;SUCCESS&lt;/status&gt;</span>
+              </li>
+              <li>
+                <span class="mono"
+                  >&lt;txn_code&gt;car000001&lt;/txn_code&gt;</span
+                >
+              </li>
+              <li>
+                <span class="mono"
+                  >&lt;database_flag&gt;Y&lt;/database_flag&gt;</span
+                >
+              </li>
+              <li>
+                <span class="mono"
+                  >&lt;sub_call_flag&gt;Y&lt;/sub_call_flag&gt;</span
+                >
+              </li>
+            </ul>
+          </li>
+          <li>
+            如需查看录制结果，可登录平台，在录制管理中查看对应应用的录制数据。
+          </li>
+        </ol>
+        <div class="callout ok">
+          推荐首测接口：<span class="mono">car000001</span
+          >。该接口包含主请求、HTTP 子调用以及数据库调用，最适合做全链路验证。
+        </div>
+      </section>
+
+      <div class="grid">
+        <section class="card">
+          <h2>四、tra_id 说明</h2>
+          <p>接口请求中已包含：</p>
+          <p><code>&lt;tra_id&gt;{{traId}}&lt;/tra_id&gt;</code></p>
+          <p>
+            该字段用于串联一笔请求的主请求日志、HTTP
+            子调用日志和数据库调用日志。
+          </p>
+          <ul>
+            <li>测试人员正常发送即可，无需手工生成。</li>
+            <li>
+              若接口页面中已配置前置变量，则会自动生成新的
+              <span class="mono">traId</span>。
+            </li>
+            <li>
+              如需排查问题，优先记录返回报文中的
+              <span class="mono">tra_id</span>。
+            </li>
+          </ul>
+        </section>
+
+        <section class="card">
+          <h2>五、平台使用</h2>
+          <ul>
+            <li>
+              访问：<a
+                href="http://chenduizhang.cloud/applications"
+                target="_blank"
+                >https://chenduizhang.cloud/</a
+              >
+            </li>
+            <li>账号：<span class="mono">admin</span></li>
+            <li>密码：<span class="mono">admin123</span></li>
+            <li>主要用途：查看应用、录制结果、回放结果、差异比对。</li>
+          </ul>
+          <div class="callout">
+            如只做接口连通性验证，平台可不登录；如需核对录制效果，再登录平台查看。
+          </div>
+        </section>
+      </div>
+
+      <section class="card" style="margin-top: 18px">
+        <h2>六、数据库连接信息</h2>
+        <p>如需辅助核对数据库记录，可使用以下连接信息。</p>
+        <div class="kv">
+          <div>Host</div>
+          <div><span class="mono">49.232.172.28</span></div>
+          <div>Port</div>
+          <div><span class="mono">3307</span></div>
+          <div>User</div>
+          <div><span class="mono">root</span></div>
+          <div>Password</div>
+          <div><span class="mono">root123</span></div>
+        </div>
+        <div class="callout">
+          常用数据库：
+          <ul>
+            <li><span class="mono">arex_recorder</span>：平台库</li>
+            <li><span class="mono">didi_alpha</span>：didi-system-a 业务库</li>
+            <li><span class="mono">didi_beta</span>：didi-system-b 业务库</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top: 18px">
+        <h2>七、常用验证口径</h2>
+        <ul>
+          <li>接口返回成功：说明主请求处理正常。</li>
+          <li>
+            返回中
+            <span class="mono">database_flag=Y</span
+            >：说明业务数据库访问已发生。
+          </li>
+          <li>
+            返回中 <span class="mono">sub_call_flag=Y</span>：说明子调用已发生。
+          </li>
+          <li>平台录到数据：说明录制链路正常。</li>
+          <li>数据库可查到对应记录：说明业务写入真实发生。</li>
+        </ul>
+        <div class="callout warn">
+          如发送失败，请优先确认网络、接口地址、是否使用了正确的系统环境，以及返回报文中的错误信息。
+        </div>
+      </section>
+
+      <section class="card" style="margin-top: 18px">
+        <h2>八、推荐验证接口</h2>
+        <div class="kv">
+          <div>首选接口</div>
+          <div><span class="mono">car000001</span> 车险试算</div>
+          <div>推荐原因</div>
+          <div>包含主请求、HTTP 子调用、数据库读写，最适合验证链路完整性。</div>
+          <div>验证重点</div>
+          <div>
+            <span class="mono">SUCCESS</span>、<span class="mono"
+              >database_flag=Y</span
+            >、<span class="mono">sub_call_flag=Y</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="footer">
+        文档用途：测试人员接口验证使用。当前环境已部署完成，可直接访问并发起测试。
+      </div>
+    </div>
+  </body>
+</html>

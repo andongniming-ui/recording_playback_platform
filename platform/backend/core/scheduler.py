@@ -2,6 +2,7 @@
 import asyncio
 import logging
 
+from apscheduler.events import EVENT_JOB_MAX_INSTANCES, EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from utils.timezone import now_beijing
@@ -9,6 +10,14 @@ from utils.timezone import now_beijing
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
+_running_schedule_ids: set[int] = set()
+
+
+def _log_scheduler_skip(event) -> None:
+    logger.warning("Scheduled replay trigger skipped: job_id=%s code=%s", event.job_id, event.code)
+
+
+scheduler.add_listener(_log_scheduler_skip, EVENT_JOB_MAX_INSTANCES | EVENT_JOB_MISSED)
 
 
 def _make_job_id(schedule_id: int) -> str:
@@ -47,6 +56,13 @@ async def _run_scheduled_replay(schedule_id: int, ignore_active: bool = False):
             schedule.last_run_status = "FAILED"
             await db.commit()
             logger.warning("Schedule %s: no cases found in suite %s", schedule_id, schedule.suite_id)
+            return
+
+        if schedule_id in _running_schedule_ids:
+            schedule.last_run_at = now_beijing()
+            schedule.last_run_status = "SKIPPED"
+            await db.commit()
+            logger.warning("Schedule %s skipped because previous replay is still running", schedule_id)
             return
 
         try:
@@ -97,29 +113,44 @@ async def _run_scheduled_replay(schedule_id: int, ignore_active: bool = False):
         schedule.last_run_at = now_beijing()
         schedule.last_run_status = "RUNNING"
         await db.commit()
+        _running_schedule_ids.add(schedule_id)
 
-    await replay_executor.run_replay_job(job_id)
+    async def _finish_scheduled_replay():
+        try:
+            await replay_executor.run_replay_job(job_id)
 
-    async with async_session_factory() as db:
-        job_result = await db.execute(select(ReplayJob).where(ReplayJob.id == job_id))
-        job = job_result.scalar_one_or_none()
-        if job:
-            await send_replay_report(
-                notify_type=notify_type,
-                webhook=notify_webhook,
-                job_id=job_id,
-                job_name=job.name or schedule_name,
-                total=job.total,
-                passed=job.passed,
-                failed=job.failed,
-                errored=job.errored,
-            )
+            async with async_session_factory() as db:
+                job_result = await db.execute(select(ReplayJob).where(ReplayJob.id == job_id))
+                job = job_result.scalar_one_or_none()
+                if job:
+                    await send_replay_report(
+                        notify_type=notify_type,
+                        webhook=notify_webhook,
+                        job_id=job_id,
+                        job_name=job.name or schedule_name,
+                        total=job.total,
+                        passed=job.passed,
+                        failed=job.failed,
+                        errored=job.errored,
+                    )
 
-        schedule_result = await db.execute(select(Schedule).where(Schedule.id == schedule_id))
-        schedule = schedule_result.scalar_one_or_none()
-        if schedule:
-            schedule.last_run_status = "DONE" if job and job.failed == 0 and job.errored == 0 else "FAILED"
-            await db.commit()
+                schedule_result = await db.execute(select(Schedule).where(Schedule.id == schedule_id))
+                schedule = schedule_result.scalar_one_or_none()
+                if schedule:
+                    schedule.last_run_status = "DONE" if job and job.failed == 0 and job.errored == 0 else "FAILED"
+                    await db.commit()
+        except Exception:
+            logger.exception("Scheduled replay job %s failed unexpectedly", job_id)
+            async with async_session_factory() as db:
+                schedule_result = await db.execute(select(Schedule).where(Schedule.id == schedule_id))
+                schedule = schedule_result.scalar_one_or_none()
+                if schedule:
+                    schedule.last_run_status = "FAILED"
+                    await db.commit()
+        finally:
+            _running_schedule_ids.discard(schedule_id)
+
+    asyncio.create_task(_finish_scheduled_replay())
 
 
 def add_schedule(schedule_id: int, cron_expr: str):
@@ -152,7 +183,7 @@ def add_schedule(schedule_id: int, cron_expr: str):
             args=[schedule_id],
             replace_existing=True,
             max_instances=1,
-            misfire_grace_time=60,
+            misfire_grace_time=None,
         )
         logger.info("Scheduled job added: %s cron=%s", job_id, cron_expr)
     except Exception as exc:
@@ -179,7 +210,7 @@ async def load_all_schedules():
     from models.schedule import Schedule
 
     async with async_session_factory() as db:
-        result = await db.execute(select(Schedule).where(Schedule.is_active == True))
+        result = await db.execute(select(Schedule).where(Schedule.is_active.is_(True)))
         schedules = result.scalars().all()
         for schedule in schedules:
             add_schedule(schedule.id, schedule.cron_expr)

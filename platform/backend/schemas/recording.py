@@ -73,6 +73,31 @@ class RecordingSessionOut(BaseModel):
         return None
 
 
+class RecordingSessionPageOut(BaseModel):
+    items: list[RecordingSessionOut]
+    total: int
+    skip: int
+    limit: int
+
+
+class RecordingAuditOut(BaseModel):
+    id: int
+    session_id: int
+    application_id: Optional[int] = None
+    recording_id: Optional[int] = None
+    level: str
+    event_type: str
+    record_id: Optional[str] = None
+    request_method: Optional[str] = None
+    request_uri: Optional[str] = None
+    transaction_code: Optional[str] = None
+    message: Optional[str] = None
+    detail: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class RecordingOut(BaseModel):
     id: int
     session_id: Optional[int]
@@ -145,6 +170,7 @@ class RecordingSubCall(BaseModel):
     method: Optional[str] = None
     endpoint: Optional[str] = None
     sql: Optional[str] = None
+    sql_text: Optional[str] = None
     params: Optional[Any] = None
     request: Any = None
     response: Any = None
@@ -182,6 +208,13 @@ class RecordingGroupOut(BaseModel):
     representative_governance_status: str
     representative_request_method: str
     representative_request_uri: str
+
+
+class RecordingGroupPageOut(BaseModel):
+    items: list[RecordingGroupOut]
+    total: int
+    skip: int
+    limit: int
 
 
 class SyncRequest(BaseModel):

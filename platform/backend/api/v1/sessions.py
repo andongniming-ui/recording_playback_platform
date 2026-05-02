@@ -9,21 +9,26 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, func, delete, or_, asc, desc
+from sqlalchemy import select, update, func, delete, or_, desc
+from sqlalchemy.exc import IntegrityError
 
 from database import get_db, async_session_factory
 from models.recording import RecordingSession, Recording
 from models.application import Application
 from models.arex_mocker import ArexMocker
+from models.audit import RecordingAuditLog
 from schemas.recording import (
     RecordingSessionCreate,
+    RecordingAuditOut,
     RecordingSessionOut,
+    RecordingSessionPageOut,
     RecordingOut,
     RecordingGroupOut,
+    RecordingGroupPageOut,
     RecordingGovernanceUpdate,
     SyncRequest,
 )
-from schemas.common import BulkDeleteResponse, BulkIdsRequest
+from schemas.common import BulkDeleteResponse, BulkIdsRequest, PageOut
 from core.security import require_viewer, require_editor
 from config import settings
 from utils.governance import (
@@ -36,32 +41,66 @@ from utils.governance import (
 from utils.repository_capture import (
     NOISE_DYNAMIC_CLASS_OPERATIONS,
     is_noise_dynamic_mocker,
+    normalize_generic_database_sub_call,
     normalize_repository_sub_call,
 )
 from utils.timezone import BEIJING_TZ, ensure_beijing_datetime, from_epoch_ms_beijing, now_beijing
+from utils.query import apply_ordering, normalize_sort_order
+from utils.serialization import json_text
 
 logger = logging.getLogger(__name__)
-runtime_logger = logging.getLogger("uvicorn.error")
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 HTTP_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
 REPRESENTATIVE_PRIORITY = {"approved": 4, "candidate": 3, "raw": 2, "archived": 1, "rejected": 0}
 _DIDI_COMPLEX_TRANSACTION_CODES = {f"car{index:06d}" for index in range(1, 16)}
 _collection_tasks: set[asyncio.Task] = set()
+_active_preview_locks: dict[int, asyncio.Lock] = {}
 _ACTIVE_PREVIEW_LOOKBACK = timedelta(minutes=5)
 _ACTIVE_PREVIEW_PAGE_SIZE = 200
 
 
+def _get_active_preview_lock(session_id: int) -> asyncio.Lock:
+    lock = _active_preview_locks.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _active_preview_locks[session_id] = lock
+    return lock
+
+
+def _append_recording_audit(
+    db: AsyncSession,
+    *,
+    session_id: int,
+    application_id: int | None = None,
+    recording_id: int | None = None,
+    level: str = "INFO",
+    event_type: str,
+    record_id: str | None = None,
+    request_method: str | None = None,
+    request_uri: str | None = None,
+    transaction_code: str | None = None,
+    message: str | None = None,
+    detail=None,
+) -> None:
+    db.add(
+        RecordingAuditLog(
+            session_id=session_id,
+            application_id=application_id,
+            recording_id=recording_id,
+            level=level,
+            event_type=event_type,
+            record_id=record_id,
+            request_method=request_method,
+            request_uri=request_uri,
+            transaction_code=transaction_code,
+            message=message,
+            detail=json_text(detail),
+        )
+    )
+
+
 def _ensure_local_datetime(value: datetime | None) -> datetime | None:
     return ensure_beijing_datetime(value)
-
-
-def _normalize_sort_order(value: str | None) -> str:
-    return "asc" if (value or "").lower() == "asc" else "desc"
-
-
-def _apply_ordering(stmt, primary_column, id_column, sort_order: str):
-    direction = asc if _normalize_sort_order(sort_order) == "asc" else desc
-    return stmt.order_by(direction(primary_column), direction(id_column))
 
 
 def _track_collection_task(task: asyncio.Task) -> None:
@@ -99,6 +138,79 @@ def _extract_records_from_query_response(data) -> list[dict]:
             if not records_raw:
                 records_raw = data.get("recordResult") or []
     return [item for item in records_raw if isinstance(item, dict)]
+
+
+def _is_probable_internal_servlet_record(raw: dict) -> bool:
+    """AREX also records internal HTTP sub-invocations as Servlet entries."""
+    _, request_uri = _extract_request_meta(raw, raw)
+    return request_uri.startswith("/internal/") or request_uri.startswith("/api/internal/")
+
+
+async def _count_visible_recordings_from_arex(
+    client,
+    *,
+    app_id: str,
+    begin_time: datetime,
+    end_time: datetime,
+    recording_filter_prefixes: list[str] | None = None,
+    transaction_code_fields: list[str] | None = None,
+    page_size: int = 200,
+) -> int:
+    """Count recordings with the same visible-entry policy used by the list view."""
+    remote_total = None
+    try:
+        remote_total = await client.count_recordings(
+            app_id=app_id,
+            begin_time=begin_time,
+            end_time=end_time,
+        )
+    except Exception as exc:
+        logger.info("AREX 原始录制总数获取失败，回退到逐页计数: %s", exc)
+
+    total = 0
+    page_index = 0
+    saw_records = False
+    while True:
+        try:
+            data = await client.query_recordings(
+                app_id=app_id,
+                begin_time=begin_time,
+                end_time=end_time,
+                page_size=page_size,
+                page_index=page_index,
+            )
+        except Exception:
+            if remote_total is not None:
+                return remote_total
+            raise
+        records = _extract_records_from_query_response(data)
+        if not records:
+            break
+        saw_records = True
+        for record in records:
+            if _is_probable_internal_servlet_record(record):
+                continue
+            if recording_filter_prefixes:
+                request_method, request_uri = _extract_request_meta(record, record)
+                request_body = _extract_request_body(record)
+                response_body = _extract_response_body(record)
+                transaction_code = infer_transaction_code(
+                    request_uri,
+                    request_body,
+                    response_body,
+                    candidate_keys=transaction_code_fields,
+                )
+                if not _matches_recording_filter(transaction_code, recording_filter_prefixes):
+                    continue
+            total += 1
+        page_index += 1
+        if remote_total is not None and page_index * page_size >= remote_total:
+            break
+        if len(records) < page_size:
+            break
+    if not saw_records and remote_total is not None:
+        return remote_total
+    return total
 
 
 async def _get_app_or_404(app_id: int, db: AsyncSession) -> Application:
@@ -920,7 +1032,7 @@ async def _fetch_nls_sub_calls(
             result = await db.execute(
                 select(ArexMocker).where(
                     ArexMocker.record_id == record_id,
-                    ArexMocker.is_entry_point == False,  # noqa: E712
+                    ArexMocker.is_entry_point.is_(False),
                 ).order_by(ArexMocker.created_at_ms)
             )
             for mocker_row in result.scalars().all():
@@ -1157,7 +1269,7 @@ async def _remove_sub_invocation_recordings(session_id: int, db: AsyncSession) -
     httpclient_result = await db.execute(
         select(ArexMocker.mocker_data).where(
             ArexMocker.record_id.in_(session_record_ids),
-            ArexMocker.is_entry_point == False,  # noqa: E712
+            ArexMocker.is_entry_point.is_(False),
             ArexMocker.category_name == "HttpClient",
         )
     )
@@ -1229,7 +1341,7 @@ async def _fetch_dynamic_class_sub_calls(record_id: str, db: AsyncSession) -> li
     result = await db.execute(
         select(ArexMocker).where(
             ArexMocker.record_id == record_id,
-            ArexMocker.is_entry_point == False,  # noqa: E712
+            ArexMocker.is_entry_point.is_(False),
         )
     )
     sub_calls = []
@@ -1242,6 +1354,10 @@ async def _fetch_dynamic_class_sub_calls(record_id: str, db: AsyncSession) -> li
         repository_sub_call = normalize_repository_sub_call(mocker, m.category_name)
         if repository_sub_call is not None:
             sub_calls.append(repository_sub_call)
+            continue
+        generic_database_sub_call = normalize_generic_database_sub_call(mocker, m.category_name)
+        if generic_database_sub_call is not None:
+            sub_calls.append(generic_database_sub_call)
             continue
         target_req = mocker.get("targetRequest") or {}
         target_resp = mocker.get("targetResponse") or {}
@@ -1353,7 +1469,52 @@ async def _refresh_session_total_counts(db: AsyncSession, session_ids: list[int]
         )
 
 
-@router.get("", response_model=list[RecordingSessionOut])
+async def _refresh_active_session_remote_counts(db: AsyncSession, sessions: list[RecordingSession]) -> None:
+    """Refresh visible active sessions with a lightweight AREX count query."""
+    active_sessions = [
+        sess for sess in sessions
+        if sess.status == "active" and sess.start_time is not None
+    ]
+    if not active_sessions:
+        return
+
+    from integration.arex_client import ArexClient
+
+    app_ids = sorted({sess.application_id for sess in active_sessions})
+    app_result = await db.execute(select(Application).where(Application.id.in_(app_ids)))
+    app_map = {app.id: app for app in app_result.scalars().all()}
+    now = now_beijing()
+    changed = False
+
+    for sess in active_sessions:
+        app = app_map.get(sess.application_id)
+        if not app:
+            continue
+        app_id = app.arex_app_id or app.name
+        recording_filter_prefixes = _normalize_recording_filter_prefixes(sess.recording_filter_prefixes)
+        transaction_code_fields = normalize_transaction_code_keys(app.transaction_code_fields)
+        try:
+            async with ArexClient(app.arex_storage_url or settings.arex_storage_url) as client:
+                remote_count = await _count_visible_recordings_from_arex(
+                    client,
+                    app_id=app_id,
+                    begin_time=ensure_beijing_datetime(sess.start_time) or sess.start_time,
+                    end_time=now,
+                    recording_filter_prefixes=recording_filter_prefixes,
+                    transaction_code_fields=transaction_code_fields,
+                )
+        except Exception as exc:
+            logger.info("刷新录制中会话 %s 的 AREX 计数失败: %s", sess.id, exc)
+            continue
+        if remote_count != sess.total_count:
+            sess.total_count = remote_count
+            changed = True
+
+    if changed:
+        await db.commit()
+
+
+@router.get("", response_model=RecordingSessionPageOut | list[RecordingSessionOut])
 async def list_sessions(
     application_id: Optional[int] = Query(None),
     status: Optional[str] = Query(None),
@@ -1364,6 +1525,8 @@ async def list_sessions(
     sort_order: str = Query("desc"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
+    include_total: bool = Query(False),
+    refresh_active_count: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_viewer),
 ):
@@ -1373,11 +1536,20 @@ async def list_sessions(
     if status:
         stmt = stmt.where(RecordingSession.status == status)
     if search:
-        stmt = stmt.where(RecordingSession.name.contains(search))
+        stmt = stmt.join(Application, RecordingSession.application_id == Application.id).where(
+            or_(
+                RecordingSession.name.contains(search),
+                Application.name.contains(search),
+            )
+        )
     if created_after:
         stmt = stmt.where(RecordingSession.created_at >= created_after)
     if created_before:
         stmt = stmt.where(RecordingSession.created_at <= created_before)
+    total = None
+    if include_total:
+        total_result = await db.execute(select(func.count()).select_from(stmt.subquery()))
+        total = total_result.scalar_one()
     sort_mapping = {
         "created_at": RecordingSession.created_at,
         "start_time": RecordingSession.start_time,
@@ -1386,9 +1558,14 @@ async def list_sessions(
         "id": RecordingSession.id,
     }
     primary_column = sort_mapping.get(sort_by, RecordingSession.created_at)
-    stmt = _apply_ordering(stmt, primary_column, RecordingSession.id, sort_order).offset(skip).limit(limit)
+    stmt = apply_ordering(stmt, primary_column, RecordingSession.id, sort_order).offset(skip).limit(limit)
     result = await db.execute(stmt)
-    return result.scalars().all()
+    items = result.scalars().all()
+    if refresh_active_count:
+        await _refresh_active_session_remote_counts(db, items)
+    if include_total:
+        return RecordingSessionPageOut(items=items, total=total or 0, skip=skip, limit=limit)
+    return items
 
 
 @router.post("", response_model=RecordingSessionOut, status_code=201)
@@ -1446,7 +1623,43 @@ async def get_session(
     sess = result.scalar_one_or_none()
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
+    await _refresh_active_session_remote_counts(db, [sess])
     return sess
+
+
+@router.get("/{session_id}/audit-logs", response_model=PageOut[RecordingAuditOut] | list[RecordingAuditOut])
+async def list_session_audit_logs(
+    session_id: int,
+    event_type: Optional[str] = Query(None),
+    record_id: Optional[str] = Query(None),
+    transaction_code: Optional[str] = Query(None),
+    recording_id: Optional[int] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    include_total: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_viewer),
+):
+    await _load_session_or_404(session_id, db)
+    stmt = select(RecordingAuditLog).where(RecordingAuditLog.session_id == session_id)
+    if event_type:
+        stmt = stmt.where(RecordingAuditLog.event_type == event_type)
+    if record_id:
+        stmt = stmt.where(RecordingAuditLog.record_id == record_id)
+    if transaction_code:
+        stmt = stmt.where(RecordingAuditLog.transaction_code == transaction_code)
+    if recording_id is not None:
+        stmt = stmt.where(RecordingAuditLog.recording_id == recording_id)
+    total = None
+    if include_total:
+        total_result = await db.execute(select(func.count()).select_from(stmt.subquery()))
+        total = total_result.scalar_one()
+    stmt = stmt.order_by(desc(RecordingAuditLog.created_at), desc(RecordingAuditLog.id)).offset(skip).limit(limit)
+    result = await db.execute(stmt)
+    items = result.scalars().all()
+    if include_total:
+        return PageOut[RecordingAuditOut](items=items, total=total or 0, skip=skip, limit=limit)
+    return items
 
 
 @router.delete("/{session_id}", status_code=204)
@@ -1492,19 +1705,18 @@ async def debug_arex_storage(
 
     arex_url = app.arex_storage_url or settings.arex_storage_url
     app_id = app.arex_app_id or app.name
-    client = ArexClient(arex_url)
-
     now = now_beijing()
     begin_time = now - timedelta(hours=24)
 
     try:
-        raw = await client.query_recordings(
-            app_id=app_id,
-            begin_time=begin_time,
-            end_time=now,
-            page_size=50,
-            page_index=0,
-        )
+        async with ArexClient(arex_url) as client:
+            raw = await client.query_recordings(
+                app_id=app_id,
+                begin_time=begin_time,
+                end_time=now,
+                page_size=50,
+                page_index=0,
+            )
         return {
             "arex_url": arex_url,
             "app_id": app_id,
@@ -1533,9 +1745,25 @@ async def _enqueue_collection(
 ):
     recording_filter_prefixes = _normalize_recording_filter_prefixes(sess.recording_filter_prefixes)
     now = now_beijing()
+    begin_time = ensure_beijing_datetime(body.begin_time or sess.start_time)
+    end_time = ensure_beijing_datetime(body.end_time or now)
     sess.status = "collecting"
     sess.end_time = None
     sess.error_message = None
+    _append_recording_audit(
+        db,
+        session_id=session_id,
+        application_id=sess.application_id,
+        event_type="collection_enqueued",
+        message="录制同步任务已入队",
+        detail={
+            "begin_time": begin_time.isoformat() if begin_time else None,
+            "end_time": end_time.isoformat() if end_time else None,
+            "page_size": body.page_size,
+            "page_index": body.page_index,
+            "recording_filter_prefixes": recording_filter_prefixes,
+        },
+    )
     await db.commit()
 
     task = asyncio.create_task(
@@ -1543,8 +1771,8 @@ async def _enqueue_collection(
             session_id=session_id,
             application_id=sess.application_id,
             recording_filter_prefixes=recording_filter_prefixes,
-            begin_time=body.begin_time or sess.start_time,
-            end_time=body.end_time or now,
+            begin_time=begin_time,
+            end_time=end_time,
             page_size=body.page_size,
             page_index=body.page_index,
         ),
@@ -1570,6 +1798,14 @@ async def start_recording(
     sess.end_time = None
     sess.total_count = 0
     sess.error_message = None
+    _append_recording_audit(
+        db,
+        session_id=session_id,
+        application_id=sess.application_id,
+        event_type="recording_started",
+        message="录制会话已启动",
+        detail={"start_time": now.isoformat()},
+    )
     await db.commit()
     await db.refresh(sess)
     return {"message": "Recording started", "session_id": session_id, "status": sess.status}
@@ -1612,6 +1848,7 @@ async def _sync_from_arex_storage(
     page_size: int = 50,
     page_index: int = 0,
     finalize_session: bool = True,
+    write_audit: bool = True,
 ):
     """Background task: pull recordings from arex-storage and save to DB."""
     from integration.arex_client import ArexClient, ArexClientError
@@ -1627,6 +1864,7 @@ async def _sync_from_arex_storage(
         app_id = app.arex_app_id or app.name
         transaction_code_fields = normalize_transaction_code_keys(app.transaction_code_fields)
         client = ArexClient(arex_url)
+        await client.__aenter__()
 
         # Default time range: last 7 days
         now = now_beijing()
@@ -1635,8 +1873,28 @@ async def _sync_from_arex_storage(
             begin_time = now - timedelta(days=7)
         if not end_time:
             end_time = now
+        begin_time = ensure_beijing_datetime(begin_time) or begin_time
+        end_time = ensure_beijing_datetime(end_time) or end_time
 
         try:
+            if write_audit:
+                _append_recording_audit(
+                    db,
+                    session_id=session_id,
+                    application_id=application_id,
+                    event_type="sync_started",
+                    message="开始从 AREX 拉取录制数据",
+                    detail={
+                        "app_id": app_id,
+                        "begin_time": begin_time.isoformat() if begin_time else None,
+                        "end_time": end_time.isoformat() if end_time else None,
+                        "page_size": page_size,
+                        "page_index": page_index,
+                        "finalize_session": finalize_session,
+                        "recording_filter_prefixes": recording_filter_prefixes or [],
+                    },
+                )
+                await db.commit()
             remote_total = None
             try:
                 remote_total = await client.count_recordings(
@@ -1669,18 +1927,60 @@ async def _sync_from_arex_storage(
                     current_page,
                     len(records_raw),
                 )
+                if write_audit:
+                    _append_recording_audit(
+                        db,
+                        session_id=session_id,
+                        application_id=application_id,
+                        event_type="page_fetched",
+                        message=f"第 {current_page} 页已拉取",
+                        detail={
+                            "page_index": current_page,
+                            "page_size": page_size,
+                            "fetched_count": len(records_raw),
+                            "remote_total": remote_total,
+                        },
+                    )
                 if not records_raw:
+                    if write_audit:
+                        await db.commit()
                     break
 
                 for raw in records_raw:
                     record_id = raw.get("recordId") or raw.get("id")
                     if not record_id:
                         continue
+                    if _is_probable_internal_servlet_record(raw):
+                        if write_audit:
+                            _, skipped_uri = _extract_request_meta(raw, raw)
+                            _append_recording_audit(
+                                db,
+                                session_id=session_id,
+                                application_id=application_id,
+                                event_type="record_skipped_internal",
+                                record_id=str(record_id),
+                                request_uri=skipped_uri,
+                                message="跳过内部 Servlet 子调用录制",
+                            )
+                        continue
 
                     existing = await db.execute(
                         select(Recording).where(Recording.record_id == str(record_id))
                     )
                     if existing.scalar_one_or_none():
+                        logger.debug(
+                            "同步会话 %s：跳过重复录制 record_id=%s（已存在）",
+                            session_id, record_id,
+                        )
+                        if write_audit:
+                            _append_recording_audit(
+                                db,
+                                session_id=session_id,
+                                application_id=application_id,
+                                event_type="record_skipped_duplicate",
+                                record_id=str(record_id),
+                                message="跳过已存在的录制",
+                            )
                         continue
 
                     try:
@@ -1693,6 +1993,7 @@ async def _sync_from_arex_storage(
                     response_body = _extract_response_body(detail)
                     response_status = detail.get("responseStatusCode") or 200
                     transaction_code = infer_transaction_code(
+                        request_uri,
                         request_body,
                         response_body,
                         candidate_keys=transaction_code_fields,
@@ -1705,6 +2006,19 @@ async def _sync_from_arex_storage(
                             transaction_code,
                             recording_filter_prefixes,
                         )
+                        if write_audit:
+                            _append_recording_audit(
+                                db,
+                                session_id=session_id,
+                                application_id=application_id,
+                                event_type="record_skipped_filter",
+                                record_id=str(record_id),
+                                request_method=request_method,
+                                request_uri=request_uri,
+                                transaction_code=transaction_code,
+                                message="录制不匹配过滤规则",
+                                detail={"recording_filter_prefixes": recording_filter_prefixes},
+                            )
                         continue
 
                     record_time_ms = (
@@ -1746,14 +2060,52 @@ async def _sync_from_arex_storage(
                         sub_calls=json.dumps(normalized_sub_calls, ensure_ascii=False),
                         recorded_at=recorded_at,
                     )
-                    db.add(rec)
-                    runtime_logger.info(
-                        "同步会话 %s：收录 record_id=%s method=%s uri=%s transaction_code=%s",
+                    try:
+                        async with db.begin_nested():
+                            db.add(rec)
+                            await db.flush()
+                    except IntegrityError:
+                        logger.info(
+                            "同步会话 %s：跳过并发重复录制 record_id=%s",
+                            session_id,
+                            record_id,
+                        )
+                        if write_audit:
+                            _append_recording_audit(
+                                db,
+                                session_id=session_id,
+                                application_id=application_id,
+                                event_type="record_skipped_duplicate",
+                                record_id=str(record_id),
+                                message="跳过并发重复录制",
+                            )
+                        continue
+                    if write_audit:
+                        _append_recording_audit(
+                            db,
+                            session_id=session_id,
+                            application_id=application_id,
+                            recording_id=rec.id,
+                            event_type="record_saved",
+                            record_id=str(record_id),
+                            request_method=request_method,
+                            request_uri=request_uri,
+                            transaction_code=transaction_code,
+                            message="录制已入库",
+                            detail={
+                                "sub_call_count": len(normalized_sub_calls),
+                                "response_status": response_status,
+                                "recorded_at": recorded_at.isoformat() if recorded_at else None,
+                            },
+                        )
+                    logger.info(
+                        "同步会话 %s：收录 record_id=%s method=%s uri=%s transaction_code=%s sub_calls=%d",
                         session_id,
                         record_id,
                         request_method,
                         request_uri,
                         transaction_code or "-",
+                        len(normalized_sub_calls),
                     )
 
                 await db.commit()
@@ -1769,7 +2121,16 @@ async def _sync_from_arex_storage(
             removed = await _remove_sub_invocation_recordings(session_id, db)
             if removed:
                 logger.info("同步会话 %s：移除 %d 条子调用 Servlet 录制", session_id, removed)
-                await db.commit()
+                if write_audit:
+                    _append_recording_audit(
+                        db,
+                        session_id=session_id,
+                        application_id=application_id,
+                        event_type="sub_invocation_cleanup",
+                        message="移除子调用 Servlet 录制",
+                        detail={"removed_count": removed},
+                    )
+                    await db.commit()
 
             # Update session status
             sess_result = await db.execute(
@@ -1784,7 +2145,20 @@ async def _sync_from_arex_storage(
                 sess.error_message = None
                 if finalize_session:
                     sess.status = "done"
-                    sess.end_time = now_beijing()
+                    sess.end_time = end_time
+                if write_audit:
+                    _append_recording_audit(
+                        db,
+                        session_id=session_id,
+                        application_id=application_id,
+                        event_type="sync_finished",
+                        message="录制同步完成",
+                        detail={
+                            "total_count": sess.total_count,
+                            "finalize_session": finalize_session,
+                            "status": sess.status,
+                        },
+                    )
                 await db.commit()
 
         except ArexClientError as e:
@@ -1797,6 +2171,15 @@ async def _sync_from_arex_storage(
                 if sess:
                     sess.status = "error"
                     sess.error_message = str(e)
+                    _append_recording_audit(
+                        db,
+                        session_id=session_id,
+                        application_id=application_id,
+                        level="ERROR",
+                        event_type="sync_failed",
+                        message="AREX 同步失败",
+                        detail={"error": str(e)},
+                    )
                     await db.commit()
         except Exception as e:
             logger.exception("同步会话 %s 发生未预期异常: %s", session_id, e)
@@ -1808,10 +2191,30 @@ async def _sync_from_arex_storage(
                 if sess:
                     sess.status = "error"
                     sess.error_message = f"未预期错误: {e}"
+                    _append_recording_audit(
+                        db,
+                        session_id=session_id,
+                        application_id=application_id,
+                        level="ERROR",
+                        event_type="sync_failed",
+                        message="录制同步发生未预期异常",
+                        detail={"error": str(e)},
+                    )
                     await db.commit()
+        finally:
+            await client.aclose()
 
 
 async def _sync_active_session_preview(session_id: int, db: AsyncSession) -> None:
+    lock = _get_active_preview_lock(session_id)
+    if lock.locked():
+        return
+
+    async with lock:
+        await _sync_active_session_preview_unlocked(session_id, db)
+
+
+async def _sync_active_session_preview_unlocked(session_id: int, db: AsyncSession) -> None:
     sess = await _load_session_or_404(session_id, db)
     if sess.status != "active" or not sess.start_time:
         return
@@ -1838,12 +2241,13 @@ async def _sync_active_session_preview(session_id: int, db: AsyncSession) -> Non
             page_size=_ACTIVE_PREVIEW_PAGE_SIZE,
             page_index=0,
             finalize_session=False,
+            write_audit=False,
         )
     except Exception as exc:
         logger.warning("会话 %s 预览同步失败: %s", session_id, exc)
 
 
-@router.get("/{session_id}/recordings", response_model=list[RecordingOut])
+@router.get("/{session_id}/recordings", response_model=PageOut[RecordingOut] | list[RecordingOut])
 async def list_recordings(
     session_id: int,
     transaction_code: Optional[str] = Query(None),
@@ -1854,6 +2258,7 @@ async def list_recordings(
     sort_order: str = Query("desc"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
+    include_total: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_viewer),
 ):
@@ -1883,17 +2288,24 @@ async def list_recordings(
             .having(func.count(Recording.id) > 1)
         )
         stmt = stmt.where(Recording.dedupe_hash.in_(duplicate_hashes))
+    total = None
+    if include_total:
+        total_result = await db.execute(select(func.count()).select_from(stmt.subquery()))
+        total = total_result.scalar_one()
     sort_mapping = {
         "recorded_at": Recording.recorded_at,
         "id": Recording.id,
     }
     primary_column = sort_mapping.get(sort_by, Recording.recorded_at)
-    stmt = _apply_ordering(stmt, primary_column, Recording.id, sort_order).offset(skip).limit(limit)
+    stmt = apply_ordering(stmt, primary_column, Recording.id, sort_order).offset(skip).limit(limit)
     result = await db.execute(stmt)
-    return await _serialize_recordings(db, result.scalars().all())
+    items = await _serialize_recordings(db, result.scalars().all())
+    if include_total:
+        return PageOut[RecordingOut](items=items, total=total or 0, skip=skip, limit=limit)
+    return items
 
 
-@router.get("/recordings/all", response_model=list[RecordingOut])
+@router.get("/recordings/all", response_model=PageOut[RecordingOut] | list[RecordingOut])
 async def list_all_recordings(
     application_id: Optional[int] = Query(None),
     session_id: Optional[int] = Query(None),
@@ -1906,6 +2318,7 @@ async def list_all_recordings(
     sort_order: str = Query("desc"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
+    include_total: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_viewer),
 ):
@@ -1938,17 +2351,24 @@ async def list_all_recordings(
                 Recording.transaction_code.contains(search),
             )
         )
+    total = None
+    if include_total:
+        total_result = await db.execute(select(func.count()).select_from(stmt.subquery()))
+        total = total_result.scalar_one()
     sort_mapping = {
         "recorded_at": Recording.recorded_at,
         "id": Recording.id,
     }
     primary_column = sort_mapping.get(sort_by, Recording.recorded_at)
-    stmt = _apply_ordering(stmt, primary_column, Recording.id, sort_order).offset(skip).limit(limit)
+    stmt = apply_ordering(stmt, primary_column, Recording.id, sort_order).offset(skip).limit(limit)
     result = await db.execute(stmt)
-    return await _serialize_recordings(db, result.scalars().all())
+    items = await _serialize_recordings(db, result.scalars().all())
+    if include_total:
+        return PageOut[RecordingOut](items=items, total=total or 0, skip=skip, limit=limit)
+    return items
 
 
-@router.get("/recordings/groups", response_model=list[RecordingGroupOut])
+@router.get("/recordings/groups", response_model=RecordingGroupPageOut | list[RecordingGroupOut])
 async def list_recording_groups(
     application_id: Optional[int] = Query(None),
     governance_status: Optional[str] = Query(None),
@@ -1956,6 +2376,9 @@ async def list_recording_groups(
     search: Optional[str] = Query(None),
     sort_by: str = Query("latest_recorded_at"),
     sort_order: str = Query("desc"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    include_total: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_viewer),
 ):
@@ -1978,13 +2401,15 @@ async def list_recording_groups(
         )
     result = await db.execute(stmt.order_by(Recording.recorded_at.desc()))
     groups = _group_recordings(result.scalars().all())
-    reverse = _normalize_sort_order(sort_order) == "desc"
+    reverse = normalize_sort_order(sort_order) == "desc"
     if sort_by == "transaction_code":
         groups.sort(key=lambda item: ((item.transaction_code or "").lower(), item.latest_recorded_at, item.representative_recording_id), reverse=reverse)
     elif sort_by == "scene_key":
         groups.sort(key=lambda item: ((item.scene_key or "").lower(), item.latest_recorded_at, item.representative_recording_id), reverse=reverse)
     else:
         groups.sort(key=lambda item: (item.latest_recorded_at, item.representative_recording_id), reverse=reverse)
+    if include_total:
+        return RecordingGroupPageOut(items=groups[skip:skip + limit], total=len(groups), skip=skip, limit=limit)
     return groups
 
 

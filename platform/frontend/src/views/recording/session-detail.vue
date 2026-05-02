@@ -69,37 +69,76 @@
             :options="governanceOptions"
             placeholder="治理状态"
             style="width: 160px"
-            @update:value="loadRecordings"
+            @update:value="reloadRecordingsFromFirstPage"
           />
           <n-input
             v-model:value="recordingTransactionCode"
             clearable
             placeholder="交易码"
             style="width: 180px"
-            @keyup.enter="loadRecordings"
+            @keyup.enter="reloadRecordingsFromFirstPage"
           />
-          <n-checkbox v-model:checked="duplicateOnly" @update:checked="loadRecordings">仅重复样本</n-checkbox>
+          <n-checkbox v-model:checked="duplicateOnly" @update:checked="reloadRecordingsFromFirstPage">仅重复样本</n-checkbox>
           <n-input
             v-model:value="recordingSearch"
             clearable
             placeholder="搜索路径/交易码"
             style="width: 220px"
           />
-          <n-button @click="loadRecordings">查询</n-button>
+          <n-button @click="reloadRecordingsFromFirstPage">查询</n-button>
         </n-space>
       </template>
       <n-data-table
         :columns="recordingColumns"
         :data="filteredRecordings"
         :loading="recordingsLoading"
-        :pagination="{ pageSize: 12 }"
+        :pagination="recordingPagination"
         :row-key="(row: RecordingRow) => row.id"
         remote
         v-model:checked-row-keys="selectedRecordingIds"
         @update:sorter="handleRecordingSorterChange"
       />
     </n-card>
+
+    <n-card title="采集审计日志">
+      <template #header-extra>
+        <n-space>
+          <n-select
+            v-model:value="auditEventType"
+            clearable
+            :options="auditEventOptions"
+            placeholder="事件类型"
+            style="width: 180px"
+            @update:value="reloadAuditLogsFromFirstPage"
+          />
+          <n-button @click="loadAuditLogs">刷新日志</n-button>
+        </n-space>
+      </template>
+      <n-data-table
+        :columns="auditColumns"
+        :data="auditLogs"
+        :loading="auditLoading"
+        :pagination="auditPagination"
+        remote
+        size="small"
+      />
+    </n-card>
   </n-space>
+
+  <n-modal v-model:show="showAuditDetailModal" title="采集审计详情" preset="card" style="width: 720px">
+    <n-space vertical :size="12">
+      <n-descriptions bordered :column="2" size="small">
+        <n-descriptions-item label="事件">{{ formatAuditEvent(selectedAuditLog?.event_type) }}</n-descriptions-item>
+        <n-descriptions-item label="时间">{{ formatDateTime(selectedAuditLog?.created_at) }}</n-descriptions-item>
+        <n-descriptions-item label="请求">{{ selectedAuditLog?.request_uri ? `${selectedAuditLog?.request_method || ''} ${selectedAuditLog?.request_uri}`.trim() : '-' }}</n-descriptions-item>
+        <n-descriptions-item label="交易码">{{ selectedAuditLog?.transaction_code || '-' }}</n-descriptions-item>
+        <n-descriptions-item label="消息" :span="2">{{ selectedAuditLog?.message || '-' }}</n-descriptions-item>
+      </n-descriptions>
+      <n-card size="small" title="Detail JSON">
+        <pre class="code-block compact">{{ prettyText(selectedAuditLog?.detail) }}</pre>
+      </n-card>
+    </n-space>
+  </n-modal>
 
   <!-- 批量生成用例 Modal（两步：前缀输入 → 冲突检测结果） -->
   <n-modal
@@ -176,7 +215,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, h, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NAlert,
@@ -199,13 +238,14 @@ import {
 } from 'naive-ui'
 import type { DataTableColumns, TagProps } from 'naive-ui'
 import { applicationApi } from '@/api/applications'
-import { recordingApi } from '@/api/recordings'
+import { recordingApi, type RecordingAuditLog } from '@/api/recordings'
 import { testCaseApi } from '@/api/testcases'
 import { formatDateTime } from '@/utils/format'
 import { useUserStore } from '@/store/user'
 import type { RecordingSubCall } from '@/utils/recording'
 import { buildRecordingSubCallSummary, parseRecordingSubCalls } from '@/utils/recording'
 import { defaultSortState, resolveSortOrder, toApiSortOrder, updateSortState } from '@/utils/tableSort'
+import { lastValidPage, loadPagedData } from '@/utils/pagination'
 
 type SessionRow = {
   id: number
@@ -244,12 +284,51 @@ const session = ref<SessionRow | null>(null)
 const appName = ref('-')
 const recordings = ref<RecordingRow[]>([])
 const recordingsLoading = ref(false)
+const auditLogs = ref<RecordingAuditLog[]>([])
+const auditLoading = ref(false)
+const selectedAuditLog = ref<RecordingAuditLog | null>(null)
+const showAuditDetailModal = ref(false)
 const selectedRecordingIds = ref<(string | number)[]>([])
 const recordingSearch = ref('')
 const recordingTransactionCode = ref('')
 const recordingGovernanceStatus = ref<string | null>(null)
 const duplicateOnly = ref(false)
+const auditEventType = ref<string | null>(null)
 const recordingSort = ref(defaultSortState('recorded_at'))
+const recordingPagination = reactive({
+  page: 1,
+  pageSize: 12,
+  itemCount: 0,
+  pageSizes: [12, 24, 50, 100],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 条录制`,
+  onUpdatePage: (page: number) => {
+    recordingPagination.page = page
+    void loadRecordings()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    recordingPagination.pageSize = pageSize
+    recordingPagination.page = 1
+    void loadRecordings()
+  },
+})
+const auditPagination = reactive({
+  page: 1,
+  pageSize: 10,
+  itemCount: 0,
+  pageSizes: [10, 20, 50, 100],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 条日志`,
+  onUpdatePage: (page: number) => {
+    auditPagination.page = page
+    void loadAuditLogs()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    auditPagination.pageSize = pageSize
+    auditPagination.page = 1
+    void loadAuditLogs()
+  },
+})
 const starting = ref(false)
 const stopping = ref(false)
 const showConvertModal = ref(false)
@@ -302,6 +381,21 @@ const governanceOptions = [
   { label: '已拒绝', value: 'rejected' },
   { label: '已归档', value: 'archived' },
 ]
+
+const auditEventOptions = [
+  { label: '录制启动', value: 'recording_started' },
+  { label: '同步入队', value: 'collection_enqueued' },
+  { label: '同步开始', value: 'sync_started' },
+  { label: '分页拉取', value: 'page_fetched' },
+  { label: '录制入库', value: 'record_saved' },
+  { label: '重复跳过', value: 'record_skipped_duplicate' },
+  { label: '过滤跳过', value: 'record_skipped_filter' },
+  { label: '子调用清理', value: 'sub_invocation_cleanup' },
+  { label: '同步完成', value: 'sync_finished' },
+  { label: '同步失败', value: 'sync_failed' },
+]
+
+const auditEventLabelMap = Object.fromEntries(auditEventOptions.map((item) => [item.value, item.label]))
 
 const governanceLabelMap: Record<string, string> = {
   raw: '原始录制',
@@ -378,9 +472,81 @@ const recordingColumns = computed<DataTableColumns<RecordingRow>>(() => [
   },
 ])
 
+const auditColumns: DataTableColumns<RecordingAuditLog> = [
+  {
+    title: '时间',
+    key: 'created_at',
+    width: 160,
+    render: (row) => formatDateTime(row.created_at),
+  },
+  {
+    title: '事件',
+    key: 'event_type',
+    width: 160,
+    render: (row) => formatAuditEvent(row.event_type),
+  },
+  {
+    title: '请求',
+    key: 'request_uri',
+    width: 260,
+    render: (row) => row.request_uri ? `${row.request_method || ''} ${row.request_uri}`.trim() : '-',
+  },
+  {
+    title: '交易码',
+    key: 'transaction_code',
+    width: 140,
+    render: (row) => row.transaction_code || '-',
+  },
+  {
+    title: '消息',
+    key: 'message',
+    minWidth: 220,
+    render: (row) => row.message || '-',
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 150,
+    render: (row) =>
+      h(NSpace, { size: 4 }, () => [
+        h(NButton, { size: 'tiny', onClick: () => openAuditDetail(row) }, () => '详情'),
+        ...(row.recording_id
+          ? [
+              h(
+                NButton,
+                { size: 'tiny', type: 'primary', ghost: true, onClick: () => router.push(`/recording/recordings/${row.recording_id}?session_id=${sessionId}`) },
+                () => '录制',
+              ),
+            ]
+          : []),
+      ]),
+  },
+]
+
+function prettyText(value?: string | null) {
+  if (!value) return '-'
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2)
+  } catch {
+    return value
+  }
+}
+
+function formatAuditEvent(eventType?: string | null) {
+  if (!eventType) return '-'
+  const label = auditEventLabelMap[eventType]
+  return label ? `${label}（${eventType}）` : eventType
+}
+
+function openAuditDetail(row: RecordingAuditLog) {
+  selectedAuditLog.value = row
+  showAuditDetailModal.value = true
+}
+
 async function loadPage() {
   await loadSession()
   await loadRecordings()
+  await loadAuditLogs()
 }
 
 async function loadSession() {
@@ -420,6 +586,7 @@ function startPolling() {
     }
     await loadSession()
     await loadRecordings()
+    await loadAuditLogs()
   }, 5000)
 }
 
@@ -438,23 +605,61 @@ watch(
 async function loadRecordings() {
   recordingsLoading.value = true
   try {
-    const res = await recordingApi.listRecordings(sessionId, {
-      limit: 200,
+    const page = await loadPagedData<RecordingRow>((params) => recordingApi.listRecordings(sessionId, params), {
       search: recordingSearch.value.trim() || undefined,
       transaction_code: recordingTransactionCode.value.trim() || undefined,
       governance_status: recordingGovernanceStatus.value || undefined,
       duplicate_only: duplicateOnly.value || undefined,
       sort_by: recordingSort.value.columnKey,
       sort_order: toApiSortOrder(recordingSort.value.order),
-    })
-    recordings.value = res.data
+    }, recordingPagination.page, recordingPagination.pageSize, 200)
+    recordings.value = page.items
+    recordingPagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && recordingPagination.page > 1) {
+      recordingPagination.page = lastValidPage(page.total, recordingPagination.pageSize)
+      void loadRecordings()
+      return
+    }
     selectedRecordingIds.value = []
   } catch (error: any) {
     recordings.value = []
+    recordingPagination.itemCount = 0
     message.error(error.response?.data?.detail || '加载录制数据失败')
   } finally {
     recordingsLoading.value = false
   }
+}
+
+async function loadAuditLogs() {
+  auditLoading.value = true
+  try {
+    const page = await loadPagedData<RecordingAuditLog>((params) => recordingApi.getSessionAuditLogs(sessionId, params), {
+      event_type: auditEventType.value || undefined,
+    }, auditPagination.page, auditPagination.pageSize, 500)
+    auditLogs.value = page.items
+    auditPagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && auditPagination.page > 1) {
+      auditPagination.page = lastValidPage(page.total, auditPagination.pageSize)
+      void loadAuditLogs()
+      return
+    }
+  } catch (error: any) {
+    auditLogs.value = []
+    auditPagination.itemCount = 0
+    message.error(error.response?.data?.detail || '加载采集审计日志失败')
+  } finally {
+    auditLoading.value = false
+  }
+}
+
+function reloadRecordingsFromFirstPage() {
+  recordingPagination.page = 1
+  void loadRecordings()
+}
+
+function reloadAuditLogsFromFirstPage() {
+  auditPagination.page = 1
+  void loadAuditLogs()
 }
 
 async function updateGovernance(recordingId: number, governanceStatus: string) {
@@ -591,6 +796,7 @@ async function doConvert() {
 
 function handleRecordingSorterChange(sorter: any) {
   recordingSort.value = updateSortState(sorter, 'recorded_at')
+  recordingPagination.page = 1
   void loadRecordings()
 }
 
@@ -604,6 +810,21 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.code-block {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 6px;
+  background: #f8f8f8;
+  font-family: monospace;
+  font-size: 12px;
+}
+.code-block.compact {
+  max-height: 240px;
+}
 .request-cell {
   display: flex;
   align-items: flex-start;

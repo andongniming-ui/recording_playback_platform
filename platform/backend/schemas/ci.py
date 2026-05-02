@@ -1,6 +1,7 @@
-from pydantic import BaseModel
-from typing import Optional
 from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, field_validator
 
 
 class CiTokenCreate(BaseModel):
@@ -27,24 +28,22 @@ class CiTriggerRequest(BaseModel):
     suite_id: int
     concurrency: int = 5
     timeout_ms: int = 5000
+    notify_type: Optional[str] = None
+    notify_webhook: Optional[str] = None
 
-    from pydantic import field_validator as _fv
-
-    @_fv("concurrency")
+    @field_validator("concurrency")
     @classmethod
     def _validate_concurrency(cls, v):
         if v < 1 or v > 50:
             raise ValueError("concurrency must be between 1 and 50")
         return v
 
-    @_fv("timeout_ms")
+    @field_validator("timeout_ms")
     @classmethod
     def _validate_timeout_ms(cls, v):
         if v < 1:
             raise ValueError("timeout_ms must be >= 1")
         return v
-    notify_type: Optional[str] = None
-    notify_webhook: Optional[str] = None
 
 
 class CiResultResponse(BaseModel):

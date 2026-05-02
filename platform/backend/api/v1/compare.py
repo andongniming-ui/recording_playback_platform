@@ -3,11 +3,12 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from database import get_db
 from models.compare import CompareRule
 from core.security import require_viewer, require_editor
+from schemas.common import PageOut
 
 router = APIRouter(prefix="/compare-rules", tags=["compare"])
 
@@ -41,23 +42,39 @@ class CompareRuleOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-@router.get("", response_model=list[CompareRuleOut])
+@router.get("", response_model=PageOut[CompareRuleOut] | list[CompareRuleOut])
 async def list_rules(
     scope: Optional[str] = Query(None),
     application_id: Optional[int] = Query(None),
     rule_type: Optional[str] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    include_total: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_viewer),
 ):
-    stmt = select(CompareRule)
+    conditions = []
     if scope:
-        stmt = stmt.where(CompareRule.scope == scope)
+        conditions.append(CompareRule.scope == scope)
     if application_id:
-        stmt = stmt.where(CompareRule.application_id == application_id)
+        conditions.append(CompareRule.application_id == application_id)
     if rule_type:
-        stmt = stmt.where(CompareRule.rule_type == rule_type)
+        conditions.append(CompareRule.rule_type == rule_type)
+
+    stmt = select(CompareRule)
+    if conditions:
+        stmt = stmt.where(*conditions)
+    stmt = stmt.order_by(CompareRule.id.desc()).offset(skip).limit(limit)
     result = await db.execute(stmt)
-    return result.scalars().all()
+    items = result.scalars().all()
+    if not include_total:
+        return items
+
+    count_stmt = select(func.count()).select_from(CompareRule)
+    if conditions:
+        count_stmt = count_stmt.where(*conditions)
+    total = await db.scalar(count_stmt)
+    return PageOut[CompareRuleOut](items=items, total=total or 0, skip=skip, limit=limit)
 
 
 @router.post("", response_model=CompareRuleOut, status_code=201)

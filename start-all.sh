@@ -15,6 +15,7 @@ mkdir -p "$LOG_DIR"
 
 MODE="${1:-all}"
 AREX_AGENT_JAR_PATH="${AREX_AGENT_JAR_PATH:-${AR_AREX_AGENT_JAR_PATH:-/home/test/arex-agent/arex-agent.jar}}"
+FRONTEND_PORT=5173
 
 # ─── 工具函数 ────────────────────────────────────────────────
 
@@ -118,8 +119,8 @@ start_backend() {
 
 start_frontend() {
   log "启动前端（Vite）..."
-  if lsof -i:3000 -sTCP:LISTEN -t &>/dev/null 2>&1; then
-    log "端口 3000 已被占用，前端可能已在运行，跳过"
+  if lsof -i:$FRONTEND_PORT -sTCP:LISTEN -t &>/dev/null 2>&1; then
+    log "端口 $FRONTEND_PORT 已被占用，前端可能已在运行，跳过"
     return
   fi
   cd "$PLATFORM_DIR/frontend"
@@ -127,7 +128,7 @@ start_frontend() {
     > "$LOG_DIR/frontend.log" 2>&1 &
   echo $! > "$LOG_DIR/frontend.pid"
   log "前端已启动（PID $(cat "$LOG_DIR/frontend.pid")，日志：logs/frontend.log）"
-  wait_port 3000 "前端" || true
+  wait_port "$FRONTEND_PORT" "前端" || true
 }
 
 # ─── didi 系统 ───────────────────────────────────────────────
@@ -178,7 +179,7 @@ esac
 
 echo ""
 log "启动完成！"
-echo "  前端：    http://localhost:3000"
+echo "  前端：    http://localhost:$FRONTEND_PORT"
 echo "  后端 API：http://localhost:8000/docs"
 echo "  System A：http://localhost:18081"
 echo "  System B：http://localhost:18082"

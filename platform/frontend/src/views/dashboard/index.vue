@@ -59,7 +59,10 @@
       </n-grid-item>
       <n-grid-item :span="1">
         <n-card title="失败类型分布">
-          <v-chart :option="pieChartOption" style="height:280px" autoresize :loading="failLoading" />
+          <div v-if="!failLoading && failureTypes.length === 0" style="height:280px;display:flex;align-items:center;justify-content:center">
+            <n-empty description="暂无回放失败数据" />
+          </div>
+          <v-chart v-else :option="pieChartOption" style="height:280px" autoresize :loading="failLoading" />
         </n-card>
       </n-grid-item>
     </n-grid>
@@ -80,7 +83,7 @@
 import { ref, computed, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  NButton, NSpace, NGrid, NGridItem, NCard, NStatistic, NSelect, NDataTable, NTag, useMessage
+  NButton, NSpace, NGrid, NGridItem, NCard, NStatistic, NSelect, NDataTable, NTag, NEmpty, useMessage
 } from 'naive-ui'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'

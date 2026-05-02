@@ -78,7 +78,12 @@ defineProps<{
 function formatValue(value: unknown): string {
   if (value == null) return '-'
   if (typeof value === 'string') {
-    try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value }
+    try {
+      const parsed = JSON.parse(value)
+      return typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2)
+    } catch {
+      return value
+    }
   }
   return JSON.stringify(value, null, 2)
 }
@@ -87,7 +92,11 @@ function parseStructuredValue(value: unknown): unknown {
   if (typeof value !== 'string') return value
   const text = value.trim()
   if (!text) return value
-  if (!((text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']')))) {
+  if (!(
+    (text.startsWith('{') && text.endsWith('}'))
+    || (text.startsWith('[') && text.endsWith(']'))
+    || (text.startsWith('"') && text.endsWith('"'))
+  )) {
     return value
   }
   try {
@@ -196,6 +205,17 @@ function collectDiffPaths(left: unknown, right: unknown, basePath = 'response'):
 }
 
 function diffPaths(pair: SubCallDiffPair): string[] {
+  if (pair.diff_result) {
+    try {
+      const parsed = JSON.parse(pair.diff_result) as Record<string, Record<string, unknown>>
+      const paths = Object.values(parsed)
+        .flatMap((group) => Object.keys(group || {}))
+        .map((path) => path.replace(/\['([^']+)'\]/g, '.$1'))
+      if (paths.length) return paths
+    } catch {
+      // Fall back to structural comparison below.
+    }
+  }
   if (!pair.recorded || !pair.replayed) return []
   const paths = collectDiffPaths(pair.recorded.response, pair.replayed.response)
   return paths.length ? paths : ['response']

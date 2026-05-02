@@ -77,7 +77,17 @@
         同一个场景键在套件中只能保留一个代表样本。若要替换已选样本，请先取消原来的选择。
       </n-alert>
       <!-- 搜索栏 -->
-      <n-space>
+      <n-space align="center">
+        <n-select
+          v-model:value="caseSessionFilter"
+          :options="recordingSessionOptions"
+          :loading="recordingSessionsLoading"
+          clearable
+          filterable
+          placeholder="按录制会话筛选"
+          style="width:220px"
+          @update:value="loadAllCases"
+        />
         <n-input
           v-model:value="caseSearch"
           placeholder="搜索名称 / 交易码"
@@ -139,8 +149,10 @@ import {
 import { suiteApi } from '@/api/suites'
 import { testCaseApi } from '@/api/testcases'
 import { applicationApi } from '@/api/applications'
+import { recordingApi } from '@/api/recordings'
 import { formatDateTime } from '@/utils/format'
 import { useUserStore } from '@/store/user'
+import { unpackPagedResponse } from '@/utils/pagination'
 
 type SuiteCase = {
   test_case_id: number
@@ -175,6 +187,9 @@ const savingCases = ref(false)
 const caseOptionsLoading = ref(false)
 const selectedCaseIds = ref<(string | number)[]>([])
 const caseSearch = ref('')
+const caseSessionFilter = ref<number | null>(null)
+const recordingSessionsLoading = ref(false)
+const recordingSessionOptions = ref<{ label: string; value: number }[]>([])
 
 // 运行套件配置
 const showRunModal = ref(false)
@@ -354,13 +369,38 @@ const addCaseCols = computed(() => [
 async function loadAllCases() {
   caseOptionsLoading.value = true
   try {
-    const res = await testCaseApi.list({ limit: 500 })
-    allCases.value = res.data
+    const res = await testCaseApi.list({
+      limit: 1000,
+      recording_session_id: caseSessionFilter.value || undefined,
+    })
+    allCases.value = unpackPagedResponse<any>(res.data).items
   } catch (error: any) {
     allCases.value = []
     message.error(error.response?.data?.detail || '加载测试用例失败')
   } finally {
     caseOptionsLoading.value = false
+  }
+}
+
+async function loadRecordingSessionOptions() {
+  recordingSessionsLoading.value = true
+  try {
+    const res = await recordingApi.listSessions({
+      limit: 100,
+      sort_by: 'created_at',
+      sort_order: 'desc',
+      include_total: true,
+    })
+    const page = unpackPagedResponse<any>(res.data)
+    recordingSessionOptions.value = page.items.map((session: any) => ({
+      label: `#${session.id} ${session.name}（${formatDateTime(session.created_at)}）`,
+      value: session.id,
+    }))
+  } catch (error: any) {
+    recordingSessionOptions.value = []
+    message.error(error.response?.data?.detail || '加载录制会话失败')
+  } finally {
+    recordingSessionsLoading.value = false
   }
 }
 
@@ -408,7 +448,8 @@ async function loadPage() {
 
 async function openAddCase() {
   caseSearch.value = ''
-  await loadAllCases()
+  caseSessionFilter.value = null
+  await Promise.all([loadRecordingSessionOptions(), loadAllCases()])
   const existing = suite.value?.cases?.map((item) => item.test_case_id) || []
   selectedCaseIds.value = [...existing]
   showAddCase.value = true
@@ -444,8 +485,8 @@ async function openRunModal() {
   // 加载应用列表（用于切换回放目标）
   if (!appOptions.value.length) {
     try {
-      const res = await applicationApi.list()
-      appOptions.value = res.data.map((app: any) => ({ label: app.name, value: app.id }))
+      const res = await applicationApi.list({ limit: 100 })
+      appOptions.value = unpackPagedResponse<any>(res.data).items.map((app: any) => ({ label: app.name, value: app.id }))
     } catch {
       appOptions.value = []
     }

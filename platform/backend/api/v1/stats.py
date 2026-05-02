@@ -165,7 +165,7 @@ async def get_failure_types(
         .where(
             and_(
                 ReplayJob.created_at >= start,
-                ReplayResult.is_pass == False,
+                ReplayResult.is_pass.is_(False),
                 ReplayResult.failure_category.isnot(None),
             )
         )

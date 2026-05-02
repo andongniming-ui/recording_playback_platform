@@ -8,7 +8,7 @@
           clearable
           placeholder="全部应用"
           style="width: 220px"
-          @update:value="loadJobs"
+          @update:value="reloadJobsFromFirstPage"
         />
         <n-button @click="loadJobs">刷新</n-button>
       </n-space>
@@ -58,7 +58,7 @@
         :columns="columns"
         :data="jobs"
         :loading="loading"
-        :pagination="{ pageSize: 10 }"
+        :pagination="pagination"
         :row-key="(row: JobRow) => row.id"
         remote
         v-model:checked-row-keys="selectedJobIds"
@@ -74,7 +74,8 @@
         :data="drawerResults"
         :loading="drawerLoading"
         size="small"
-        :pagination="{ pageSize: 20 }"
+        :pagination="drawerPagination"
+        remote
       />
     </n-drawer-content>
   </n-drawer>
@@ -90,6 +91,7 @@ import { replayApi } from '@/api/replays'
 import { useUserStore } from '@/store/user'
 import { formatDateTime } from '@/utils/format'
 import { defaultSortState, resolveSortOrder, toApiSortOrder, updateSortState } from '@/utils/tableSort'
+import { lastValidPage, loadPagedData, unpackPagedResponse } from '@/utils/pagination'
 
 type JobRow = {
   id: number
@@ -156,6 +158,44 @@ const drawerResults = ref<ResultRow[]>([])
 const drawerLoading = ref(false)
 const stats = reactive({ jobs: 0, total: 0, passed: 0, passRate: 0 })
 const sortState = ref(defaultSortState('created_at'))
+const pagination = reactive({
+  page: 1,
+  pageSize: 10,
+  itemCount: 0,
+  pageSizes: [10, 20, 50, 100],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 个任务`,
+  onUpdatePage: (page: number) => {
+    pagination.page = page
+    void loadJobs()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    pagination.pageSize = pageSize
+    pagination.page = 1
+    void loadJobs()
+  },
+})
+const drawerPagination = reactive({
+  page: 1,
+  pageSize: 20,
+  itemCount: 0,
+  pageSizes: [20, 50, 100, 200],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 条结果`,
+  onUpdatePage: (page: number) => {
+    drawerPagination.page = page
+    if (drawerJobId.value != null) {
+      void loadDrawerResults(drawerJobId.value)
+    }
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    drawerPagination.pageSize = pageSize
+    drawerPagination.page = 1
+    if (drawerJobId.value != null) {
+      void loadDrawerResults(drawerJobId.value)
+    }
+  },
+})
 
 const columns = computed<DataTableColumns<JobRow>>(() => [
   ...(canEdit ? [{ type: 'selection' as const, disabled: (row: JobRow) => ['RUNNING', 'PENDING'].includes(row.status) }] : []),
@@ -258,23 +298,30 @@ async function openReport(jobId: number) {
 async function loadJobs() {
   loading.value = true
   try {
-    const params: Record<string, string | number> = { limit: 50 }
+    const params: Record<string, string | number | boolean> = {}
     if (filterAppId.value != null) {
       params.application_id = filterAppId.value
     }
     params.sort_by = sortState.value.columnKey
     params.sort_order = toApiSortOrder(sortState.value.order)
-    const res = await replayApi.list(params)
-    jobs.value = res.data
+    const page = await loadPagedData<JobRow>(replayApi.list, params, pagination.page, pagination.pageSize, 100)
+    jobs.value = page.items
+    pagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && pagination.page > 1) {
+      pagination.page = lastValidPage(page.total, pagination.pageSize)
+      void loadJobs()
+      return
+    }
     selectedJobIds.value = []
 
-    const finishedJobs = res.data.filter((job: JobRow) => job.status === 'DONE' || job.status === 'FAILED')
+    const finishedJobs = page.items.filter((job: JobRow) => job.status === 'DONE' || job.status === 'FAILED')
     stats.jobs = finishedJobs.length
     stats.total = finishedJobs.reduce((acc: number, job: JobRow) => acc + (job.total || 0), 0)
     stats.passed = finishedJobs.reduce((acc: number, job: JobRow) => acc + (job.passed || 0), 0)
     stats.passRate = stats.total > 0 ? (stats.passed / stats.total) * 100 : 0
   } catch (error: any) {
     jobs.value = []
+    pagination.itemCount = 0
     stats.jobs = 0
     stats.total = 0
     stats.passed = 0
@@ -283,6 +330,11 @@ async function loadJobs() {
   } finally {
     loading.value = false
   }
+}
+
+function reloadJobsFromFirstPage() {
+  pagination.page = 1
+  void loadJobs()
 }
 
 async function deleteJob(jobId: number) {
@@ -308,18 +360,36 @@ async function deleteSelectedJobs() {
 
 function handleSorterChange(sorter: any) {
   sortState.value = updateSortState(sorter, 'created_at')
+  pagination.page = 1
   void loadJobs()
 }
 
 async function openDrawer(jobId: number) {
   drawerJobId.value = jobId
   showDrawer.value = true
+  drawerPagination.page = 1
+  await loadDrawerResults(jobId)
+}
+
+async function loadDrawerResults(jobId: number) {
   drawerLoading.value = true
   try {
-    const res = await replayApi.getResults(jobId, { limit: 200 })
-    drawerResults.value = res.data
+    const page = await loadPagedData<ResultRow>(
+      (params) => replayApi.getResults(jobId, params),
+      {},
+      drawerPagination.page,
+      drawerPagination.pageSize,
+      200,
+    )
+    drawerResults.value = page.items
+    drawerPagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && drawerPagination.page > 1) {
+      drawerPagination.page = lastValidPage(page.total, drawerPagination.pageSize)
+      void loadDrawerResults(jobId)
+    }
   } catch (error: any) {
     drawerResults.value = []
+    drawerPagination.itemCount = 0
     message.error(error.response?.data?.detail || '加载任务详情失败')
   } finally {
     drawerLoading.value = false
@@ -328,8 +398,9 @@ async function openDrawer(jobId: number) {
 
 onMounted(async () => {
   try {
-    const appsRes = await applicationApi.list()
-    appOptions.value = appsRes.data.map((app: { id: number; name: string }) => ({ label: app.name, value: app.id }))
+    const appsRes = await applicationApi.list({ limit: 100 })
+    const page = unpackPagedResponse<{ id: number; name: string }>(appsRes.data)
+    appOptions.value = page.items.map((app) => ({ label: app.name, value: app.id }))
   } catch (error: any) {
     message.error(error.response?.data?.detail || '加载应用列表失败')
   }

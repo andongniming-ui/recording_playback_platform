@@ -8,7 +8,7 @@ const router = createRouter({
       component: () => import('@/layouts/MainLayout.vue'),
       meta: { requiresAuth: true },
       children: [
-        { path: '', redirect: '/applications' },
+        { path: '', redirect: '/dashboard' },
         { path: 'applications', component: () => import('@/views/applications/index.vue'), meta: { menuKey: 'applications' } },
         { path: 'applications/:id', component: () => import('@/views/applications/detail.vue'), meta: { menuKey: 'applications' } },
         { path: 'recording', component: () => import('@/views/recording/index.vue'), meta: { menuKey: 'recording' } },
@@ -36,7 +36,7 @@ const router = createRouter({
     },
     {
       path: '/:pathMatch(.*)*',
-      redirect: '/applications',
+      component: () => import('@/views/errors/NotFound.vue'),
     },
   ],
 })
@@ -55,7 +55,7 @@ router.beforeEach((to) => {
   }
 
   if (to.path === '/login' && token) {
-    return '/applications'
+    return '/dashboard'
   }
 
   if (allowedRoles.length > 0 && !allowedRoles.includes(role)) {

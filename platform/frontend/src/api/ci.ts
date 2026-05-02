@@ -1,7 +1,7 @@
 import api from './index'
 
 export const ciApi = {
-  listTokens: () => api.get('/ci/tokens'),
+  listTokens: (params?: any) => api.get('/ci/tokens', { params }),
   createToken: (data: any) => api.post('/ci/tokens', data),
   revokeToken: (id: number) => api.delete(`/ci/tokens/${id}`),
   trigger: (data: any) => api.post('/ci/trigger', data),

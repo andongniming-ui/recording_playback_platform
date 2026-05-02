@@ -1,4 +1,5 @@
 """Tests for recording session CRUD, recording listing, and session sync."""
+import asyncio
 import base64
 import json
 import logging
@@ -9,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import database
 from sqlalchemy import select, update
 from api.v1.sessions import (
+    _count_visible_recordings_from_arex,
     _extract_sub_calls,
     _fetch_didi_sub_calls,
     _fetch_dynamic_class_sub_calls,
@@ -18,6 +20,7 @@ from api.v1.sessions import (
 )
 from integration.arex_client import ArexClient
 from models.arex_mocker import ArexMocker
+from models.audit import RecordingAuditLog
 from models.recording import Recording
 from utils.governance import infer_transaction_code
 
@@ -82,6 +85,73 @@ def test_list_sessions_supports_search_and_status_filters(client, admin_headers,
     assert body[0]["id"] == second["id"]
     assert body[0]["status"] == "active"
     assert all(item["id"] != first["id"] for item in body)
+
+
+@pytest.mark.asyncio
+async def test_active_count_uses_remote_count_when_details_lag():
+    class FakeArexClient:
+        async def count_recordings(self, **_kwargs):
+            return 3
+
+        async def query_recordings(self, **_kwargs):
+            return {"records": []}
+
+    count = await _count_visible_recordings_from_arex(
+        FakeArexClient(),
+        app_id="loan-jar",
+        begin_time=datetime.fromisoformat("2026-04-22T10:00:00+00:00"),
+        end_time=datetime.fromisoformat("2026-04-22T10:05:00+00:00"),
+    )
+
+    assert count == 3
+
+
+@pytest.mark.asyncio
+async def test_active_count_applies_transaction_code_filter_to_remote_records():
+    class FakeArexClient:
+        async def count_recordings(self, **_kwargs):
+            return 3
+
+        async def query_recordings(self, **_kwargs):
+            return {
+                "records": [
+                    {
+                        "targetRequest": {
+                            "attributes": {
+                                "HttpMethod": "GET",
+                                "RequestPath": "/repeater/query?code=RP54KH01&idcard=440203198709237790",
+                            }
+                        }
+                    },
+                    {
+                        "targetRequest": {
+                            "attributes": {
+                                "HttpMethod": "GET",
+                                "RequestPath": "/order/query?idcard=440203198709237790",
+                            }
+                        }
+                    },
+                    {
+                        "targetRequest": {
+                            "attributes": {
+                                "HttpMethod": "GET",
+                                "RequestPath": "/repeater/query?code=OTHER&idcard=440203198709237790",
+                            }
+                        }
+                    },
+                ]
+            }
+
+    count = await _count_visible_recordings_from_arex(
+        FakeArexClient(),
+        app_id="credit",
+        begin_time=datetime.fromisoformat("2026-04-30T10:00:00+00:00"),
+        end_time=datetime.fromisoformat("2026-04-30T10:05:00+00:00"),
+        recording_filter_prefixes=["=RP54KH01"],
+        transaction_code_fields=["code"],
+    )
+
+    assert count == 1
 
 
 def test_list_sessions_supports_created_at_sort_order(client, admin_headers, created_app):
@@ -245,6 +315,85 @@ def test_start_stop_session_flow_and_sync_alias(client):
     asyncio.get_event_loop().run_until_complete(_run())
 
 
+def test_session_audit_logs_capture_sync_flow(client, admin_headers, created_app):
+    app_id = created_app["id"]
+    session = _create_session(client, app_id, admin_headers, "audit-session").json()
+
+    async def _fake_count(*args, **kwargs):
+        return 1
+
+    async def _fake_query(*args, **kwargs):
+        if kwargs.get("page_index", 0) == 0:
+            return {"records": [{"recordId": "RID-1", "creationTime": 1776952806632}]}
+        return {"records": []}
+
+    async def _fake_view(_record_id):
+        return {
+            "recordId": "RID-1",
+            "creationTime": 1776952806632,
+            "responseStatusCode": 200,
+            "operationName": "POST /credit/gateway",
+            "targetRequest": {
+                "body": "<request><txn_code>CRD_ADMIT</txn_code></request>",
+                "attributes": {
+                    "HttpMethod": "POST",
+                    "RequestPath": "/credit/gateway",
+                    "Headers": {"content-type": "application/xml"},
+                },
+            },
+            "targetResponse": {
+                "body": "<response><status>SUCCESS</status></response>",
+            },
+        }
+
+    async def _run():
+        with (
+            patch.object(ArexClient, "count_recordings", new=AsyncMock(side_effect=_fake_count)),
+            patch.object(ArexClient, "query_recordings", new=AsyncMock(side_effect=_fake_query)),
+            patch.object(ArexClient, "view_recording", new=AsyncMock(side_effect=_fake_view)),
+            patch("api.v1.sessions.async_session_factory", database.async_session_factory),
+        ):
+            await _sync_from_arex_storage(
+                session_id=session["id"],
+                application_id=app_id,
+                finalize_session=True,
+            )
+
+    asyncio.get_event_loop().run_until_complete(_run())
+
+    resp = client.get(f"/api/v1/sessions/{session['id']}/audit-logs", headers=admin_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    event_types = {item["event_type"] for item in body}
+    assert {"sync_started", "page_fetched", "record_saved", "sync_finished"} <= event_types
+    assert any(item["request_uri"] == "/credit/gateway" for item in body if item["event_type"] == "record_saved")
+    saved_entry = next(item for item in body if item["event_type"] == "record_saved")
+
+    filtered_resp = client.get(
+        f"/api/v1/sessions/{session['id']}/audit-logs",
+        params={
+            "event_type": "record_saved",
+            "record_id": "RID-1",
+            "transaction_code": "CRD_ADMIT",
+            "recording_id": saved_entry["recording_id"],
+        },
+        headers=admin_headers,
+    )
+    assert filtered_resp.status_code == 200, filtered_resp.text
+    filtered_body = filtered_resp.json()
+    assert len(filtered_body) == 1
+    assert filtered_body[0]["record_id"] == "RID-1"
+
+    async def _count_audits():
+        async with database.async_session_factory() as db:
+            result = await db.execute(
+                select(RecordingAuditLog).where(RecordingAuditLog.session_id == session["id"])
+            )
+            return result.scalars().all()
+
+    assert len(asyncio.get_event_loop().run_until_complete(_count_audits())) >= 4
+
+
 def test_enqueue_collection_schedules_detached_async_task(client, admin_headers, created_app):
     from api.v1.sessions import _enqueue_collection
     from schemas.recording import SyncRequest
@@ -268,16 +417,23 @@ def test_enqueue_collection_schedules_detached_async_task(client, admin_headers,
                 await db.execute(select(RecordingSession).where(RecordingSession.id == sess_id))
             ).scalar_one()
             sess.status = "active"
-            sess.start_time = datetime.fromisoformat("2026-04-22T10:00:00+00:00")
+            sess.start_time = datetime.fromisoformat("2026-04-22T10:00:00")
             await db.commit()
             await db.refresh(sess)
 
-            with patch("api.v1.sessions.asyncio.create_task", side_effect=_fake_create_task) as create_task_mock:
+            with (
+                patch("api.v1.sessions._sync_from_arex_storage", new=AsyncMock(return_value=None)) as sync_mock,
+                patch("api.v1.sessions.asyncio.create_task", side_effect=_fake_create_task) as create_task_mock,
+            ):
                 out = await _enqueue_collection(sess_id, sess, SyncRequest(), db)
 
             assert out["status"] == "collecting"
             create_task_mock.assert_called_once()
             assert scheduled["name"] == f"recording-sync-{sess_id}"
+            sync_mock.assert_called_once()
+            _, kwargs = sync_mock.call_args
+            assert kwargs["begin_time"].isoformat() == "2026-04-22T10:00:00+08:00"
+            assert kwargs["end_time"].tzinfo is not None
 
             await db.refresh(sess)
             assert sess.status == "collecting"
@@ -436,6 +592,12 @@ def test_infer_transaction_code_supports_custom_candidate_keys():
     )
 
     assert infer_transaction_code(body, candidate_keys=["sys_code"]) == "LOAN_APPLY"
+
+
+def test_infer_transaction_code_supports_query_parameters():
+    uri = "/loan/query?code=RP54KH01&idcard=110101199001011234"
+
+    assert infer_transaction_code(uri, candidate_keys=["code"]) == "RP54KH01"
 
 
 def test_arex_client_treats_naive_datetimes_as_utc():

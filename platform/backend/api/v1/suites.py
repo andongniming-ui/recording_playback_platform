@@ -1,6 +1,6 @@
 ﻿"""Test suite management API."""
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete, select, asc, desc
+from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.replay_context import infer_application_id_for_case_ids
@@ -19,19 +19,11 @@ from schemas.suite import (
     SuiteUpdate,
     SuiteWithCases,
 )
-from schemas.common import BulkDeleteResponse, BulkIdsRequest
+from schemas.common import BulkDeleteResponse, BulkIdsRequest, PageOut
 from utils.governance import normalize_suite_type
+from utils.query import apply_ordering
 
 router = APIRouter(prefix="/suites", tags=["suites"])
-
-
-def _normalize_sort_order(value: str | None) -> str:
-    return "asc" if (value or "").lower() == "asc" else "desc"
-
-
-def _apply_ordering(stmt, primary_column, id_column, sort_order: str):
-    direction = asc if _normalize_sort_order(sort_order) == "asc" else desc
-    return stmt.order_by(direction(primary_column), direction(id_column))
 
 
 async def _validate_suite_case_selection(suite: Suite, case_ids: list[int], db: AsyncSession) -> None:
@@ -63,19 +55,24 @@ def _suite_case_sort_key(test_case: TestCase) -> tuple[int, object, int]:
     return (status_priority, updated_at, test_case.id)
 
 
-@router.get("", response_model=list[SuiteOut])
+@router.get("", response_model=PageOut[SuiteOut] | list[SuiteOut])
 async def list_suites(
     suite_type: str | None = Query(None),
     sort_by: str = Query("created_at"),
     sort_order: str = Query("desc"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
+    include_total: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_viewer),
 ):
     stmt = select(Suite)
     if suite_type:
         stmt = stmt.where(Suite.suite_type == normalize_suite_type(suite_type))
+    total = None
+    if include_total:
+        total_result = await db.execute(select(func.count()).select_from(stmt.subquery()))
+        total = total_result.scalar_one()
     sort_mapping = {
         "created_at": Suite.created_at,
         "updated_at": Suite.updated_at,
@@ -83,9 +80,12 @@ async def list_suites(
         "id": Suite.id,
     }
     primary_column = sort_mapping.get(sort_by, Suite.created_at)
-    stmt = _apply_ordering(stmt, primary_column, Suite.id, sort_order).offset(skip).limit(limit)
+    stmt = apply_ordering(stmt, primary_column, Suite.id, sort_order).offset(skip).limit(limit)
     result = await db.execute(stmt)
-    return result.scalars().all()
+    items = result.scalars().all()
+    if include_total:
+        return PageOut[SuiteOut](items=items, total=total or 0, skip=skip, limit=limit)
+    return items
 
 
 @router.post("/bulk-delete", response_model=BulkDeleteResponse)

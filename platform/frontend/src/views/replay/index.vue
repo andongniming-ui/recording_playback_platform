@@ -17,7 +17,7 @@
             clearable
             placeholder="当所选用例都属于同一应用时可留空"
             style="width: 320px"
-            @update:value="loadJobs"
+            @update:value="reloadJobsFromFirstPage"
           />
         </n-form-item>
         <n-form-item label="测试用例">
@@ -90,10 +90,24 @@
                 </n-space>
               </n-form-item>
 
+              <n-form-item label="严格子调用比对">
+                <n-space align="center">
+                  <n-switch v-model:value="launchForm.fail_on_sub_call_diff" />
+                  <span class="hint-text">开启后，子调用缺失、数量不一致或响应不一致都会判定回放失败。</span>
+                </n-space>
+              </n-form-item>
+
               <n-form-item label="智能降噪">
                 <n-space align="center">
                   <n-switch v-model:value="launchForm.smart_noise_reduction" />
                   <span class="hint-text">自动忽略时间戳、UUID、Token 等常见动态字段。</span>
+                </n-space>
+              </n-form-item>
+
+              <n-form-item label="忽略数组顺序">
+                <n-space align="center">
+                  <n-switch v-model:value="launchForm.ignore_order" />
+                  <span class="hint-text">关闭后，响应数组元素顺序不同也会判定为差异。</span>
                 </n-space>
               </n-form-item>
 
@@ -233,7 +247,7 @@
         :columns="jobColumns"
         :data="jobs"
         :loading="loading"
-        :pagination="{ pageSize: 10 }"
+        :pagination="jobPagination"
         :row-key="(row: JobRow) => row.id"
         remote
         v-model:checked-row-keys="selectedJobIds"
@@ -251,14 +265,14 @@
           clearable
           placeholder="按执行结果筛选"
           style="width: 180px"
-          @update:value="loadResults"
+          @update:value="reloadResultsFromFirstPage"
         />
       </n-space>
       <n-data-table
         :columns="resultColumns"
         :data="results"
         :loading="resultsLoading"
-        :pagination="{ pageSize: 20 }"
+        :pagination="resultPagination"
         size="small"
       />
     </n-drawer-content>
@@ -266,7 +280,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NAlert,
@@ -299,6 +313,7 @@ import { formatDateTime } from '@/utils/format'
 import { testCaseApi } from '@/api/testcases'
 import { useUserStore } from '@/store/user'
 import { defaultSortState, resolveSortOrder, toApiSortOrder, updateSortState } from '@/utils/tableSort'
+import { lastValidPage, loadPagedData, unpackPagedResponse } from '@/utils/pagination'
 
 type JobRow = {
   id: number
@@ -349,6 +364,40 @@ const appOptions = ref<SelectOption[]>([])
 const caseCatalog = ref<CaseCatalogItem[]>([])
 const selectedJobIds = ref<(string | number)[]>([])
 const jobSort = ref(defaultSortState('created_at'))
+const jobPagination = reactive({
+  page: 1,
+  pageSize: 10,
+  itemCount: 0,
+  pageSizes: [10, 20, 50, 100],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 个任务`,
+  onUpdatePage: (page: number) => {
+    jobPagination.page = page
+    void loadJobs()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    jobPagination.pageSize = pageSize
+    jobPagination.page = 1
+    void loadJobs()
+  },
+})
+const resultPagination = reactive({
+  page: 1,
+  pageSize: 20,
+  itemCount: 0,
+  pageSizes: [20, 50, 100, 200],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 条结果`,
+  onUpdatePage: (page: number) => {
+    resultPagination.page = page
+    void loadResults()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    resultPagination.pageSize = pageSize
+    resultPagination.page = 1
+    void loadResults()
+  },
+})
 
 const tagTypeByJobStatus: Record<string, NonNullable<TagProps['type']>> = {
   DONE: 'success',
@@ -389,12 +438,14 @@ const launchForm = ref({
   delay_ms: 0,
   ignore_fields: [] as string[],
   use_sub_invocation_mocks: false,
+  fail_on_sub_call_diff: false,
   diff_rules: [] as DiffRule[],
   assertions: [] as AssertionRule[],
   perf_threshold_ms: null as number | null,
   webhook_url: '',
   notify_type: null as string | null,
   smart_noise_reduction: false,
+  ignore_order: true,
   retry_count: 0,
   repeat_count: 1,
   header_transforms: [] as HeaderTransform[],
@@ -598,17 +649,24 @@ async function openReport(jobId: number) {
 async function loadJobs() {
   loading.value = true
   try {
-    const params: Record<string, string | number> = {}
+    const params: Record<string, string | number | boolean> = {}
     if (launchForm.value.application_id != null) {
       params.application_id = launchForm.value.application_id
     }
     params.sort_by = jobSort.value.columnKey
     params.sort_order = toApiSortOrder(jobSort.value.order)
-    const res = await replayApi.list(params)
-    jobs.value = res.data
+    const page = await loadPagedData<JobRow>(replayApi.list, params, jobPagination.page, jobPagination.pageSize, 100)
+    jobs.value = page.items
+    jobPagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && jobPagination.page > 1) {
+      jobPagination.page = lastValidPage(page.total, jobPagination.pageSize)
+      void loadJobs()
+      return
+    }
     selectedJobIds.value = []
   } catch (error: any) {
     jobs.value = []
+    jobPagination.itemCount = 0
     message.error(error.response?.data?.detail || '加载回放任务失败')
   } finally {
     loading.value = false
@@ -638,12 +696,19 @@ async function deleteSelectedJobs() {
 
 function handleJobSorterChange(sorter: any) {
   jobSort.value = updateSortState(sorter, 'created_at')
+  jobPagination.page = 1
+  void loadJobs()
+}
+
+function reloadJobsFromFirstPage() {
+  jobPagination.page = 1
   void loadJobs()
 }
 
 async function openDrawer(jobId: number) {
   selectedJobId.value = jobId
   showDrawer.value = true
+  resultPagination.page = 1
   await loadResults()
 }
 
@@ -653,18 +718,36 @@ async function loadResults() {
   }
   resultsLoading.value = true
   try {
-    const params: Record<string, string | number> = { limit: 100 }
+    const params: Record<string, string | number | boolean> = {}
     if (resultFilter.value) {
       params.status = resultFilter.value
     }
-    const res = await replayApi.getResults(selectedJobId.value, params)
-    results.value = res.data
+    const page = await loadPagedData<ResultRow>(
+      (requestParams) => replayApi.getResults(selectedJobId.value!, requestParams),
+      params,
+      resultPagination.page,
+      resultPagination.pageSize,
+      200,
+    )
+    results.value = page.items
+    resultPagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && resultPagination.page > 1) {
+      resultPagination.page = lastValidPage(page.total, resultPagination.pageSize)
+      void loadResults()
+      return
+    }
   } catch (error: any) {
     results.value = []
+    resultPagination.itemCount = 0
     message.error(error.response?.data?.detail || '加载回放结果失败')
   } finally {
     resultsLoading.value = false
   }
+}
+
+function reloadResultsFromFirstPage() {
+  resultPagination.page = 1
+  void loadResults()
 }
 
 async function loadAppDefaults() {
@@ -738,11 +821,13 @@ onMounted(async () => {
   }
   try {
     const [appsRes, casesRes] = await Promise.all([
-      applicationApi.list(),
-      testCaseApi.list({ limit: 100, status: 'active' }),
+      applicationApi.list({ limit: 100 }),
+      testCaseApi.list({ limit: 1000, status: 'active' }),
     ])
-    appOptions.value = appsRes.data.map((app: { id: number; name: string }) => ({ label: app.name, value: app.id }))
-    caseCatalog.value = casesRes.data.map((testCase: CaseCatalogItem) => ({
+    const appsPage = unpackPagedResponse<{ id: number; name: string }>(appsRes.data)
+    const casesPage = unpackPagedResponse<CaseCatalogItem>(casesRes.data)
+    appOptions.value = appsPage.items.map((app) => ({ label: app.name, value: app.id }))
+    caseCatalog.value = casesPage.items.map((testCase) => ({
       id: testCase.id,
       name: testCase.name,
       request_method: testCase.request_method,

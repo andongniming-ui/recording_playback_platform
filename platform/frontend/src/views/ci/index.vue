@@ -4,7 +4,7 @@
       <template #header-extra>
         <n-button type="primary" size="small" @click="openCreate">+ 生成 Token</n-button>
       </template>
-      <n-data-table :columns="tokenColumns" :data="tokens" :loading="loading" :pagination="{ pageSize: 10 }" />
+      <n-data-table :columns="tokenColumns" :data="tokens" :loading="loading" :pagination="pagination" remote />
     </n-card>
 
     <n-card title="CI/CD 使用说明">
@@ -64,11 +64,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, h } from 'vue'
+import { computed, reactive, ref, onMounted, h } from 'vue'
 import { NSpace, NCard, NButton, NDataTable, NTag, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NAlert, NText, NPopconfirm, useMessage } from 'naive-ui'
 import { ciApi } from '@/api/ci'
 import { formatDateTime } from '@/utils/format'
 import { API_ORIGIN } from '@/config'
+import { lastValidPage, loadPagedData } from '@/utils/pagination'
 
 const message = useMessage()
 const tokens = ref<any[]>([])
@@ -78,6 +79,23 @@ const showToken = ref(false)
 const saving = ref(false)
 const newToken = ref('')
 const form = ref({ name: '', scope: 'trigger', expires_days: null as number | null })
+const pagination = reactive({
+  page: 1,
+  pageSize: 10,
+  itemCount: 0,
+  pageSizes: [10, 20, 50, 100],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 个 Token`,
+  onUpdatePage: (page: number) => {
+    pagination.page = page
+    void load()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    pagination.pageSize = pageSize
+    pagination.page = 1
+    void load()
+  },
+})
 const baseUrl = computed(() => {
   if (import.meta.env.DEV && API_ORIGIN === window.location.origin) {
     return `${window.location.protocol}//${window.location.hostname}:8000`
@@ -106,9 +124,17 @@ const tokenColumns = [
 async function load() {
   loading.value = true
   try {
-    tokens.value = (await ciApi.listTokens()).data
+    const page = await loadPagedData<any>(ciApi.listTokens, {}, pagination.page, pagination.pageSize, 100)
+    tokens.value = page.items
+    pagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && pagination.page > 1) {
+      pagination.page = lastValidPage(page.total, pagination.pageSize)
+      void load()
+      return
+    }
   } catch (error: any) {
     tokens.value = []
+    pagination.itemCount = 0
     message.error(error.response?.data?.detail || '加载 Token 列表失败')
   } finally { loading.value = false }
 }

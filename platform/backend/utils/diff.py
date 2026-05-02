@@ -25,7 +25,7 @@ BUILTIN_SMART_NOISE_PATTERNS = [
     r"expireTime", r"expire_time", r"expired", r"expires", r"expireDate",
     # ID/序列号相关
     r"requestId", r"request_id", r"traceId", r"trace_id", r"spanId", r"span_id",
-    r"id$", r"\.id$", r"_id$", r"\.uuid$", r"serialNo", r"serial_no", r"orderNo", r"order_no",
+    r"^id$", r"^uuid$", r"serialNo", r"serial_no", r"^orderNo$", r"^order_no$",
     # Token/Session 相关
     r"token", r"session", r"sessionId", r"session_id", r"auth", r"authToken",
     r"accessToken", r"access_token", r"refreshToken", r"refresh_token", r"jwt",
@@ -62,6 +62,7 @@ def compute_diff(
     smart_noise_reduction: bool = False,
     *,
     ignore_fields: list[str] | None = None,
+    ignore_order: bool = True,
 ) -> tuple[str | None, float]:
     """
     Compare original and replayed response strings.
@@ -73,6 +74,7 @@ def compute_diff(
         ignore_paths: 用户自定义忽略字段列表
         diff_rules: 智能差异规则
         smart_noise_reduction: 是否启用内置智能降噪规则（自动忽略30+常见动态字段）
+        ignore_order: 是否忽略 JSON 数组顺序
     """
     if original is None and replayed is None:
         return None, 0.0
@@ -102,7 +104,7 @@ def compute_diff(
         diff = DeepDiff(
             orig_obj,
             repl_obj,
-            ignore_order=True,
+            ignore_order=ignore_order,
             exclude_regex_paths=exclude_regex if exclude_regex else None,
             verbose_level=1,
         )
@@ -131,6 +133,11 @@ def _convert_patterns_to_deepdiff_regex(patterns: list[str]) -> list[str]:
     # 例如 timestamp 会匹配 root['timestamp'] 和 root['data']['items'][*]['timestamp'] 等
     result = []
     for pattern in patterns:
+        exact_match = re.fullmatch(r"\^([A-Za-z_][A-Za-z0-9_]*)\$", pattern)
+        if exact_match:
+            field_name = exact_match.group(1)
+            result.append(rf"root(\[[^\]]+\])*\['{re.escape(field_name)}'\]$")
+            continue
         # 移除首尾 ^ $ 锚点，因为我们要做正则匹配
         clean_pattern = pattern.strip("^$")
         # 对纯字段名模式使用更严格的“token 边界”匹配，避免 count 误伤 account_no。
@@ -303,21 +310,37 @@ def _xml_to_dict(element):
 def _parse(text: str | None):
     if not text:
         return text
-    # Try JSON first
-    try:
-        return json.loads(text)
-    except (json.JSONDecodeError, TypeError):
-        pass
-    # Try XML — parse into a dict so field-level ignores work on XML responses
-    stripped = text.strip()
-    if stripped.startswith("<"):
+    if not isinstance(text, str):
+        return text
+
+    def _parse_text(value: str, depth: int = 0):
+        if depth > 3:
+            return value
+        stripped_value = value.strip()
+        if not stripped_value:
+            return stripped_value
+
+        # Try JSON first. AREX sometimes stores a plain XML/text response as a
+        # JSON string literal, e.g. "\"<BookVo>...</BookVo>\"".
         try:
-            import xml.etree.ElementTree as ET
-            root = ET.fromstring(stripped)
-            return {root.tag: _xml_to_dict(root)}
-        except Exception:
+            parsed = json.loads(stripped_value)
+            if isinstance(parsed, str):
+                return _parse_text(parsed, depth + 1)
+            return parsed
+        except (json.JSONDecodeError, TypeError):
             pass
-    return text
+
+        # Try XML — parse into a dict so field-level ignores work on XML responses
+        if stripped_value.startswith("<"):
+            try:
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(stripped_value)
+                return {root.tag: _xml_to_dict(root)}
+            except Exception:
+                pass
+        return value
+
+    return _parse_text(text)
 
 
 def _count_keys(obj, depth: int = 0) -> int:

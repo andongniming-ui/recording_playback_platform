@@ -37,12 +37,33 @@ export interface SubCallDiffPair {
   replayed: SubCallDiffItem | null
   side: 'both' | 'recorded_only' | 'replayed_only'
   response_matched: boolean | null
+  has_diff?: boolean
+  diff_result?: string | null
 }
 
 export interface SubCallDiffResult {
   recorded: SubCallDiffItem[]
   replayed: SubCallDiffItem[]
   pairs: SubCallDiffPair[]
+}
+
+export interface ReplayAuditLog {
+  id: number
+  job_id: number
+  result_id?: number | null
+  test_case_id?: number | null
+  application_id?: number | null
+  level: string
+  event_type: string
+  target_url?: string | null
+  request_method?: string | null
+  request_uri?: string | null
+  transaction_code?: string | null
+  actual_status_code?: number | null
+  latency_ms?: number | null
+  message?: string | null
+  detail?: string | null
+  created_at: string
 }
 
 export const replayApi = {
@@ -57,4 +78,5 @@ export const replayApi = {
   getReportUrl: (id: number) => `${API_BASE_URL}/replays/${id}/report`,
   getAnalysis: (id: number) => api.get(`/replays/${id}/analysis`),
   getSubCallDiff: (resultId: number) => api.get<SubCallDiffResult>(`/replays/results/${resultId}/sub-call-diff`),
+  getAuditLogs: (jobId: number, params?: any) => api.get<ReplayAuditLog[]>(`/replays/${jobId}/audit-logs`, { params }),
 }

@@ -3,9 +3,7 @@ AREX Storage REST API client.
 Replaces repeater_client.py — no Hessian, no SFTP, pure async HTTP.
 """
 import httpx
-from datetime import datetime
-
-from utils.timezone import ensure_beijing_datetime
+from datetime import datetime, timezone
 
 
 class ArexClientError(Exception):
@@ -18,6 +16,20 @@ class ArexClient:
 
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
+        self._client: httpx.AsyncClient | None = None
+
+    async def __aenter__(self):
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=30.0)
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -117,9 +129,12 @@ class ArexClient:
         GET /api/storage/record/saveTest/
         """
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{self.base_url}/api/storage/record/saveTest/")
-                return resp.status_code == 200
+            if self._client is not None:
+                resp = await self._client.get(f"{self.base_url}/api/storage/record/saveTest/")
+            else:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.get(f"{self.base_url}/api/storage/record/saveTest/")
+            return resp.status_code == 200
         except Exception:
             return False
 
@@ -130,19 +145,29 @@ class ArexClient:
     @staticmethod
     def _to_epoch_ms(dt: datetime) -> int:
         """Convert datetime to epoch milliseconds."""
-        localized = ensure_beijing_datetime(dt)
-        return int(localized.timestamp() * 1000) if localized else 0
+        if dt.tzinfo is None:
+            localized = dt.replace(tzinfo=timezone.utc)
+        else:
+            localized = dt.astimezone(timezone.utc)
+        return int(localized.timestamp() * 1000)
 
     async def _post(self, path: str, body: dict) -> dict:
         """POST to arex-storage; raise ArexClientError on failure."""
         url = f"{self.base_url}{path}"
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(
+            if self._client is not None:
+                resp = await self._client.post(
                     url,
                     json=body,
                     headers={"Content-Type": "application/json"},
                 )
+            else:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(
+                        url,
+                        json=body,
+                        headers={"Content-Type": "application/json"},
+                    )
         except httpx.RequestError as e:
             raise ArexClientError(f"Network error calling {url}: {e}") from e
         if resp.status_code != 200:
@@ -155,8 +180,11 @@ class ArexClient:
         """GET from arex-storage; raise ArexClientError on failure."""
         url = f"{self.base_url}{path}"
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(url)
+            if self._client is not None:
+                resp = await self._client.get(url)
+            else:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.get(url)
         except httpx.RequestError as e:
             raise ArexClientError(f"Network error calling {url}: {e}") from e
         if resp.status_code != 200:

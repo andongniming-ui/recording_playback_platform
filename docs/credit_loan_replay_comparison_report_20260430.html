@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>credit 基线录制 vs loan 环境回放比对报告</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --text: #1f2937;
+      --muted: #667085;
+      --line: #d9e2ec;
+      --blue: #1d4ed8;
+      --green: #047857;
+      --red: #b42318;
+      --amber: #b54708;
+      --code: #101828;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.55;
+    }
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 24px 48px;
+    }
+    header {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 20px;
+      margin-bottom: 24px;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 30px;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 28px 0 12px;
+      font-size: 20px;
+      border-left: 4px solid var(--blue);
+      padding-left: 10px;
+    }
+    h3 {
+      margin: 18px 0 10px;
+      font-size: 16px;
+    }
+    .subtitle {
+      color: var(--muted);
+      margin: 0;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 20px 0 8px;
+    }
+    .metric, .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .metric {
+      padding: 14px 16px;
+      min-height: 92px;
+    }
+    .metric .label {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .metric .value {
+      margin-top: 6px;
+      font-size: 24px;
+      font-weight: 700;
+    }
+    .metric .hint {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .panel {
+      padding: 16px;
+      margin: 12px 0;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 9px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .ok { color: var(--green); background: #ecfdf3; border-color: #abefc6; }
+    .fail { color: var(--red); background: #fef3f2; border-color: #fecdca; }
+    .warn { color: var(--amber); background: #fffaeb; border-color: #fedf89; }
+    .info { color: var(--blue); background: #eff6ff; border-color: #bfdbfe; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      margin: 10px 0 16px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+    th {
+      background: #eef2f7;
+      color: #344054;
+      font-weight: 700;
+    }
+    tr:last-child td { border-bottom: 0; }
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+    code {
+      background: #eef2f7;
+      border: 1px solid #d0d7de;
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+    pre {
+      margin: 8px 0 0;
+      padding: 12px;
+      color: #e6edf3;
+      background: var(--code);
+      border-radius: 8px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 13px;
+    }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .small {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .callout {
+      border-left: 4px solid var(--amber);
+      background: #fffaeb;
+      padding: 12px 14px;
+      border-radius: 8px;
+      margin: 12px 0;
+    }
+    .conclusion {
+      border-left: 4px solid var(--red);
+      background: #fff5f5;
+      padding: 14px 16px;
+      border-radius: 8px;
+      margin-top: 12px;
+    }
+    @media (max-width: 900px) {
+      .summary, .two-col { grid-template-columns: 1fr; }
+      .page { padding: 20px 14px 36px; }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <h1>credit 基线录制 vs loan 环境回放比对报告</h1>
+      <p class="subtitle">报告时间：2026-04-30 10:31 后生成｜场景：在 credit 应用录制 2 条 RP54KH01 接口用例，并在 loan 应用执行回放比对。</p>
+    </header>
+
+    <section>
+      <h2>一、执行结论</h2>
+      <div class="summary">
+        <div class="metric">
+          <div class="label">录制会话</div>
+          <div class="value">#67</div>
+          <div class="hint">credit测试001，已完成</div>
+        </div>
+        <div class="metric">
+          <div class="label">测试用例</div>
+          <div class="value">2 条</div>
+          <div class="hint">GET 1 条，POST 1 条</div>
+        </div>
+        <div class="metric">
+          <div class="label">回放任务</div>
+          <div class="value">#29</div>
+          <div class="hint">Suite Run: loan回放测试</div>
+        </div>
+        <div class="metric">
+          <div class="label">通过率</div>
+          <div class="value" style="color: var(--red);">0.0%</div>
+          <div class="hint">总数 2 / 通过 0 / 失败 2 / 异常 0</div>
+        </div>
+      </div>
+      <div class="conclusion">
+        <strong>最终结论：</strong>本次 credit 到 loan 的跨系统回放比对未通过。两条用例 HTTP 状态码均为 200，说明接口可正常访问；失败来自响应内容差异。主接口响应的主要差异字段是 <code>age</code>，子调用层面 <code>Database</code> 查询结果一致，但下游 <code>HttpClient /order/*</code> 返回的 <code>dinner</code> 字段存在差异。
+      </div>
+    </section>
+
+    <section>
+      <h2>二、环境与应用信息</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>角色</th>
+            <th>平台应用</th>
+            <th>AREX App ID</th>
+            <th>宿主机</th>
+            <th>服务端口</th>
+            <th>JAR / 进程名</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>基线录制系统</td>
+            <td>credit</td>
+            <td>credit</td>
+            <td>192.168.43.40</td>
+            <td>8623</td>
+            <td>credit.jar</td>
+            <td>用于录制 SIT 基线流量</td>
+          </tr>
+          <tr>
+            <td>对比回放系统</td>
+            <td>loan</td>
+            <td>loan</td>
+            <td>192.168.43.40</td>
+            <td>4623</td>
+            <td>loan.jar</td>
+            <td>用于执行 UAT 回放比对</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout">
+        两个服务均由开发本地启动并通过 <code>-javaagent</code> 接入平台。应用管理中的“挂载 Agent”状态不作为本次录制是否成功的唯一判断依据；本次数据已经成功落库，说明 Agent 上报链路可用。
+      </div>
+    </section>
+
+    <section>
+      <h2>三、录制信息</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>录制会话 ID</th>
+            <th>会话名称</th>
+            <th>所属应用</th>
+            <th>交易码过滤</th>
+            <th>状态</th>
+            <th>录制数</th>
+            <th>开始时间</th>
+            <th>结束时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>67</td>
+            <td>credit测试001</td>
+            <td>credit</td>
+            <td><code>=RP54KH01</code></td>
+            <td><span class="badge ok">已完成</span></td>
+            <td>2</td>
+            <td>2026-04-30 10:10:30</td>
+            <td>2026-04-30 10:30:50</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>录制得到的原始接口</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>录制 ID</th>
+            <th>方法</th>
+            <th>请求 URI</th>
+            <th>交易码</th>
+            <th>HTTP 状态</th>
+            <th>录制响应摘要</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1121</td>
+            <td>GET</td>
+            <td><code>/repeater/query?code=RP54KH01&idcard=440203198709237790</code></td>
+            <td>RP54KH01</td>
+            <td>200</td>
+            <td><code>name=舒唛, age=38, status=0</code></td>
+          </tr>
+          <tr>
+            <td>1122</td>
+            <td>POST</td>
+            <td><code>/repeater/search</code></td>
+            <td>RP54KH01</td>
+            <td>200</td>
+            <td><code>name=英宝, age=16, status=0</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>四、测试用例库</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>用例 ID</th>
+            <th>名称</th>
+            <th>来源录制</th>
+            <th>应用</th>
+            <th>请求</th>
+            <th>交易码</th>
+            <th>治理状态</th>
+            <th>状态</th>
+            <th>创建时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>48</td>
+            <td>credit测试用例 - RP54KH01</td>
+            <td>#1121</td>
+            <td>credit</td>
+            <td><code>GET /repeater/query?code=RP54KH01&idcard=440203198709237790</code></td>
+            <td>RP54KH01</td>
+            <td>原始录制</td>
+            <td><span class="badge ok">激活</span></td>
+            <td>2026-04-30 10:31:06</td>
+          </tr>
+          <tr>
+            <td>47</td>
+            <td>credit测试用例 - RP54KH01</td>
+            <td>#1122</td>
+            <td>credit</td>
+            <td><code>POST /repeater/search</code></td>
+            <td>RP54KH01</td>
+            <td>原始录制</td>
+            <td><span class="badge ok">激活</span></td>
+            <td>2026-04-30 10:31:06</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>五、回放套件与任务</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>套件 ID</th>
+            <th>套件名称</th>
+            <th>包含用例</th>
+            <th>回放任务 ID</th>
+            <th>任务名称</th>
+            <th>目标应用</th>
+            <th>任务状态</th>
+            <th>执行时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>17</td>
+            <td>loan回放测试</td>
+            <td>#48、#47</td>
+            <td>29</td>
+            <td>Suite Run: loan回放测试</td>
+            <td>loan</td>
+            <td><span class="badge fail">存在失败</span></td>
+            <td>2026-04-30 10:31:47 - 10:31:53</td>
+          </tr>
+        </tbody>
+      </table>
+      <table>
+        <thead>
+          <tr>
+            <th>总数</th>
+            <th>通过</th>
+            <th>失败</th>
+            <th>异常</th>
+            <th>通过率</th>
+            <th>Mock 子调用</th>
+            <th>子调用差异是否直接判失败</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>2</td>
+            <td>0</td>
+            <td>2</td>
+            <td>0</td>
+            <td><span class="badge fail">0.0%</span></td>
+            <td>关闭</td>
+            <td>关闭</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>六、逐条用例比对详情</h2>
+
+      <div class="panel">
+        <h3>用例 #48：GET /repeater/query</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>检查项</th>
+              <th>credit 录制基线</th>
+              <th>loan 回放实际</th>
+              <th>结果</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>HTTP 状态码</td>
+              <td>200</td>
+              <td>200</td>
+              <td><span class="badge ok">一致</span></td>
+            </tr>
+            <tr>
+              <td>主响应字段</td>
+              <td><code>age=38</code></td>
+              <td><code>age=40</code></td>
+              <td><span class="badge fail">响应内容差异</span></td>
+            </tr>
+            <tr>
+              <td>Diff Score</td>
+              <td colspan="2">0.166667</td>
+              <td><span class="badge fail">失败</span></td>
+            </tr>
+            <tr>
+              <td>失败原因</td>
+              <td colspan="3">响应内容不一致：差异字段 <code>age</code></td>
+            </tr>
+            <tr>
+              <td>耗时</td>
+              <td colspan="3">1873 ms</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="two-col">
+          <div>
+            <div class="small">期望响应（credit 录制）</div>
+            <pre>{"name":"舒唛","gender":"1","birth":"1987-09-23 00:00:00.000","age":38,"idcard":"440203198709237790","status":"0"}</pre>
+          </div>
+          <div>
+            <div class="small">实际响应（loan 回放）</div>
+            <pre>{"name":"舒唛","gender":"1","birth":"1987-09-23","age":40,"idcard":"440203198709237790","status":"0"}</pre>
+          </div>
+        </div>
+        <h3>子调用比对</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>序号</th>
+              <th>类型</th>
+              <th>操作</th>
+              <th>比对结果</th>
+              <th>差异说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Database</td>
+              <td><code>query</code></td>
+              <td><span class="badge ok">一致</span></td>
+              <td>SQL 与参数一致：<code>select name, gender, birth, age, idcard, status from cust_info where idcard=?</code>，参数 <code>440203198709237790</code>；录制侧与回放侧数据库响应均为 <code>age=38</code>。</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>HttpClient</td>
+              <td><code>/order/query</code></td>
+              <td><span class="badge fail">响应差异</span></td>
+              <td><code>root.BookVo.dinner</code>：录制侧为 <code>白切鸡、冬瓜</code>，回放侧为 <code>白切鸡、冬瓜、鲫鱼</code>。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h3>用例 #47：POST /repeater/search</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>检查项</th>
+              <th>credit 录制基线</th>
+              <th>loan 回放实际</th>
+              <th>结果</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>HTTP 状态码</td>
+              <td>200</td>
+              <td>200</td>
+              <td><span class="badge ok">一致</span></td>
+            </tr>
+            <tr>
+              <td>主响应字段</td>
+              <td><code>age=16</code></td>
+              <td><code>age=18</code></td>
+              <td><span class="badge fail">响应内容差异</span></td>
+            </tr>
+            <tr>
+              <td>Diff Score</td>
+              <td colspan="2">0.166667</td>
+              <td><span class="badge fail">失败</span></td>
+            </tr>
+            <tr>
+              <td>失败原因</td>
+              <td colspan="3">响应内容不一致：差异字段 <code>age</code></td>
+            </tr>
+            <tr>
+              <td>耗时</td>
+              <td colspan="3">1876 ms</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="two-col">
+          <div>
+            <div class="small">期望响应（credit 录制）</div>
+            <pre>{"name":"英宝","gender":"2","birth":"2009-11-04 00:00:00.000","age":16,"idcard":"440118200911042256","status":"0"}</pre>
+          </div>
+          <div>
+            <div class="small">实际响应（loan 回放）</div>
+            <pre>{"name":"英宝","gender":"2","birth":"2009-11-04","age":18,"idcard":"440118200911042256","status":"0"}</pre>
+          </div>
+        </div>
+        <h3>子调用比对</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>序号</th>
+              <th>类型</th>
+              <th>操作</th>
+              <th>比对结果</th>
+              <th>差异说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Database</td>
+              <td><code>query</code></td>
+              <td><span class="badge ok">一致</span></td>
+              <td>SQL 与参数一致：<code>select name, gender, birth, age, idcard, status from cust_info where idcard=?</code>，参数 <code>440118200911042256</code>；录制侧与回放侧数据库响应均为 <code>age=16</code>。</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>HttpClient</td>
+              <td><code>/order/search</code></td>
+              <td><span class="badge fail">响应差异</span></td>
+              <td><code>root.BookVo.dinner</code>：录制侧为 <code>虾、猪肉</code>，回放侧为 <code>虾、猪肉、鲫鱼</code>。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>七、问题归因</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>发现点</th>
+            <th>证据</th>
+            <th>判断</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>平台录制链路可用</td>
+            <td>会话 #67 已完成，录制数 2；两条录制均已进入测试用例库。</td>
+            <td><span class="badge ok">正常</span></td>
+          </tr>
+          <tr>
+            <td>平台回放链路可用</td>
+            <td>任务 #29 已执行完成，2 条用例均收到 loan 环境 HTTP 200 响应。</td>
+            <td><span class="badge ok">正常</span></td>
+          </tr>
+          <tr>
+            <td>主接口响应存在业务字段差异</td>
+            <td>GET 用例 <code>age: 38 -> 40</code>；POST 用例 <code>age: 16 -> 18</code>。</td>
+            <td><span class="badge fail">真实差异</span></td>
+          </tr>
+          <tr>
+            <td>数据库子调用一致</td>
+            <td>两条用例的 <code>Database query</code> 录制侧与回放侧响应一致。</td>
+            <td><span class="badge ok">依赖数据一致</span></td>
+          </tr>
+          <tr>
+            <td>下游订单接口存在响应差异</td>
+            <td><code>/order/query</code> 与 <code>/order/search</code> 的 XML 响应中 <code>dinner</code> 均比基线多出 <code>鲫鱼</code>。</td>
+            <td><span class="badge fail">真实差异</span></td>
+          </tr>
+          <tr>
+            <td>日期格式差异</td>
+            <td>展示中可见 <code>birth</code> 录制侧带 <code>00:00:00.000</code>，回放侧为日期字符串。</td>
+            <td><span class="badge warn">需统一序列化口径</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout">
+        说明：本次任务落库的失败原因明确记录为“响应内容不一致：差异字段 age”。日期格式虽然在展示上有差异，但本次核心失败字段是 <code>age</code>；子调用差异集中在下游订单接口的 <code>dinner</code> 字段。
+      </div>
+    </section>
+
+    <section>
+      <h2>八、给领导看的简要结论</h2>
+      <div class="panel">
+        <p>本次演示验证了平台可以完成从 <strong>credit 基线系统录制</strong> 到 <strong>loan 对比系统回放</strong> 的完整闭环，包括录制会话、用例入库、回放套件执行、主响应差异识别和子调用差异定位。</p>
+        <p>最终结果为 2 条用例全部失败，失败不是因为接口不可用，也不是因为平台没有录上，而是因为 loan 环境返回内容与 credit 基线不一致：主响应 <code>age</code> 字段不同；同时下游 <code>/order/query</code>、<code>/order/search</code> 返回的晚餐字段比基线多了 <code>鲫鱼</code>。</p>
+        <p>平台侧已把差异定位到字段级别，可以说明本次回放比对具备发现跨版本、跨系统业务差异的能力。</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,21 @@
+server:
+  port: ${DATING_SERVER_PORT:28090}
+
+spring:
+  application:
+    name: dating-system
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${DATING_DB_HOST:127.0.0.1}:${DATING_DB_PORT:3306}/${DATING_DB_NAME:dating_system}?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    username: ${DATING_DB_USER:root}
+    password: ${DATING_DB_PASSWORD:root123}
+  sql:
+    init:
+      mode: ${DATING_SQL_INIT_MODE:always}
+      encoding: UTF-8
+
+dating:
+  system-name: dating-platform
+  variant-id: ${DATING_VARIANT_ID:SAT}
+  compare-hint: ${DATING_COMPARE_HINT:SAT_BASELINE}
+  internal-base-url: http://127.0.0.1:${server.port}

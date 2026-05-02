@@ -62,23 +62,18 @@ DYNAMIC_FIELD_PATTERNS = [
 
 # Critical business fields that indicate real bugs when changed
 CRITICAL_FIELD_PATTERNS = [
-    r"price",
-    r"amount",
-    r"total",
-    r"balance",
-    r"status",
-    r"code",
-    r"error",
-    r"message",
-    r"result",
-    r"data\.",
-    r"\.data$",
-    r"success",
-    r"failed",
-    r"permission",
-    r"auth",
-    r"role",
-    r"access",
+    r"\['price'\]$",
+    r"\['amount'\]$",
+    r"\['total'\]$",
+    r"\['balance'\]$",
+    r"\['status'\]$",
+    r"\['code'\]$",
+    r"\['errorCode'\]$",
+    r"\['errorMessage'\]$",
+    r"\['success'\]$",
+    r"\['permission'\]$",
+    r"\['role'\]$",
+    r"\['access'\]$",
 ]
 
 

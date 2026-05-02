@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_, delete, update, asc, desc
+from sqlalchemy import select, and_, or_, delete, update, func
 
 from database import get_db
 from models.test_case import TestCase
@@ -19,20 +19,12 @@ from schemas.test_case import (
     BatchCheckRequest, BatchCheckItem,
     BatchFromRecordingsRequest, BatchResultItem, BatchFromRecordingsResponse,
 )
-from schemas.common import BulkDeleteResponse, BulkIdsRequest
+from schemas.common import BulkDeleteResponse, BulkIdsRequest, PageOut
 from core.security import require_viewer, require_editor
 from utils.governance import build_scene_key, infer_transaction_code, normalize_governance_status
+from utils.query import apply_ordering
 
 router = APIRouter(prefix="/test-cases", tags=["test-cases"])
-
-
-def _normalize_sort_order(value: str | None) -> str:
-    return "asc" if (value or "").lower() == "asc" else "desc"
-
-
-def _apply_ordering(stmt, primary_column, id_column, sort_order: str):
-    direction = asc if _normalize_sort_order(sort_order) == "asc" else desc
-    return stmt.order_by(direction(primary_column), direction(id_column))
 
 
 def _fill_governance_fields(payload: dict) -> dict:
@@ -124,22 +116,27 @@ async def batch_from_recordings(
 ):
     """Batch create test cases from a list of recording IDs with a shared name prefix."""
     results: list[BatchResultItem] = []
-    created_count = 0
-    failed_count = 0
-
-    for rec_id in body.recording_ids:
-        try:
-            rec_result = await db.execute(select(Recording).where(Recording.id == rec_id))
-            recording = rec_result.scalar_one_or_none()
-            if not recording:
-                results.append(BatchResultItem(
+    recordings_result = await db.execute(select(Recording).where(Recording.id.in_(body.recording_ids)))
+    recordings_by_id = {recording.id: recording for recording in recordings_result.scalars().all()}
+    missing_ids = [rec_id for rec_id in body.recording_ids if rec_id not in recordings_by_id]
+    if missing_ids:
+        return BatchFromRecordingsResponse(
+            total=len(body.recording_ids),
+            created=0,
+            failed=len(body.recording_ids),
+            results=[
+                BatchResultItem(
                     recording_id=rec_id,
                     status="failed",
-                    error="Recording not found",
-                ))
-                failed_count += 1
-                continue
+                    error="Recording not found" if rec_id in missing_ids else "Batch rolled back because another recording was not found",
+                )
+                for rec_id in body.recording_ids
+            ],
+        )
 
+    try:
+        for rec_id in body.recording_ids:
+            recording = recordings_by_id[rec_id]
             # Build name: prefix + transaction_code or fallback to method + uri
             suffix = recording.transaction_code or f"{recording.request_method} {recording.request_uri}"
             name = f"{body.prefix} - {suffix}"
@@ -160,8 +157,7 @@ async def batch_from_recordings(
                 "status": "active",
             }))
             db.add(tc)
-            await db.commit()
-            await db.refresh(tc)
+            await db.flush()
 
             results.append(BatchResultItem(
                 recording_id=rec_id,
@@ -169,21 +165,24 @@ async def batch_from_recordings(
                 test_case_id=tc.id,
                 name=tc.name,
             ))
-            created_count += 1
-
-        except Exception as exc:
-            await db.rollback()
-            results.append(BatchResultItem(
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        return BatchFromRecordingsResponse(
+            total=len(body.recording_ids),
+            created=0,
+            failed=len(body.recording_ids),
+            results=[BatchResultItem(
                 recording_id=rec_id,
                 status="failed",
                 error=str(exc),
-            ))
-            failed_count += 1
+            ) for rec_id in body.recording_ids],
+        )
 
     return BatchFromRecordingsResponse(
         total=len(body.recording_ids),
-        created=created_count,
-        failed=failed_count,
+        created=len(results),
+        failed=0,
         results=results,
     )
 
@@ -271,9 +270,10 @@ async def import_test_cases(
     return {"imported": len(created)}
 
 
-@router.get("", response_model=list[TestCaseOut])
+@router.get("", response_model=PageOut[TestCaseOut] | list[TestCaseOut])
 async def list_test_cases(
     application_id: Optional[int] = Query(None),
+    recording_session_id: Optional[int] = Query(None),
     status: Optional[str] = Query(None),
     governance_status: Optional[str] = Query(None),
     transaction_code: Optional[str] = Query(None),
@@ -283,11 +283,15 @@ async def list_test_cases(
     sort_order: str = Query("desc"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=1000),
+    include_total: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_viewer),
 ):
     stmt = select(TestCase)
     filters = []
+    if recording_session_id:
+        stmt = stmt.join(Recording, TestCase.source_recording_id == Recording.id)
+        filters.append(Recording.session_id == recording_session_id)
     if application_id:
         filters.append(TestCase.application_id == application_id)
     if status:
@@ -306,15 +310,22 @@ async def list_test_cases(
         ))
     if filters:
         stmt = stmt.where(and_(*filters))
+    total = None
+    if include_total:
+        total_result = await db.execute(select(func.count()).select_from(stmt.subquery()))
+        total = total_result.scalar_one()
     sort_mapping = {
         "created_at": TestCase.created_at,
         "updated_at": TestCase.updated_at,
         "id": TestCase.id,
     }
     primary_column = sort_mapping.get(sort_by, TestCase.created_at)
-    stmt = _apply_ordering(stmt, primary_column, TestCase.id, sort_order).offset(skip).limit(limit)
+    stmt = apply_ordering(stmt, primary_column, TestCase.id, sort_order).offset(skip).limit(limit)
     result = await db.execute(stmt)
-    return result.scalars().all()
+    items = result.scalars().all()
+    if include_total:
+        return PageOut[TestCaseOut](items=items, total=total or 0, skip=skip, limit=limit)
+    return items
 
 
 @router.post("/bulk-delete", response_model=BulkDeleteResponse)

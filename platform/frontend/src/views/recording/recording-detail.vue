@@ -59,11 +59,16 @@
             </n-card>
           </n-grid-item>
           <n-grid-item>
-            <n-card title="请求体" size="small">
-              <pre class="code-block">{{ prettyText(recording?.request_body) }}</pre>
+            <n-card title="URL 查询参数" size="small">
+              <pre class="code-block">{{ queryParamsText }}</pre>
             </n-card>
           </n-grid-item>
-          <n-grid-item span="1 l:2">
+          <n-grid-item>
+            <n-card title="请求体" size="small">
+              <pre class="code-block">{{ requestBodyText }}</pre>
+            </n-card>
+          </n-grid-item>
+          <n-grid-item>
             <n-card title="响应体" size="small">
               <pre class="code-block">{{ prettyText(recording?.response_body) }}</pre>
             </n-card>
@@ -165,6 +170,37 @@ const subCallSummary = computed(() => {
   }
   const subCalls = parseRecordingSubCalls(recording.value.sub_calls)
   return subCalls.length > 0 ? buildRecordingSubCallSummary(subCalls) : '-'
+})
+
+const queryParamsText = computed(() => {
+  const uri = recording.value?.request_uri
+  if (!uri || !uri.includes('?')) {
+    return '-'
+  }
+  const queryString = uri.slice(uri.indexOf('?') + 1)
+  const params = new URLSearchParams(queryString)
+  const queryParams: Record<string, string | string[]> = {}
+  params.forEach((value, key) => {
+    const existingValue = queryParams[key]
+    if (existingValue == null) {
+      queryParams[key] = value
+    } else if (Array.isArray(existingValue)) {
+      existingValue.push(value)
+    } else {
+      queryParams[key] = [existingValue, value]
+    }
+  })
+  return Object.keys(queryParams).length > 0 ? JSON.stringify(queryParams, null, 2) : '-'
+})
+
+const requestBodyText = computed(() => {
+  if (recording.value?.request_body) {
+    return prettyText(recording.value.request_body)
+  }
+  if (queryParamsText.value !== '-') {
+    return 'GET/Query 请求没有 HTTP 请求体，入参见“URL 查询参数”。'
+  }
+  return '-'
 })
 
 const governanceOptions = [

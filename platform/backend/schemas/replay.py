@@ -65,6 +65,7 @@ class ReplayJobCreate(BaseModel):
     notify_type: Optional[str] = None
     target_host: Optional[str] = None      # override target host for replay
     smart_noise_reduction: bool = False    # 启用内置智能降噪规则
+    ignore_order: bool = True              # JSON 数组是否忽略顺序
     retry_count: int = 0                   # 失败重试次数（0 = 不重试）
     repeat_count: int = 1                  # 每条录制重复回放次数（流量放大）
     header_transforms: Optional[List[HeaderTransform]] = None
@@ -104,6 +105,7 @@ class ReplayJobOut(BaseModel):
     fail_on_sub_call_diff: bool = False
     perf_threshold_ms: Optional[int] = None
     smart_noise_reduction: bool = False
+    ignore_order: bool = True
     retry_count: int = 0
     repeat_count: int = 1
     target_host: Optional[str] = None
@@ -164,7 +166,30 @@ class ReplayResultOut(BaseModel):
     latency_ms: Optional[int]
     failure_category: Optional[str]
     failure_reason: Optional[str]
+    actual_sub_calls: Optional[str] = None        # JSON list of replayed sub-calls
+    sub_call_diff_detail: Optional[str] = None    # JSON list of per-pair diff results
     created_at: datetime
     transaction_code: Optional[str] = None   # 来自关联的 TestCase
+
+    model_config = {"from_attributes": True}
+
+
+class ReplayAuditOut(BaseModel):
+    id: int
+    job_id: int
+    result_id: Optional[int] = None
+    test_case_id: Optional[int] = None
+    application_id: Optional[int] = None
+    level: str
+    event_type: str
+    target_url: Optional[str] = None
+    request_method: Optional[str] = None
+    request_uri: Optional[str] = None
+    transaction_code: Optional[str] = None
+    actual_status_code: Optional[int] = None
+    latency_ms: Optional[int] = None
+    message: Optional[str] = None
+    detail: Optional[str] = None
+    created_at: datetime
 
     model_config = {"from_attributes": True}

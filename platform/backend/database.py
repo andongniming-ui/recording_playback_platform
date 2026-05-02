@@ -23,6 +23,25 @@ def _configure_connection_timezone(dbapi_connection, _connection_record):
     finally:
         cursor.close()
 
+
+@event.listens_for(engine.sync_engine, "connect")
+def _configure_sqlite_connection(dbapi_connection, _connection_record):
+    """Enable WAL mode and busy-timeout to prevent "database is locked" errors under concurrent writes."""
+    if settings.db_type != "sqlite":
+        return
+    cursor = dbapi_connection.cursor()
+    try:
+        # WAL allows concurrent readers while a writer is active.
+        cursor.execute("PRAGMA journal_mode=WAL")
+        # Wait up to 15 s instead of failing immediately when the write lock is held.
+        cursor.execute("PRAGMA busy_timeout=15000")
+        # NORMAL is safe with WAL and avoids the full-fsync penalty of FULL mode.
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        # Larger cache reduces disk I/O under rapid inserts (ArexMocker batch saves).
+        cursor.execute("PRAGMA cache_size=-32000")  # ~32 MB
+    finally:
+        cursor.close()
+
 async_session_factory = async_sessionmaker(
     engine,
     class_=AsyncSession,
@@ -51,6 +70,7 @@ async def init_db():
     import models.suite         # noqa: F401
     import models.ci            # noqa: F401
     import models.arex_mocker   # noqa: F401
+    import models.audit         # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

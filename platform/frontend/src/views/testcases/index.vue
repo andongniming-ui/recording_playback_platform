@@ -24,7 +24,7 @@
         clearable
         placeholder="选择应用"
         style="width:180px"
-        @update:value="loadCases"
+        @update:value="reloadCasesFromFirstPage"
       />
       <n-select
         v-model:value="filterStatus"
@@ -32,7 +32,7 @@
         clearable
         placeholder="状态"
         style="width:130px"
-        @update:value="loadCases"
+        @update:value="reloadCasesFromFirstPage"
       />
       <n-select
         v-model:value="filterGovernanceStatus"
@@ -40,23 +40,23 @@
         clearable
         placeholder="治理状态"
         style="width:140px"
-        @update:value="loadCases"
+        @update:value="reloadCasesFromFirstPage"
       />
       <n-input
         v-model:value="filterTransactionCode"
         clearable
         placeholder="交易码"
         style="width:160px"
-        @keyup.enter="loadCases"
+        @keyup.enter="reloadCasesFromFirstPage"
       />
       <n-input
         v-model:value="filterSearch"
         clearable
         placeholder="搜索名称/URI"
         style="width:220px"
-        @keyup.enter="loadCases"
+        @keyup.enter="reloadCasesFromFirstPage"
       />
-      <n-button @click="loadCases">查询</n-button>
+      <n-button @click="reloadCasesFromFirstPage">查询</n-button>
       <n-button quaternary @click="resetFilters">重置</n-button>
     </n-space>
 
@@ -64,7 +64,7 @@
       :columns="columns"
       :data="cases"
       :loading="loading"
-      :pagination="{ pageSize: 10 }"
+      :pagination="pagination"
       :row-key="(row: any) => row.id"
       remote
       v-model:checked-row-keys="selectedCaseIds"
@@ -164,7 +164,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, h } from 'vue'
+import { computed, reactive, ref, onMounted, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NSpace, NH2, NButton, NDataTable, NSelect, NInput,
@@ -176,6 +176,7 @@ import { applicationApi } from '@/api/applications'
 import { suiteApi } from '@/api/suites'
 import { useUserStore } from '@/store/user'
 import { defaultSortState, resolveSortOrder, toApiSortOrder, updateSortState } from '@/utils/tableSort'
+import { lastValidPage, loadPagedData } from '@/utils/pagination'
 
 const route = useRoute()
 const router = useRouter()
@@ -195,6 +196,23 @@ const appNameMap = ref<Record<number, string>>({})
 const suiteOptions = ref<any[]>([])
 const selectedCaseIds = ref<(string | number)[]>([])
 const sortState = ref(defaultSortState('created_at'))
+const pagination = reactive({
+  page: 1,
+  pageSize: 10,
+  itemCount: 0,
+  pageSizes: [10, 20, 50, 100],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 条`,
+  onUpdatePage: (page: number) => {
+    pagination.page = page
+    void loadCases()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    pagination.pageSize = pageSize
+    pagination.page = 1
+    void loadCases()
+  },
+})
 
 const showDrawer = ref(false)
 const saving = ref(false)
@@ -325,15 +343,27 @@ async function loadCases() {
     if (filterSearch.value) params.search = filterSearch.value
     params.sort_by = sortState.value.columnKey
     params.sort_order = toApiSortOrder(sortState.value.order)
-    const res = await testCaseApi.list(params)
-    cases.value = res.data
+    const page = await loadPagedData<any>(testCaseApi.list, params, pagination.page, pagination.pageSize, 1000)
+    cases.value = page.items
+    pagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && pagination.page > 1) {
+      pagination.page = lastValidPage(page.total, pagination.pageSize)
+      void loadCases()
+      return
+    }
     selectedCaseIds.value = []
   } catch (error: any) {
     cases.value = []
+    pagination.itemCount = 0
     message.error(error.response?.data?.detail || '加载用例失败')
   } finally {
     loading.value = false
   }
+}
+
+function reloadCasesFromFirstPage() {
+  pagination.page = 1
+  void loadCases()
 }
 
 function resetFilters() {
@@ -342,6 +372,7 @@ function resetFilters() {
   filterGovernanceStatus.value = null
   filterTransactionCode.value = ''
   filterSearch.value = ''
+  pagination.page = 1
   void loadCases()
 }
 
@@ -472,6 +503,7 @@ async function deleteSelectedCases() {
 
 function handleSorterChange(sorter: any) {
   sortState.value = updateSortState(sorter, 'created_at')
+  pagination.page = 1
   void loadCases()
 }
 

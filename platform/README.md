@@ -25,6 +25,12 @@ A full-featured AREX recording & replay management platform for Java JDK8 + Spri
 
 ---
 
+## 变更记录 / Changelog
+
+- 变更记录见 `CHANGELOG.md`
+
+---
+
 ## 技术栈 / Tech Stack
 
 | 层次 | 技术 |
@@ -73,7 +79,7 @@ npm install
 npm run dev
 ```
 
-打开 http://localhost:3000，使用默认账号登录：
+打开 http://localhost:5173，使用默认账号登录：
 
 | 字段 | 值 |
 |------|----|
@@ -89,7 +95,7 @@ docker-compose up -d --build
 ```
 
 服务端口：
-- 前端开发模式：http://localhost:3000
+- 前端开发模式：http://localhost:5173
 - 前端 Docker 预览模式：http://localhost:5173
 - 后端 API：http://localhost:8000
 - API 文档：http://localhost:8000/docs
@@ -106,7 +112,7 @@ docker-compose up -d --build
 | `AR_DB_TYPE` | `sqlite` | 数据库类型：`sqlite` / `mysql` |
 | `AR_DB_URL` | SQLite 文件路径 | 数据库连接字符串 |
 | `AR_SECRET_KEY` | `changeme-in-production` | **生产必须修改**，JWT 签名密钥 |
-| `AR_AREX_STORAGE_URL` | `http://localhost:8093` | arex-storage-service 地址 |
+| `AR_AREX_STORAGE_URL` | `http://127.0.0.1:8000` | AREX Storage 代理地址 |
 | `AR_AREX_AGENT_STORAGE_URL` | 空 | JDK8/旧版 AREX agent 专用上报地址；配置后挂载时优先注入到 Agent，通常指向本平台后端代理地址 |
 | `AR_AREX_AGENT_JAR_PATH` | `/home/test/arex-agent/arex-agent.jar` | AREX Agent JAR 本地路径 |
 | `AR_SSH_KEYS_DIR` | `./ssh_keys` | SSH 私钥存储目录 |
@@ -114,6 +120,14 @@ docker-compose up -d --build
 | `AR_REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Refresh Token 过期时间（天） |
 | `AR_DEFAULT_REPLAY_CONCURRENCY` | `5` | 默认回放并发数 |
 | `AR_DEFAULT_REPLAY_TIMEOUT_MS` | `5000` | 默认回放超时（毫秒） |
+| `AR_AREX_FLUSH_DELAY_S` | `1.0` | 回放后等待 AREX agent flush 子调用的秒数 |
+| `AR_AREX_FLUSH_MAX_RETRIES` | `3` | flush 后子调用为空时的最大重试次数 |
+| `AR_AREX_FLUSH_RETRY_INTERVAL_S` | `0.5` | flush 重试间隔（秒） |
+| `AR_LOG_FILE` | 空 | 日志文件路径；留空则只输出到标准日志 |
+| `AR_LOG_MAX_BYTES` | `10485760` | 单个日志文件最大大小 |
+| `AR_LOG_BACKUP_COUNT` | `5` | 日志轮转保留份数 |
+| `AR_NLS_MYSQL_*` | 空 / 默认端口 | N-LS 补充子调用查询所用 MySQL 配置 |
+| `AR_DIDI_MYSQL_*` | 本地默认值 | Didi JdbcTemplate 子调用补全所用 MySQL 配置 |
 | `AR_CORS_ORIGINS` | `["*"]` | 允许的跨域来源列表 |
 | `AR_DEBUG` | `false` | 是否开启调试模式 |
 
@@ -154,7 +168,7 @@ docker-compose up -d --build
 ## 测试 / Testing
 
 ```bash
-# 运行全部测试（79 个）
+# 运行全部测试（当前 160+ 个测试函数）
 pytest backend/tests/ -v
 
 # 仅运行特定模块
@@ -240,8 +254,9 @@ platform/
 │       ├── store/           # Pinia 状态
 │       ├── router/          # Vue Router
 │       └── api/             # Axios 封装
-├── backend/tests/           # pytest 测试套件（79 个测试）
+├── backend/tests/           # pytest 测试套件（当前 160+ 个测试函数）
 ├── docker-compose.yml
+├── CHANGELOG.md
 ├── requirements.txt
 └── .env.example
 ```

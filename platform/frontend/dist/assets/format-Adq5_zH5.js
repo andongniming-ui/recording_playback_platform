@@ -1,1 +1,0 @@
-function n(t){if(!t)return"-";const r=t.endsWith("Z")||/[+-]\d{2}:\d{2}$/.test(t)?t:t+"Z",e=new Date(r);return isNaN(e.getTime())?t:e.toLocaleString("zh-CN",{hour12:!1}).replace(/\//g,"-")}export{n as f};

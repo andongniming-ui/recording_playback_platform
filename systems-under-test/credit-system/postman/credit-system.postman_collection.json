@@ -1,0 +1,223 @@
+{
+  "info": {
+    "_postman_id": "f53c72f1-4b65-47f4-a4e1-3bb5c3010001",
+    "name": "Credit System",
+    "description": "Credit admit and limit demo system. Import this collection plus a credit-system environment into Postman or ApiPost. Each request auto-generates tra_id, request_time and request_no so logs, sub-calls and database records can be correlated end-to-end.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:29081"
+    },
+    {
+      "key": "traId",
+      "value": ""
+    },
+    {
+      "key": "requestTime",
+      "value": ""
+    },
+    {
+      "key": "requestNo",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "CRD_ADMIT 准入",
+      "description": "准入请求会按客户、产品和金额走不同的外部征信、反欺诈、多头借贷和联系人稳定性子调用。",
+      "item": [
+        {
+          "name": "CRD_ADMIT C10001 P001 标准通过",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <txn_code>CRD_ADMIT</txn_code>\n  <tra_id>{{traId}}</tra_id>\n  <request_time>{{requestTime}}</request_time>\n  <request_no>{{requestNo}}</request_no>\n  <customer_id>C10001</customer_id>\n  <product_id>P001</product_id>\n  <id_no>310101199001011234</id_no>\n  <mobile>13800000001</mobile>\n  <apply_amount>80000</apply_amount>\n  <apply_term>12</apply_term>\n  <apply_city>SHANGHAI</apply_city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/credit/gateway",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "credit",
+                "gateway"
+              ]
+            },
+            "description": "标准通过链路。通常会查客户、产品、黑名单、历史，并调用 credit-score、fraud、internal risk。"
+          }
+        },
+        {
+          "name": "CRD_ADMIT C10003 P001 新客加强校验",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <txn_code>CRD_ADMIT</txn_code>\n  <tra_id>{{traId}}</tra_id>\n  <request_time>{{requestTime}}</request_time>\n  <request_no>{{requestNo}}</request_no>\n  <customer_id>C10003</customer_id>\n  <product_id>P001</product_id>\n  <id_no>310101200301011236</id_no>\n  <mobile>13800000003</mobile>\n  <apply_amount>50000</apply_amount>\n  <apply_term>12</apply_term>\n  <apply_city>SHANGHAI</apply_city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/credit/gateway",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "credit",
+                "gateway"
+              ]
+            },
+            "description": "新客链路。会额外命中联系人稳定性子调用 `/mock/contact-stability`。"
+          }
+        },
+        {
+          "name": "CRD_ADMIT C10007 P001 黑名单拒绝",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <txn_code>CRD_ADMIT</txn_code>\n  <tra_id>{{traId}}</tra_id>\n  <request_time>{{requestTime}}</request_time>\n  <request_no>{{requestNo}}</request_no>\n  <customer_id>C10007</customer_id>\n  <product_id>P001</product_id>\n  <id_no>310101198401011240</id_no>\n  <mobile>13800000007</mobile>\n  <apply_amount>60000</apply_amount>\n  <apply_term>12</apply_term>\n  <apply_city>BEIJING</apply_city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/credit/gateway",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "credit",
+                "gateway"
+              ]
+            },
+            "description": "短链路。命中黑名单后快速拒绝，不会继续走征信和内部风险。"
+          }
+        },
+        {
+          "name": "CRD_ADMIT C10009 P001 收入不足拒绝",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <txn_code>CRD_ADMIT</txn_code>\n  <tra_id>{{traId}}</tra_id>\n  <request_time>{{requestTime}}</request_time>\n  <request_no>{{requestNo}}</request_no>\n  <customer_id>C10009</customer_id>\n  <product_id>P001</product_id>\n  <id_no>310101199701011242</id_no>\n  <mobile>13800000009</mobile>\n  <apply_amount>30000</apply_amount>\n  <apply_term>12</apply_term>\n  <apply_city>SUZHOU</apply_city>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/credit/gateway",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "credit",
+                "gateway"
+              ]
+            },
+            "description": "短链路。收入不足，通常只查客户和产品就会拒绝。"
+          }
+        }
+      ]
+    },
+    {
+      "name": "CRD_LIMIT 授信",
+      "description": "授信请求在准入基础上继续走内部风险和内部定价，并按客户情况触发多头借贷、收入证明、雇佣信息等差异链路。",
+      "item": [
+        {
+          "name": "CRD_LIMIT C10001 P001 标准授信",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <txn_code>CRD_LIMIT</txn_code>\n  <tra_id>{{traId}}</tra_id>\n  <request_time>{{requestTime}}</request_time>\n  <request_no>{{requestNo}}</request_no>\n  <customer_id>C10001</customer_id>\n  <product_id>P001</product_id>\n  <apply_amount>80000</apply_amount>\n  <apply_term>12</apply_term>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/credit/gateway",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "credit",
+                "gateway"
+              ]
+            },
+            "description": "标准授信链路。会命中外部征信/反欺诈、内部风险、内部定价和审计落库。"
+          }
+        },
+        {
+          "name": "CRD_LIMIT C10005 P002 高风险降额",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<request>\n  <txn_code>CRD_LIMIT</txn_code>\n  <tra_id>{{traId}}</tra_id>\n  <request_time>{{requestTime}}</request_time>\n  <request_no>{{requestNo}}</request_no>\n  <customer_id>C10005</customer_id>\n  <product_id>P002</product_id>\n  <apply_amount>120000</apply_amount>\n  <apply_term>12</apply_term>\n</request>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/credit/gateway",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "credit",
+                "gateway"
+              ]
+            },
+            "description": "长链路。会额外走 `/mock/multi-loan`，查 `credit_income_proof` / `credit_employment`，并写风险策略日志。"
+          }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const now = new Date();",
+          "const pad = (n, w) => String(n).padStart(w, '0');",
+          "const requestTime = now.getFullYear() + pad(now.getMonth() + 1, 2) + pad(now.getDate(), 2) + pad(now.getHours(), 2) + pad(now.getMinutes(), 2) + pad(now.getSeconds(), 2) + pad(now.getMilliseconds(), 3);",
+          "const traId = requestTime + String(Math.floor(Math.random() * 10));",
+          "const requestNo = 'REQ-' + requestTime + '-' + pad(Math.floor(Math.random() * 1000), 3);",
+          "pm.collectionVariables.set('requestTime', requestTime);",
+          "pm.collectionVariables.set('traId', traId);",
+          "pm.collectionVariables.set('requestNo', requestNo);",
+          "pm.variables.set('requestTime', requestTime);",
+          "pm.variables.set('traId', traId);",
+          "pm.variables.set('requestNo', requestNo);"
+        ]
+      }
+    }
+  ]
+}

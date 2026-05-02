@@ -3,7 +3,7 @@
     <n-space justify="space-between">
       <n-h2 style="margin:0">测试套件</n-h2>
       <n-space>
-        <n-select v-model:value="filterSuiteType" clearable :options="suiteTypeOptions" placeholder="套件类型" style="width: 140px" @update:value="load" />
+        <n-select v-model:value="filterSuiteType" clearable :options="suiteTypeOptions" placeholder="套件类型" style="width: 140px" @update:value="reloadFromFirstPage" />
         <n-button
           v-if="canEdit && selectedSuiteIds.length > 0"
           type="error"
@@ -16,13 +16,20 @@
       </n-space>
     </n-space>
 
-    <n-empty v-if="!loading && suites.length === 0" description="暂无测试套件，可先创建一个套件" style="padding: 48px 0" />
+    <n-empty v-if="!loading && suites.length === 0" description="暂无测试套件" style="padding: 48px 0">
+      <template #extra>
+        <n-space vertical align="center" :size="8" style="margin-top:4px">
+          <n-text depth="3" style="font-size:13px">将多个测试用例组合成套件，支持一键批量回放</n-text>
+          <n-button v-if="canEdit" type="primary" size="small" @click="openCreate">+ 新建套件</n-button>
+        </n-space>
+      </template>
+    </n-empty>
     <n-data-table
       v-else
       :columns="columns"
       :data="suites"
       :loading="loading"
-      :pagination="{ pageSize: 10 }"
+      :pagination="pagination"
       :row-key="(row: any) => row.id"
       remote
       v-model:checked-row-keys="selectedSuiteIds"
@@ -81,14 +88,25 @@
 
   <!-- 添加用例弹窗 -->
   <n-modal v-model:show="showAddCase" title="添加用例到套件" preset="card" style="width:500px">
-    <n-select
-      v-model:value="selectedCaseIds"
-      multiple
-      filterable
-      :loading="casesLoading"
-      :options="caseOptions"
-      placeholder="选择用例（可多选）"
-    />
+    <n-space vertical :size="12">
+      <n-select
+        v-model:value="caseSessionFilter"
+        :options="recordingSessionOptions"
+        :loading="recordingSessionsLoading"
+        clearable
+        filterable
+        placeholder="按录制会话筛选"
+        @update:value="loadCaseOptions"
+      />
+      <n-select
+        v-model:value="selectedCaseIds"
+        multiple
+        filterable
+        :loading="casesLoading"
+        :options="caseOptions"
+        placeholder="选择用例（可多选）"
+      />
+    </n-space>
     <template #footer>
       <n-space justify="end">
         <n-button @click="showAddCase = false">取消</n-button>
@@ -99,15 +117,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, h } from 'vue'
+import { computed, reactive, ref, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { NSpace, NH2, NButton, NDataTable, NEmpty, NModal, NForm, NFormItem, NInput, NSelect, NTag, NText, NDrawer, NDrawerContent, NPopconfirm, useMessage } from 'naive-ui'
 import { suiteApi } from '@/api/suites'
 import { formatDateTime } from '@/utils/format'
 import { testCaseApi } from '@/api/testcases'
 import { applicationApi } from '@/api/applications'
+import { recordingApi } from '@/api/recordings'
 import { useUserStore } from '@/store/user'
 import { defaultSortState, resolveSortOrder, toApiSortOrder, updateSortState } from '@/utils/tableSort'
+import { lastValidPage, loadPagedData, unpackPagedResponse } from '@/utils/pagination'
 
 const router = useRouter()
 const message = useMessage()
@@ -128,8 +148,28 @@ const suiteDetail = ref<any>(null)
 const caseOptions = ref<any[]>([])
 const casesLoading = ref(false)
 const selectedCaseIds = ref<number[]>([])
+const caseSessionFilter = ref<number | null>(null)
+const recordingSessionsLoading = ref(false)
+const recordingSessionOptions = ref<any[]>([])
 const selectedSuiteIds = ref<(string | number)[]>([])
 const sortState = ref(defaultSortState('created_at'))
+const pagination = reactive({
+  page: 1,
+  pageSize: 10,
+  itemCount: 0,
+  pageSizes: [10, 20, 50, 100],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 个套件`,
+  onUpdatePage: (page: number) => {
+    pagination.page = page
+    void load()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    pagination.pageSize = pageSize
+    pagination.page = 1
+    void load()
+  },
+})
 const createForm = ref({ name: '', description: '', suite_type: 'regression' })
 const autoSmokeForm = ref({ application_id: null as number | null, name: '', description: '' })
 const appOptions = ref<any[]>([])
@@ -181,22 +221,36 @@ const caseCols = [
 async function load() {
   loading.value = true
   try {
-    suites.value = (await suiteApi.list({
+    const page = await loadPagedData<any>(suiteApi.list, {
       suite_type: filterSuiteType.value || undefined,
       sort_by: sortState.value.columnKey,
       sort_order: toApiSortOrder(sortState.value.order),
-    })).data
+    }, pagination.page, pagination.pageSize, 100)
+    suites.value = page.items
+    pagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && pagination.page > 1) {
+      pagination.page = lastValidPage(page.total, pagination.pageSize)
+      void load()
+      return
+    }
     selectedSuiteIds.value = []
   } catch (error: any) {
     suites.value = []
+    pagination.itemCount = 0
     message.error(error.response?.data?.detail || '加载套件失败')
   } finally { loading.value = false }
 }
 
+function reloadFromFirstPage() {
+  pagination.page = 1
+  void load()
+}
+
 async function loadApps() {
   try {
-    const res = await applicationApi.list()
-    appOptions.value = res.data.map((app: any) => ({ label: app.name, value: app.id }))
+    const res = await applicationApi.list({ limit: 100 })
+    const page = unpackPagedResponse<any>(res.data)
+    appOptions.value = page.items.map((app: any) => ({ label: app.name, value: app.id }))
   } catch {
     appOptions.value = []
   }
@@ -259,8 +313,12 @@ async function openDetail(suite: any) {
 async function loadCaseOptions() {
   casesLoading.value = true
   try {
-    const casesRes = await testCaseApi.list({ limit: 500 })
-    caseOptions.value = casesRes.data.map((c: any) => ({
+    const casesRes = await testCaseApi.list({
+      limit: 1000,
+      recording_session_id: caseSessionFilter.value || undefined,
+    })
+    const page = unpackPagedResponse<any>(casesRes.data)
+    caseOptions.value = page.items.map((c: any) => ({
       label: `[${c.request_method}] ${c.name}${c.transaction_code ? ` [${c.transaction_code}]` : ''}`,
       value: c.id,
     }))
@@ -272,8 +330,31 @@ async function loadCaseOptions() {
   }
 }
 
+async function loadRecordingSessionOptions() {
+  recordingSessionsLoading.value = true
+  try {
+    const res = await recordingApi.listSessions({
+      limit: 100,
+      sort_by: 'created_at',
+      sort_order: 'desc',
+      include_total: true,
+    })
+    const page = unpackPagedResponse<any>(res.data)
+    recordingSessionOptions.value = page.items.map((session: any) => ({
+      label: `#${session.id} ${session.name}（${formatDateTime(session.created_at)}）`,
+      value: session.id,
+    }))
+  } catch (error: any) {
+    recordingSessionOptions.value = []
+    message.error(error.response?.data?.detail || '加载录制会话失败')
+  } finally {
+    recordingSessionsLoading.value = false
+  }
+}
+
 async function openAddCase() {
-  await loadCaseOptions()
+  caseSessionFilter.value = null
+  await Promise.all([loadRecordingSessionOptions(), loadCaseOptions()])
   selectedCaseIds.value = []
   showAddCase.value = true
 }
@@ -318,6 +399,7 @@ async function deleteSelectedSuites() {
 
 function handleSorterChange(sorter: any) {
   sortState.value = updateSortState(sorter, 'created_at')
+  pagination.page = 1
   void load()
 }
 

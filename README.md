@@ -20,6 +20,11 @@ cd /home/recording_playback_platform
 ./start-all.sh all
 ```
 
+说明：
+
+- 根目录 `start-all.sh` 当前内置支持的平台与被测系统启动项为 `platform` 和 `didi`
+- `waimai`、`loan-system` 仍可从各自子目录按 README / `start.sh` 单独启动
+
 入口文档：
 
 - 平台说明：`platform/README.md`

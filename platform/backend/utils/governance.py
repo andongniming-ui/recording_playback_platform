@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+from urllib.parse import parse_qsl, urlsplit
 from xml.etree import ElementTree as ET
 
 GOVERNANCE_STATUSES = {"raw", "candidate", "approved", "rejected", "archived"}
@@ -106,12 +107,33 @@ def _search_xml_for_transaction_code(text: str, candidate_keys: set[str]) -> str
     return None
 
 
+def _search_query_for_transaction_code(text: str, candidate_keys: set[str]) -> str | None:
+    if "?" not in text:
+        return None
+    try:
+        query = urlsplit(text).query
+    except Exception:
+        return None
+    if not query:
+        return None
+    for key, value in parse_qsl(query, keep_blank_values=False):
+        normalized_key = key.replace("-", "_").lower()
+        if normalized_key in candidate_keys:
+            code = _normalize_text(value)
+            if code:
+                return code
+    return None
+
+
 def infer_transaction_code(*values: str | None, candidate_keys=None) -> str | None:
     resolved_keys = _resolve_transaction_code_keys(candidate_keys)
     for raw in values:
         text = _normalize_text(raw)
         if not text:
             continue
+        query_value = _search_query_for_transaction_code(text, resolved_keys)
+        if query_value:
+            return query_value
         xml_value = _search_xml_for_transaction_code(text, resolved_keys)
         if xml_value:
             return xml_value

@@ -12,6 +12,7 @@ from api.v1.replays import _build_result_source_context, _count_sub_call_nodes
 from api.v1.replays import get_html_report, get_replay_result, list_results
 from core.replay_executor import _execute_single, run_replay_job
 import database
+from models.audit import ReplayAuditLog
 from models.recording import Recording
 from models.replay import ReplayJob, ReplayResult
 from models.test_case import TestCase as CaseModel
@@ -243,6 +244,58 @@ def test_list_replay_results(client, admin_headers, tc_payload):
 
 
 @pytest.mark.asyncio
+async def test_replay_audit_logs_capture_execution_flow(client, admin_headers, tc_payload, created_app):
+    tc = _create_test_case(
+        client,
+        admin_headers,
+        {
+            **tc_payload,
+            "application_id": created_app["id"],
+        },
+    )
+    job = _create_replay_job(client, admin_headers, [tc["id"]]).json()
+
+    class DummyResponse:
+        status_code = 200
+        text = '{"ok": true}'
+        headers = {}
+
+    with patch("httpx.AsyncClient.request", AsyncMock(return_value=DummyResponse())):
+        await run_replay_job(job["id"])
+
+    resp = client.get(f"/api/v1/replays/{job['id']}/audit-logs", headers=admin_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    event_types = {item["event_type"] for item in body}
+    assert {"job_started", "case_started", "request_sent", "response_received", "case_finished", "job_finished"} <= event_types
+    assert any(
+        item["event_type"] == "case_finished"
+        and item["detail"]
+        and json.loads(item["detail"]).get("status") in {"PASS", "FAIL", "ERROR", "TIMEOUT"}
+        for item in body
+    )
+    case_finished_entry = next(item for item in body if item["event_type"] == "case_finished")
+
+    filtered_resp = client.get(
+        f"/api/v1/replays/{job['id']}/audit-logs",
+        params={
+            "event_type": "case_finished",
+            "case_id": tc["id"],
+            "result_id": case_finished_entry["result_id"],
+        },
+        headers=admin_headers,
+    )
+    assert filtered_resp.status_code == 200, filtered_resp.text
+    filtered_body = filtered_resp.json()
+    assert len(filtered_body) == 1
+    assert filtered_body[0]["test_case_id"] == tc["id"]
+
+    async with database.async_session_factory() as db:
+        result = await db.execute(select(ReplayAuditLog).where(ReplayAuditLog.job_id == job["id"]))
+        assert len(result.scalars().all()) >= 6
+
+
+@pytest.mark.asyncio
 async def test_execute_single_updates_placeholder_instead_of_inserting_duplicate(client, admin_headers, tc_payload):
     tc = _create_test_case(client, admin_headers, tc_payload)
     job = _create_replay_job(client, admin_headers, [tc["id"]]).json()
@@ -399,7 +452,7 @@ async def test_execute_single_loads_and_removes_mock_when_enabled():
         ignore_fields=None,
         assert_rules=None,
     )
-    recording = SimpleNamespace(record_id="mock-record-1")
+    recording = SimpleNamespace(record_id="mock-record-1", sub_calls=None)
 
     class DummyResponse:
         status_code = 200
@@ -534,7 +587,11 @@ async def test_execute_single_applies_transaction_mappings_for_request_and_respo
     assert "<name>张三</name>" not in sent_body
     assert "<debug_flag>" not in sent_body
     saved_kwargs = save_mock.await_args.kwargs
-    assert saved_kwargs["actual_response"] == "<response><cst_name>张三</cst_name><debug_flag>1</debug_flag></response>"
+    # Bug 1 fix: actual_response should be the transaction-mapped body, not raw.
+    # Response rules: rename cst_name→name, delete debug_flag.
+    assert "<name>张三</name>" in saved_kwargs["actual_response"]
+    assert "<cst_name>" not in saved_kwargs["actual_response"]
+    assert "<debug_flag>" not in saved_kwargs["actual_response"]
 
 
 @pytest.mark.asyncio

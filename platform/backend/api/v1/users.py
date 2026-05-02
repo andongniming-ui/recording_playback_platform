@@ -1,31 +1,24 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete, asc, desc
+from sqlalchemy import select, func, delete
 
 from database import get_db
 from models.user import User
 from schemas.user import UserCreate, UserUpdate, UserOut
-from schemas.common import BulkDeleteResponse, BulkIdsRequest
+from schemas.common import BulkDeleteResponse, BulkIdsRequest, PageOut
 from core.security import get_password_hash, require_admin
+from utils.query import apply_ordering
 
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-def _normalize_sort_order(value: str | None) -> str:
-    return "asc" if (value or "").lower() == "asc" else "desc"
-
-
-def _apply_ordering(stmt, primary_column, id_column, sort_order: str):
-    direction = asc if _normalize_sort_order(sort_order) == "asc" else desc
-    return stmt.order_by(direction(primary_column), direction(id_column))
-
-
-@router.get("", response_model=list[UserOut])
+@router.get("", response_model=PageOut[UserOut] | list[UserOut])
 async def list_users(
     sort_by: str = Query("created_at"),
     sort_order: str = Query("desc"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
+    include_total: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ):
@@ -36,9 +29,17 @@ async def list_users(
         "id": User.id,
     }
     primary_column = sort_mapping.get(sort_by, User.created_at)
-    stmt = _apply_ordering(select(User), primary_column, User.id, sort_order).offset(skip).limit(limit)
+    base_stmt = select(User)
+    total = None
+    if include_total:
+        total_result = await db.execute(select(func.count()).select_from(base_stmt.subquery()))
+        total = total_result.scalar_one()
+    stmt = apply_ordering(base_stmt, primary_column, User.id, sort_order).offset(skip).limit(limit)
     result = await db.execute(stmt)
-    return result.scalars().all()
+    items = result.scalars().all()
+    if include_total:
+        return PageOut[UserOut](items=items, total=total or 0, skip=skip, limit=limit)
+    return items
 
 
 @router.post("/bulk-delete", response_model=BulkDeleteResponse)

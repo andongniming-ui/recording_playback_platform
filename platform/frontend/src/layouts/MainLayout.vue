@@ -13,7 +13,12 @@
       @expand="collapsed = false"
     >
       <div class="brand" @click="collapsed = !collapsed">
-        <div class="brand-mark">AR</div>
+        <div class="brand-mark">
+          <svg width="26" height="20" viewBox="0 0 26 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="7" cy="10" r="6" fill="#0f2437" fill-opacity="0.75" />
+            <path d="M15.5 10L24 5.5V14.5L15.5 10Z" fill="#0f2437" fill-opacity="0.85" />
+          </svg>
+        </div>
         <div v-if="!collapsed" class="brand-copy">
           <div class="brand-title">AREX Recorder</div>
           <div class="brand-subtitle">录制、回放、对比</div>
@@ -48,6 +53,9 @@
         <n-space align="center" size="small">
           <div class="topbar-date">{{ todayLabel }}</div>
           <n-button v-if="route.path !== '/dashboard'" quaternary size="small" @click="router.push('/dashboard')">总览</n-button>
+          <n-dropdown :options="userMenuOptions" @select="handleUserAction">
+            <n-button quaternary size="small">{{ userStore.username || '用户' }}</n-button>
+          </n-dropdown>
         </n-space>
       </header>
 
@@ -63,12 +71,14 @@
 <script setup lang="ts">
 import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NButton, NLayout, NLayoutContent, NLayoutSider, NMenu, NSpace } from 'naive-ui'
-import type { MenuOption } from 'naive-ui'
+import { NButton, NDropdown, NLayout, NLayoutContent, NLayoutSider, NMenu, NSpace } from 'naive-ui'
+import type { DropdownOption, MenuOption } from 'naive-ui'
+import { useUserStore } from '@/store/user'
 const collapsed = ref(false)
 const isCompact = ref(false)
 const router = useRouter()
 const route = useRoute()
+const userStore = useUserStore()
 
 const siderWidth = computed(() => (isCompact.value ? 72 : 252))
 
@@ -96,7 +106,8 @@ const activeKey = computed(() => {
   if (p.startsWith('/recording')) return 'recording'
   if (p.startsWith('/testcases')) return 'testcases'
   if (p === '/replay') return 'replay'
-  if (p.startsWith('/replay/history') || p.startsWith('/results')) return 'replay-history'
+  if (p.startsWith('/replay/history')) return 'replay-history'
+  if (p.startsWith('/results')) return 'results'
   if (p.startsWith('/suites')) return 'suites'
   if (p.startsWith('/schedule')) return 'schedule'
   if (p.startsWith('/compare')) return 'compare'
@@ -113,6 +124,7 @@ const pageTitleMap: Record<string, string> = {
   testcases: '测试用例库',
   replay: '发起回放',
   'replay-history': '回放历史',
+  results: '执行结果',
   suites: '回放套件',
   schedule: '定时回放',
   compare: '双环境对比',
@@ -138,6 +150,7 @@ const menuOptions: MenuOption[] = [
   { label: '测试用例库', key: 'testcases', icon: () => h('span', '例') },
   { label: '发起回放', key: 'replay', icon: () => h('span', '回') },
   { label: '回放历史', key: 'replay-history', icon: () => h('span', '史') },
+  { label: '执行结果', key: 'results', icon: () => h('span', '结') },
   { label: '回放套件', key: 'suites', icon: () => h('span', '套') },
   { label: '定时回放', key: 'schedule', icon: () => h('span', '定') },
   { label: '双环境对比', key: 'compare', icon: () => h('span', '比') },
@@ -146,11 +159,19 @@ const menuOptions: MenuOption[] = [
   { label: '平台指引', key: 'settings', icon: () => h('span', '指') },
 ]
 
+const firstVersionHiddenMenuKeys = new Set(['compare', 'ci', 'users', 'settings'])
 const visibleMenuOptions = computed(() =>
-  menuOptions.filter((item) =>
-    !['compare', 'ci', 'users', 'settings'].includes(String(item.key)),
-  ),
+  menuOptions.filter((item) => !firstVersionHiddenMenuKeys.has(String(item.key))),
 )
+
+const userMenuOptions = computed<DropdownOption[]>(() => [
+  {
+    label: `${userStore.username || '用户'} · ${userStore.role || 'viewer'}`,
+    key: 'profile',
+    disabled: true,
+  },
+  { label: '退出登录', key: 'logout' },
+])
 
 function handleNav(key: string) {
   if (key === 'replay-history') {
@@ -158,6 +179,17 @@ function handleNav(key: string) {
     return
   }
   router.push(`/${key}`)
+}
+
+function handleUserAction(key: string) {
+  if (key === 'settings') {
+    router.push('/settings')
+    return
+  }
+  if (key === 'logout') {
+    userStore.clearUser()
+    router.push('/login')
+  }
 }
 </script>
 

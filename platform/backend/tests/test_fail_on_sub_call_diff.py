@@ -115,6 +115,19 @@ def test_sub_calls_have_diff_returns_true_when_extra_actual_call():
     assert _sub_calls_have_diff(expected, actual) is True
 
 
+def test_strict_sub_call_failure_detects_missing_actual_sub_calls():
+    from core.replay_executor import _strict_sub_call_failure
+
+    expected = json.dumps([{"type": "MySQL", "operation": "SELECT customer"}])
+    failure = _strict_sub_call_failure(
+        expected_sub_calls_json=expected,
+        actual_sub_calls_json=None,
+    )
+
+    assert failure is not None
+    assert failure[0] == "sub_call_missing"
+
+
 # ---------------------------------------------------------------------------
 # Integration: fail_on_sub_call_diff=True triggers FAIL when sub-calls differ
 # ---------------------------------------------------------------------------
@@ -220,7 +233,7 @@ async def test_fail_on_sub_call_diff_true_downgrades_pass_to_fail(client, admin_
 
 @pytest.mark.asyncio
 async def test_fail_on_sub_call_diff_false_keeps_pass_when_sub_calls_differ(client, admin_headers, created_app):
-    """When fail_on_sub_call_diff=False (default), sub-call differences do NOT affect status."""
+    """When fail_on_sub_call_diff=False, sub-call differences remain display-only."""
 
     async with database.async_session_factory() as db:
         session_resp = client.post(
@@ -265,7 +278,7 @@ async def test_fail_on_sub_call_diff_false_keeps_pass_when_sub_calls_differ(clie
         json={
             "case_ids": [tc["id"]],
             "application_id": created_app["id"],
-            "fail_on_sub_call_diff": False,   # default: sub-call diff is display-only
+            "fail_on_sub_call_diff": False,
         },
         headers=admin_headers,
     )
@@ -293,3 +306,4 @@ async def test_fail_on_sub_call_diff_false_keeps_pass_when_sub_calls_differ(clie
     assert result_row.status == "PASS", (
         f"Expected PASS when fail_on_sub_call_diff=False, got {result_row.status}"
     )
+

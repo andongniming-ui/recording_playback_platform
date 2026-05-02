@@ -2,27 +2,19 @@
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, asc, desc
+from sqlalchemy import select, delete, func
 
 from core.replay_context import infer_application_id_for_case_ids
 from database import get_db
 from models.schedule import Schedule
 from models.suite import Suite, SuiteCase
 from schemas.schedule import ScheduleCreate, ScheduleUpdate, ScheduleOut
-from schemas.common import BulkDeleteResponse, BulkIdsRequest
+from schemas.common import BulkDeleteResponse, BulkIdsRequest, PageOut
 from core.security import require_viewer, require_editor
 from core.scheduler import add_schedule, remove_schedule, trigger_now
+from utils.query import apply_ordering
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
-
-
-def _normalize_sort_order(value: str | None) -> str:
-    return "asc" if (value or "").lower() == "asc" else "desc"
-
-
-def _apply_ordering(stmt, primary_column, id_column, sort_order: str):
-    direction = asc if _normalize_sort_order(sort_order) == "asc" else desc
-    return stmt.order_by(direction(primary_column), direction(id_column))
 
 
 async def _validate_suite_exists(suite_id: Optional[int], db: AsyncSession):
@@ -62,12 +54,13 @@ async def _validate_schedule_can_run(schedule: Schedule, db: AsyncSession):
         )
 
 
-@router.get("", response_model=list[ScheduleOut])
+@router.get("", response_model=PageOut[ScheduleOut] | list[ScheduleOut])
 async def list_schedules(
     sort_by: str = Query("created_at"),
     sort_order: str = Query("desc"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
+    include_total: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_viewer),
 ):
@@ -78,9 +71,17 @@ async def list_schedules(
         "id": Schedule.id,
     }
     primary_column = sort_mapping.get(sort_by, Schedule.created_at)
-    stmt = _apply_ordering(select(Schedule), primary_column, Schedule.id, sort_order).offset(skip).limit(limit)
+    base_stmt = select(Schedule)
+    total = None
+    if include_total:
+        total_result = await db.execute(select(func.count()).select_from(base_stmt.subquery()))
+        total = total_result.scalar_one()
+    stmt = apply_ordering(base_stmt, primary_column, Schedule.id, sort_order).offset(skip).limit(limit)
     result = await db.execute(stmt)
-    return result.scalars().all()
+    items = result.scalars().all()
+    if include_total:
+        return PageOut[ScheduleOut](items=items, total=total or 0, skip=skip, limit=limit)
+    return items
 
 
 @router.post("/bulk-delete", response_model=BulkDeleteResponse)

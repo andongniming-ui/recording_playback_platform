@@ -1,0 +1,21 @@
+server:
+  port: 20082
+
+spring:
+  application:
+    name: rental-compare
+  datasource:
+    url: jdbc:mysql://localhost:3307/rental_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8
+    username: root
+    password: root123
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+
+logging:
+  level:
+    com.rental: DEBUG
+    org.springframework.jdbc: DEBUG
+  file:
+    path: /home/recording_playback_platform/runtime/logs/rental-compare

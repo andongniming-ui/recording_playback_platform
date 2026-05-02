@@ -3,8 +3,8 @@ import secrets
 from datetime import timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.replay_context import infer_application_id_for_case_ids
@@ -14,6 +14,7 @@ from models.ci import CiToken
 from models.replay import ReplayJob, ReplayResult
 from models.suite import Suite, SuiteCase
 from schemas.ci import CiResultResponse, CiTokenCreate, CiTokenOut, CiTriggerRequest
+from schemas.common import PageOut
 from utils.timezone import now_beijing
 
 router = APIRouter(prefix="/ci", tags=["ci"])
@@ -28,7 +29,7 @@ async def _get_ci_token(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing CI token")
     plain_token = authorization.removeprefix("Token ").strip()
 
-    result = await db.execute(select(CiToken).where(CiToken.is_active == True))
+    result = await db.execute(select(CiToken).where(CiToken.is_active.is_(True)))
     tokens = result.scalars().all()
     for token in tokens:
         if verify_password(plain_token, token.token_hash):
@@ -40,10 +41,22 @@ async def _get_ci_token(
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid CI token")
 
 
-@router.get("/tokens", response_model=list[CiTokenOut])
-async def list_tokens(db: AsyncSession = Depends(get_db), _=Depends(require_admin)):
-    result = await db.execute(select(CiToken).order_by(CiToken.created_at.desc()))
-    return result.scalars().all()
+@router.get("/tokens", response_model=PageOut[CiTokenOut] | list[CiTokenOut])
+async def list_tokens(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    include_total: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_admin),
+):
+    stmt = select(CiToken).order_by(CiToken.created_at.desc()).offset(skip).limit(limit)
+    result = await db.execute(stmt)
+    items = result.scalars().all()
+    if not include_total:
+        return items
+
+    total = await db.scalar(select(func.count()).select_from(CiToken))
+    return PageOut[CiTokenOut](items=items, total=total or 0, skip=skip, limit=limit)
 
 
 @router.post("/tokens", response_model=CiTokenOut, status_code=201)

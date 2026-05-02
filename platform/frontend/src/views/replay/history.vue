@@ -21,7 +21,7 @@
           clearable
           placeholder="搜索任务名称或任务 ID"
           style="width: 220px"
-          @update:value="loadJobs"
+          @update:value="reloadJobsFromFirstPage"
         />
         <n-select
           v-model:value="filterAppId"
@@ -29,7 +29,7 @@
           clearable
           placeholder="全部应用"
           style="width: 220px"
-          @update:value="loadJobs"
+          @update:value="reloadJobsFromFirstPage"
         />
         <n-select
           v-model:value="filterStatus"
@@ -37,14 +37,14 @@
           clearable
           placeholder="全部状态"
           style="width: 160px"
-          @update:value="loadJobs"
+          @update:value="reloadJobsFromFirstPage"
         />
         <n-date-picker
           v-model:value="dateRange"
           type="datetimerange"
           clearable
           style="width: 360px"
-          @update:value="loadJobs"
+          @update:value="reloadJobsFromFirstPage"
         />
       </n-space>
 
@@ -53,7 +53,7 @@
         :columns="columns"
         :data="jobs"
         :loading="loading"
-        :pagination="{ pageSize: 12 }"
+        :pagination="pagination"
         :row-key="(row: JobRow) => row.id"
         remote
         v-model:checked-row-keys="selectedJobIds"
@@ -64,7 +64,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   NButton,
@@ -84,6 +84,7 @@ import { replayApi } from '@/api/replays'
 import { useUserStore } from '@/store/user'
 import { formatDateTime } from '@/utils/format'
 import { defaultSortState, resolveSortOrder, toApiSortOrder, updateSortState } from '@/utils/tableSort'
+import { lastValidPage, loadPagedData, unpackPagedResponse } from '@/utils/pagination'
 
 type JobRow = {
   id: number
@@ -112,6 +113,23 @@ const appOptions = ref<SelectOption[]>([])
 const appNameMap = ref<Record<number, string>>({})
 const selectedJobIds = ref<(string | number)[]>([])
 const sortState = ref(defaultSortState('created_at'))
+const pagination = reactive({
+  page: 1,
+  pageSize: 12,
+  itemCount: 0,
+  pageSizes: [12, 24, 50, 100],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 个任务`,
+  onUpdatePage: (page: number) => {
+    pagination.page = page
+    void loadJobs()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    pagination.pageSize = pageSize
+    pagination.page = 1
+    void loadJobs()
+  },
+})
 
 const statusTypeMap: Record<string, NonNullable<TagProps['type']>> = {
   DONE: 'success',
@@ -205,8 +223,9 @@ async function openReport(jobId: number) {
 async function loadApps() {
   try {
     const res = await applicationApi.list({ limit: 100 })
-    appOptions.value = res.data.map((item: { id: number; name: string }) => ({ label: item.name, value: item.id }))
-    appNameMap.value = Object.fromEntries(res.data.map((item: { id: number; name: string }) => [item.id, item.name]))
+    const page = unpackPagedResponse<{ id: number; name: string }>(res.data)
+    appOptions.value = page.items.map((item) => ({ label: item.name, value: item.id }))
+    appNameMap.value = Object.fromEntries(page.items.map((item) => [item.id, item.name]))
   } catch (error: any) {
     appOptions.value = []
     appNameMap.value = {}
@@ -217,7 +236,7 @@ async function loadApps() {
 async function loadJobs() {
   loading.value = true
   try {
-    const params: Record<string, string | number> = { limit: 100 }
+    const params: Record<string, string | number | boolean> = {}
     if (filterSearch.value.trim()) params.search = filterSearch.value.trim()
     if (filterAppId.value != null) params.application_id = filterAppId.value
     if (filterStatus.value) params.status = filterStatus.value
@@ -227,15 +246,27 @@ async function loadJobs() {
     }
     params.sort_by = sortState.value.columnKey
     params.sort_order = toApiSortOrder(sortState.value.order)
-    const res = await replayApi.list(params)
-    jobs.value = res.data
+    const page = await loadPagedData<JobRow>(replayApi.list, params, pagination.page, pagination.pageSize, 100)
+    jobs.value = page.items
+    pagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && pagination.page > 1) {
+      pagination.page = lastValidPage(page.total, pagination.pageSize)
+      void loadJobs()
+      return
+    }
     selectedJobIds.value = []
   } catch (error: any) {
     jobs.value = []
+    pagination.itemCount = 0
     message.error(error.response?.data?.detail || '加载回放历史失败')
   } finally {
     loading.value = false
   }
+}
+
+function reloadJobsFromFirstPage() {
+  pagination.page = 1
+  void loadJobs()
 }
 
 async function deleteJob(jobId: number) {
@@ -261,6 +292,7 @@ async function deleteSelectedJobs() {
 
 function handleSorterChange(sorter: any) {
   sortState.value = updateSortState(sorter, 'created_at')
+  pagination.page = 1
   void loadJobs()
 }
 

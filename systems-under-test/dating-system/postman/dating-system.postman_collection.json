@@ -1,0 +1,236 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-dating0000001",
+    "name": "dating-system",
+    "description": "AREX Recorder demo target system - 交友平台. Import into Postman and select a dating-system environment. Each request auto-generates an 18-digit trace_id and sends it in the XML body so logs can be searched end-to-end.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:28090"
+    },
+    {
+      "key": "traceId",
+      "value": ""
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Auto-generate 18-digit traceId for each request",
+          "let traceId = pm.variables.get('traceId');",
+          "if (!traceId) {",
+          "    let d = Math.floor(Math.random() * 9) + 1;",
+          "    let rest = '';",
+          "    for (let i = 1; i < 18; i++) {",
+          "        rest += Math.floor(Math.random() * 10);",
+          "    }",
+          "    traceId = d + rest;",
+          "}",
+          "pm.variables.set('traceId', traceId);"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "DAT001 用户注册",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/xml"}],
+        "body": {
+          "mode": "raw",
+          "raw": "<request>\n  <tran_code>DAT001</tran_code>\n  <trace_id>{{traceId}}</trace_id>\n  <user_id>U20001</user_id>\n  <phone>13900002001</phone>\n  <gender>M</gender>\n  <age>28</age>\n  <city>BEIJING</city>\n</request>"
+        },
+        "url": {"raw": "{{baseUrl}}/api/dating/service", "host": ["{{baseUrl}}"], "path": ["api","dating","service"]},
+        "description": "交易码：DAT001\n子调用：GET /internal/dating/risk-verify（风控校验）\n数据库：INSERT t_user\ntrace_id：每次发送前自动生成 18 位数字"
+      }
+    },
+    {
+      "name": "DAT002 用户登录",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/xml"}],
+        "body": {
+          "mode": "raw",
+          "raw": "<request>\n  <tran_code>DAT002</tran_code>\n  <trace_id>{{traceId}}</trace_id>\n  <user_id>U10001</user_id>\n</request>"
+        },
+        "url": {"raw": "{{baseUrl}}/api/dating/service", "host": ["{{baseUrl}}"], "path": ["api","dating","service"]},
+        "description": "交易码：DAT002\n子调用：GET /internal/dating/device-fingerprint（设备指纹）\n数据库：INSERT t_login_log, SELECT t_user"
+      }
+    },
+    {
+      "name": "DAT003 资料更新",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/xml"}],
+        "body": {
+          "mode": "raw",
+          "raw": "<request>\n  <tran_code>DAT003</tran_code>\n  <trace_id>{{traceId}}</trace_id>\n  <user_id>U10001</user_id>\n  <msg_content>热爱旅行和摄影</msg_content>\n  <search_keyword>摄影师</search_keyword>\n</request>"
+        },
+        "url": {"raw": "{{baseUrl}}/api/dating/service", "host": ["{{baseUrl}}"], "path": ["api","dating","service"]},
+        "description": "交易码：DAT003\n子调用：GET /internal/dating/image-audit（图片审核）\n数据库：UPDATE t_user_profile"
+      }
+    },
+    {
+      "name": "DAT004 用户搜索",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/xml"}],
+        "body": {
+          "mode": "raw",
+          "raw": "<request>\n  <tran_code>DAT004</tran_code>\n  <trace_id>{{traceId}}</trace_id>\n  <user_id>U10001</user_id>\n  <search_keyword>SHANGHAI</search_keyword>\n  <search_type>CITY</search_type>\n  <gender>F</gender>\n  <city>SHANGHAI</city>\n</request>"
+        },
+        "url": {"raw": "{{baseUrl}}/api/dating/service", "host": ["{{baseUrl}}"], "path": ["api","dating","service"]},
+        "description": "交易码：DAT004\n子调用：GET /internal/dating/recommend（推荐算法）\n数据库：INSERT t_search_history, SELECT t_user"
+      }
+    },
+    {
+      "name": "DAT005 点赞喜欢",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/xml"}],
+        "body": {
+          "mode": "raw",
+          "raw": "<request>\n  <tran_code>DAT005</tran_code>\n  <trace_id>{{traceId}}</trace_id>\n  <user_id>U10001</user_id>\n  <target_user_id>U10002</target_user_id>\n  <like_type>SUPERLIKE</like_type>\n</request>"
+        },
+        "url": {"raw": "{{baseUrl}}/api/dating/service", "host": ["{{baseUrl}}"], "path": ["api","dating","service"]},
+        "description": "交易码：DAT005\n子调用：GET /internal/dating/push-notify（消息推送）\n数据库：INSERT t_like_record, UPDATE t_user_stats"
+      }
+    },
+    {
+      "name": "DAT006 匹配推荐",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/xml"}],
+        "body": {
+          "mode": "raw",
+          "raw": "<request>\n  <tran_code>DAT006</tran_code>\n  <trace_id>{{traceId}}</trace_id>\n  <user_id>U10001</user_id>\n</request>"
+        },
+        "url": {"raw": "{{baseUrl}}/api/dating/service", "host": ["{{baseUrl}}"], "path": ["api","dating","service"]},
+        "description": "交易码：DAT006\n子调用：GET /internal/dating/match-calc（匹配算法）\n数据库：INSERT t_match_record, SELECT t_user"
+      }
+    },
+    {
+      "name": "DAT007 发送消息",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/xml"}],
+        "body": {
+          "mode": "raw",
+          "raw": "<request>\n  <tran_code>DAT007</tran_code>\n  <trace_id>{{traceId}}</trace_id>\n  <user_id>U10001</user_id>\n  <target_user_id>U10002</target_user_id>\n  <msg_content>你好，很高兴认识你！</msg_content>\n  <msg_type>TEXT</msg_type>\n</request>"
+        },
+        "url": {"raw": "{{baseUrl}}/api/dating/service", "host": ["{{baseUrl}}"], "path": ["api","dating","service"]},
+        "description": "交易码：DAT007\n子调用：GET /internal/dating/sensitive-filter（敏感词过滤）\n数据库：INSERT t_message, UPDATE t_conversation"
+      }
+    },
+    {
+      "name": "DAT008 送礼物",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/xml"}],
+        "body": {
+          "mode": "raw",
+          "raw": "<request>\n  <tran_code>DAT008</tran_code>\n  <trace_id>{{traceId}}</trace_id>\n  <user_id>U10001</user_id>\n  <target_user_id>U10002</target_user_id>\n  <gift_type>ROSE</gift_type>\n  <gift_amount>9.90</gift_amount>\n</request>"
+        },
+        "url": {"raw": "{{baseUrl}}/api/dating/service", "host": ["{{baseUrl}}"], "path": ["api","dating","service"]},
+        "description": "交易码：DAT008\n子调用：GET /internal/dating/pay-gift（支付网关）\n数据库：INSERT t_gift_order, UPDATE t_wallet"
+      }
+    },
+    {
+      "name": "DAT009 VIP开通",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/xml"}],
+        "body": {
+          "mode": "raw",
+          "raw": "<request>\n  <tran_code>DAT009</tran_code>\n  <trace_id>{{traceId}}</trace_id>\n  <user_id>U10002</user_id>\n  <vip_level>1</vip_level>\n  <duration_days>30</duration_days>\n</request>"
+        },
+        "url": {"raw": "{{baseUrl}}/api/dating/service", "host": ["{{baseUrl}}"], "path": ["api","dating","service"]},
+        "description": "交易码：DAT009\n子调用：GET /internal/dating/member-verify（会员认证）\n数据库：INSERT t_vip_order, UPDATE t_user"
+      }
+    },
+    {
+      "name": "DAT010 钱包充值",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/xml"}],
+        "body": {
+          "mode": "raw",
+          "raw": "<request>\n  <tran_code>DAT010</tran_code>\n  <trace_id>{{traceId}}</trace_id>\n  <user_id>U10001</user_id>\n  <recharge_amount>100.00</recharge_amount>\n  <pay_channel>ALIPAY</pay_channel>\n</request>"
+        },
+        "url": {"raw": "{{baseUrl}}/api/dating/service", "host": ["{{baseUrl}}"], "path": ["api","dating","service"]},
+        "description": "交易码：DAT010\n子调用：GET /internal/dating/pay-recharge（第三方支付）\n数据库：INSERT t_recharge_order, UPDATE t_wallet"
+      }
+    },
+    {
+      "name": "DAT011 上传照片",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/xml"}],
+        "body": {
+          "mode": "raw",
+          "raw": "<request>\n  <tran_code>DAT011</tran_code>\n  <trace_id>{{traceId}}</trace_id>\n  <user_id>U10001</user_id>\n  <photo_url>/upload/photo_001.jpg</photo_url>\n  <is_avatar>1</is_avatar>\n</request>"
+        },
+        "url": {"raw": "{{baseUrl}}/api/dating/service", "host": ["{{baseUrl}}"], "path": ["api","dating","service"]},
+        "description": "交易码：DAT011\n子调用：GET /internal/dating/storage-upload（图片存储）\n数据库：INSERT t_photo, UPDATE t_user_stats"
+      }
+    },
+    {
+      "name": "DAT012 举报用户",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/xml"}],
+        "body": {
+          "mode": "raw",
+          "raw": "<request>\n  <tran_code>DAT012</tran_code>\n  <trace_id>{{traceId}}</trace_id>\n  <user_id>U10001</user_id>\n  <target_user_id>U10003</target_user_id>\n  <report_type>HARASSMENT</report_type>\n  <report_desc>发送不当消息</report_desc>\n</request>"
+        },
+        "url": {"raw": "{{baseUrl}}/api/dating/service", "host": ["{{baseUrl}}"], "path": ["api","dating","service"]},
+        "description": "交易码：DAT012\n子调用：GET /internal/dating/content-audit（内容审核）\n数据库：INSERT t_report, UPDATE t_user_stats"
+      }
+    },
+    {
+      "name": "DAT013 拉黑用户",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/xml"}],
+        "body": {
+          "mode": "raw",
+          "raw": "<request>\n  <tran_code>DAT013</tran_code>\n  <trace_id>{{traceId}}</trace_id>\n  <user_id>U10001</user_id>\n  <target_user_id>U10003</target_user_id>\n  <block_reason>不想看到此用户</block_reason>\n</request>"
+        },
+        "url": {"raw": "{{baseUrl}}/api/dating/service", "host": ["{{baseUrl}}"], "path": ["api","dating","service"]},
+        "description": "交易码：DAT013\n子调用：GET /internal/dating/relation-block（关系链）\n数据库：INSERT t_blacklist, UPDATE t_user_stats"
+      }
+    },
+    {
+      "name": "DAT014 活动报名",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/xml"}],
+        "body": {
+          "mode": "raw",
+          "raw": "<request>\n  <tran_code>DAT014</tran_code>\n  <trace_id>{{traceId}}</trace_id>\n  <user_id>U10001</user_id>\n  <event_id>1</event_id>\n</request>"
+        },
+        "url": {"raw": "{{baseUrl}}/api/dating/service", "host": ["{{baseUrl}}"], "path": ["api","dating","service"]},
+        "description": "交易码：DAT014\n子调用：GET /internal/dating/event-register（活动管理）\n数据库：INSERT t_event_signup, UPDATE t_event"
+      }
+    },
+    {
+      "name": "DAT015 通知查询",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/xml"}],
+        "body": {
+          "mode": "raw",
+          "raw": "<request>\n  <tran_code>DAT015</tran_code>\n  <trace_id>{{traceId}}</trace_id>\n  <user_id>U10001</user_id>\n  <notify_type>LIKE</notify_type>\n</request>"
+        },
+        "url": {"raw": "{{baseUrl}}/api/dating/service", "host": ["{{baseUrl}}"], "path": ["api","dating","service"]},
+        "description": "交易码：DAT015\n子调用：GET /internal/dating/message-center（消息中心）\n数据库：SELECT t_notification, SELECT t_notify_config"
+      }
+    }
+  ]
+}

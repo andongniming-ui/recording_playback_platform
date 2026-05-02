@@ -6,7 +6,7 @@
       </n-alert>
       <n-descriptions bordered :column="1" style="margin-top:16px">
         <n-descriptions-item label="AREX Storage URL">
-          <n-text code>AR_AREX_STORAGE_URL</n-text> — 默认 http://localhost:8093
+          <n-text code>AR_AREX_STORAGE_URL</n-text> — 默认 http://127.0.0.1:8000
         </n-descriptions-item>
         <n-descriptions-item label="数据库类型">
           <n-text code>AR_DB_TYPE</n-text> — sqlite / mysql
@@ -27,7 +27,7 @@
       <template #header-extra>
         <n-button v-if="canEdit" size="small" type="primary" @click="openCreate">+ 新增规则</n-button>
       </template>
-      <n-data-table :columns="columns" :data="rules" :loading="loading" size="small" :pagination="{ pageSize: 10 }" />
+      <n-data-table :columns="columns" :data="rules" :loading="loading" size="small" :pagination="pagination" remote />
     </n-card>
   </n-space>
 
@@ -48,10 +48,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, h } from 'vue'
+import { reactive, ref, onMounted, h } from 'vue'
 import { NSpace, NCard, NAlert, NDescriptions, NDescriptionsItem, NText, NButton, NDataTable, NTag, NModal, NForm, NFormItem, NInput, NPopconfirm, useMessage } from 'naive-ui'
 import { compareApi } from '@/api/compare'
 import { useUserStore } from '@/store/user'
+import { lastValidPage, loadPagedData } from '@/utils/pagination'
 
 const message = useMessage()
 const userStore = useUserStore()
@@ -61,6 +62,23 @@ const loading = ref(false)
 const showModal = ref(false)
 const saving = ref(false)
 const form = ref({ name: '', scope: 'global', rule_type: 'ignore', config: '', is_active: true })
+const pagination = reactive({
+  page: 1,
+  pageSize: 10,
+  itemCount: 0,
+  pageSizes: [10, 20, 50, 100],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 条规则`,
+  onUpdatePage: (page: number) => {
+    pagination.page = page
+    void load()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    pagination.pageSize = pageSize
+    pagination.page = 1
+    void load()
+  },
+})
 
 const columns = [
   { title: '规则名称', key: 'name' },
@@ -81,10 +99,17 @@ const columns = [
 async function load() {
   loading.value = true
   try {
-    const res = await compareApi.list({ rule_type: 'ignore' })
-    rules.value = res.data
+    const page = await loadPagedData<any>(compareApi.list, { rule_type: 'ignore' }, pagination.page, pagination.pageSize, 100)
+    rules.value = page.items
+    pagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && pagination.page > 1) {
+      pagination.page = lastValidPage(page.total, pagination.pageSize)
+      void load()
+      return
+    }
   } catch (error: any) {
     rules.value = []
+    pagination.itemCount = 0
     message.error(error.response?.data?.detail || '加载脱敏规则失败')
   } finally { loading.value = false }
 }

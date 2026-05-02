@@ -28,6 +28,7 @@ class ReplayJob(Base):
 
     # P0: 智能降噪 - 自动忽略 30+ 常见动态字段
     smart_noise_reduction: Mapped[bool] = mapped_column(Boolean, default=False)
+    ignore_order: Mapped[bool] = mapped_column(Boolean, default=True)
     # P1: 失败重试 - 失败后最多重试 N 次
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -72,6 +73,7 @@ class ReplayResult(Base):
 
     failure_category: Mapped[str | None] = mapped_column(String(64))
     failure_reason: Mapped[str | None] = mapped_column(Text)
-    actual_sub_calls: Mapped[str | None] = mapped_column(Text)   # JSON list of sub-calls from replay
+    actual_sub_calls: Mapped[str | None] = mapped_column(Text)         # JSON list of sub-calls from replay
+    sub_call_diff_detail: Mapped[str | None] = mapped_column(Text)     # JSON list of per-pair diff results
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

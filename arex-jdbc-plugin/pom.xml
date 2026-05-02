@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+        将此模块放入 arex-agent-java 仓库的 arex-instrumentation/database/ 目录下
+        父 pom 改为：
+            <parent>
+                <groupId>io.arex</groupId>
+                <artifactId>arex-instrumentation-parent</artifactId>
+                <version>${revision}</version>
+                <relativePath>../../pom.xml</relativePath>
+            </parent>
+    -->
+    <groupId>io.arex</groupId>
+    <artifactId>arex-database-jdbc</artifactId>
+    <version>0.4.8</version>
+
+    <dependencies>
+        <!-- AREX 公共 DB 工具：DatabaseExtractor / MockResult -->
+        <dependency>
+            <groupId>io.arex</groupId>
+            <artifactId>arex-database-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- AREX 插桩 API：ModuleInstrumentation / TypeInstrumentation -->
+        <dependency>
+            <groupId>io.arex</groupId>
+            <artifactId>arex-instrumentation-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Google AutoService：自动生成 SPI 注册文件 -->
+        <dependency>
+            <groupId>com.google.auto.service</groupId>
+            <artifactId>auto-service</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Spring JDBC：provided，运行时由被测应用提供 -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-jdbc</artifactId>
+            <version>5.3.0</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

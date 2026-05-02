@@ -7,7 +7,7 @@
           <template #header-extra>
             <n-button v-if="canEdit" size="small" type="primary" @click="openCreate">+ 新增规则</n-button>
           </template>
-          <n-data-table :columns="ruleColumns" :data="rules" :loading="ruleLoading" size="small" :pagination="{ pageSize: 8 }" />
+          <n-data-table :columns="ruleColumns" :data="rules" :loading="ruleLoading" size="small" :pagination="rulePagination" remote />
         </n-card>
       </n-grid-item>
 
@@ -17,6 +17,12 @@
         <n-space vertical :size="8">
           <n-input v-model:value="resultId" placeholder="输入回放结果 ID" style="width:200px" />
           <n-button type="primary" @click="loadDiff">查看 Diff</n-button>
+          <n-alert v-if="!diffData" type="info" :show-icon="false" style="font-size:13px;line-height:2">
+            <strong>使用步骤：</strong><br />
+            ① 在「执行结果」页找到某条回放记录，复制其 <strong>结果 ID</strong>（Result ID）<br />
+            ② 将 ID 填入上方输入框，点击「查看 Diff」<br />
+            ③ 即可对比期望响应与实际响应，并查看差异字段详情
+          </n-alert>
           <template v-if="diffData">
               <n-grid cols="1 l:2" responsive="screen" :x-gap="8" style="margin-top:8px">
                 <n-grid-item>
@@ -83,7 +89,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, h } from 'vue'
+import { reactive, ref, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { NSpace, NGrid, NGridItem, NCard, NDataTable, NButton, NModal, NForm, NFormItem, NInput, NSelect, NText, NAlert, NPopconfirm, NDescriptions, NDescriptionsItem, NTag, useMessage } from 'naive-ui'
 import { compareApi } from '@/api/compare'
@@ -93,6 +99,7 @@ import { recordingApi } from '@/api/recordings'
 import { useUserStore } from '@/store/user'
 import SubCallPanel from '@/components/recording/SubCallPanel.vue'
 import { buildRecordingSubCallSummary, parseRecordingSubCalls } from '@/utils/recording'
+import { lastValidPage, loadPagedData } from '@/utils/pagination'
 
 const message = useMessage()
 const router = useRouter()
@@ -108,6 +115,23 @@ const sourceRecording = ref<any | null>(null)
 const sourceRecordingSubCallSummary = ref('')
 const sourceLookupState = ref<'idle' | 'found' | 'empty' | 'missing'>('idle')
 const ruleForm = ref({ name: '', scope: 'global', rule_type: 'ignore', config: '{}', is_active: true })
+const rulePagination = reactive({
+  page: 1,
+  pageSize: 8,
+  itemCount: 0,
+  pageSizes: [8, 16, 32, 64],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 条规则`,
+  onUpdatePage: (page: number) => {
+    rulePagination.page = page
+    void loadRules()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    rulePagination.pageSize = pageSize
+    rulePagination.page = 1
+    void loadRules()
+  },
+})
 
 const ruleColumns = [
   { title: '名称', key: 'name', ellipsis: true },
@@ -135,9 +159,17 @@ function rawText(s: string | null) {
 async function loadRules() {
   ruleLoading.value = true
   try {
-    const res = await compareApi.list()
-    rules.value = res.data
+    const page = await loadPagedData<any>(compareApi.list, {}, rulePagination.page, rulePagination.pageSize, 100)
+    rules.value = page.items
+    rulePagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && rulePagination.page > 1) {
+      rulePagination.page = lastValidPage(page.total, rulePagination.pageSize)
+      void loadRules()
+      return
+    }
   } catch {
+    rules.value = []
+    rulePagination.itemCount = 0
     message.error('加载对比规则失败')
   } finally { ruleLoading.value = false }
 }

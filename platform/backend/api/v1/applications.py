@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, asc, desc
+from sqlalchemy import select, delete, func, or_, update
 import asyncio
 import logging
 
@@ -8,22 +8,20 @@ logger = logging.getLogger(__name__)
 
 from database import get_db
 from models.application import Application
+from models.audit import RecordingAuditLog, ReplayAuditLog
+from models.compare import CompareRule
+from models.recording import Recording, RecordingSession
+from models.replay import ReplayJob, ReplayResult
+from models.suite import SuiteCase
+from models.test_case import TestCase
 from models.user import User
 from schemas.application import ApplicationCreate, ApplicationUpdate, ApplicationOut
-from schemas.common import BulkDeleteResponse, BulkIdsRequest
+from schemas.common import BulkDeleteResponse, BulkIdsRequest, PageOut
 from core.security import require_viewer, require_editor, require_admin, get_current_user
 from config import settings
+from utils.query import apply_ordering
 
 router = APIRouter(prefix="/applications", tags=["applications"])
-
-
-def _normalize_sort_order(value: str | None) -> str:
-    return "asc" if (value or "").lower() == "asc" else "desc"
-
-
-def _apply_ordering(stmt, primary_column, id_column, sort_order: str):
-    direction = asc if _normalize_sort_order(sort_order) == "asc" else desc
-    return stmt.order_by(direction(primary_column), direction(id_column))
 
 
 async def _get_app_or_404(app_id: int, db: AsyncSession) -> Application:
@@ -51,16 +49,96 @@ def _validate_docker_launch_config(app: Application) -> None:
         )
 
 
+async def _delete_application_graph(db: AsyncSession, app_ids: list[int]) -> int:
+    """Delete applications and all rows that directly depend on them."""
+    if not app_ids:
+        return 0
+
+    existing_result = await db.execute(select(Application.id).where(Application.id.in_(app_ids)))
+    existing_ids = [row[0] for row in existing_result.all()]
+    if not existing_ids:
+        return 0
+
+    session_result = await db.execute(
+        select(RecordingSession.id).where(RecordingSession.application_id.in_(existing_ids))
+    )
+    session_ids = [row[0] for row in session_result.all()]
+
+    recording_result = await db.execute(
+        select(Recording.id).where(
+            or_(
+                Recording.application_id.in_(existing_ids),
+                Recording.session_id.in_(session_ids) if session_ids else False,
+            )
+        )
+    )
+    recording_ids = [row[0] for row in recording_result.all()]
+
+    case_result = await db.execute(select(TestCase.id).where(TestCase.application_id.in_(existing_ids)))
+    case_ids = [row[0] for row in case_result.all()]
+
+    job_result = await db.execute(select(ReplayJob.id).where(ReplayJob.application_id.in_(existing_ids)))
+    job_ids = [row[0] for row in job_result.all()]
+
+    result_conditions = []
+    if job_ids:
+        result_conditions.append(ReplayResult.job_id.in_(job_ids))
+    if case_ids:
+        result_conditions.append(ReplayResult.test_case_id.in_(case_ids))
+    replay_result_ids: list[int] = []
+    if result_conditions:
+        result_id_result = await db.execute(select(ReplayResult.id).where(or_(*result_conditions)))
+        replay_result_ids = [row[0] for row in result_id_result.all()]
+
+    replay_audit_conditions = [ReplayAuditLog.application_id.in_(existing_ids)]
+    if job_ids:
+        replay_audit_conditions.append(ReplayAuditLog.job_id.in_(job_ids))
+    if replay_result_ids:
+        replay_audit_conditions.append(ReplayAuditLog.result_id.in_(replay_result_ids))
+    if case_ids:
+        replay_audit_conditions.append(ReplayAuditLog.test_case_id.in_(case_ids))
+    await db.execute(delete(ReplayAuditLog).where(or_(*replay_audit_conditions)))
+
+    recording_audit_conditions = [RecordingAuditLog.application_id.in_(existing_ids)]
+    if session_ids:
+        recording_audit_conditions.append(RecordingAuditLog.session_id.in_(session_ids))
+    if recording_ids:
+        recording_audit_conditions.append(RecordingAuditLog.recording_id.in_(recording_ids))
+    await db.execute(delete(RecordingAuditLog).where(or_(*recording_audit_conditions)))
+
+    if replay_result_ids:
+        await db.execute(delete(ReplayResult).where(ReplayResult.id.in_(replay_result_ids)))
+    if job_ids:
+        await db.execute(delete(ReplayJob).where(ReplayJob.id.in_(job_ids)))
+
+    if case_ids:
+        await db.execute(delete(SuiteCase).where(SuiteCase.test_case_id.in_(case_ids)))
+        await db.execute(delete(TestCase).where(TestCase.id.in_(case_ids)))
+
+    if recording_ids:
+        await db.execute(
+            update(TestCase).where(TestCase.source_recording_id.in_(recording_ids)).values(source_recording_id=None)
+        )
+        await db.execute(delete(Recording).where(Recording.id.in_(recording_ids)))
+    if session_ids:
+        await db.execute(delete(RecordingSession).where(RecordingSession.id.in_(session_ids)))
+
+    await db.execute(delete(CompareRule).where(CompareRule.application_id.in_(existing_ids)))
+    await db.execute(delete(Application).where(Application.id.in_(existing_ids)))
+    return len(existing_ids)
+
+
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
 
-@router.get("", response_model=list[ApplicationOut])
+@router.get("", response_model=PageOut[ApplicationOut] | list[ApplicationOut])
 async def list_applications(
     sort_by: str = Query("created_at"),
     sort_order: str = Query("desc"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
+    include_total: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_viewer),
 ):
@@ -70,9 +148,17 @@ async def list_applications(
         "id": Application.id,
     }
     primary_column = sort_mapping.get(sort_by, Application.created_at)
-    stmt = _apply_ordering(select(Application), primary_column, Application.id, sort_order).offset(skip).limit(limit)
+    base_stmt = select(Application)
+    total = None
+    if include_total:
+        total_result = await db.execute(select(func.count()).select_from(base_stmt.subquery()))
+        total = total_result.scalar_one()
+    stmt = apply_ordering(base_stmt, primary_column, Application.id, sort_order).offset(skip).limit(limit)
     result = await db.execute(stmt)
-    return [ApplicationOut.from_orm_with_meta(a) for a in result.scalars().all()]
+    items = [ApplicationOut.from_orm_with_meta(a) for a in result.scalars().all()]
+    if include_total:
+        return PageOut[ApplicationOut](items=items, total=total or 0, skip=skip, limit=limit)
+    return items
 
 
 @router.post("/bulk-delete", response_model=BulkDeleteResponse)
@@ -85,14 +171,9 @@ async def bulk_delete_applications(
     if not app_ids:
         return BulkDeleteResponse(deleted=0)
 
-    result = await db.execute(select(Application).where(Application.id.in_(app_ids)))
-    apps = result.scalars().all()
-    if not apps:
-        return BulkDeleteResponse(deleted=0)
-
-    await db.execute(delete(Application).where(Application.id.in_([item.id for item in apps])))
+    deleted = await _delete_application_graph(db, app_ids)
     await db.commit()
-    return BulkDeleteResponse(deleted=len(apps))
+    return BulkDeleteResponse(deleted=deleted)
 
 
 @router.post("", response_model=ApplicationOut, status_code=status.HTTP_201_CREATED)
@@ -147,8 +228,9 @@ async def delete_application(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    app = await _get_app_or_404(app_id, db)
-    await db.delete(app)
+    deleted = await _delete_application_graph(db, [app_id])
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Application not found")
     await db.commit()
 
 

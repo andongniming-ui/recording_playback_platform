@@ -1,6 +1,8 @@
 import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+from datetime import timedelta
+from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,9 +11,28 @@ from config import settings
 from database import init_db, async_session_factory
 
 logger = logging.getLogger(__name__)
+DEFAULT_SECRET_KEY = "changeme-in-production"
 
 
-def _configure_app_logging():
+def _validate_security_config():
+    if settings.secret_key != DEFAULT_SECRET_KEY:
+        return
+    message = (
+        "AR_SECRET_KEY is still using the default development value. "
+        "Set a strong random value before using this platform outside local testing."
+    )
+    if settings.enforce_secure_secret:
+        raise RuntimeError(message)
+    logger.warning(message)
+
+
+def _configure_app_logging(log_file: str | None = None):
+    """Configure application logging.
+
+    Args:
+        log_file: Path to the log file. If None, falls back to settings.log_file.
+                  If empty string, no file handler is added.
+    """
     formatter = logging.Formatter(
         fmt="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
@@ -39,8 +60,22 @@ def _configure_app_logging():
     for handler in all_handlers:
         handler.setFormatter(formatter)
 
+    # Resolve the effective log file path
+    effective_log_file = log_file if log_file is not None else settings.log_file
+    if effective_log_file:
+        file_handler = RotatingFileHandler(
+            effective_log_file,
+            maxBytes=settings.log_max_bytes,
+            backupCount=settings.log_backup_count,
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+        if file_handler not in app_handlers:
+            app_handlers.append(file_handler)
+
     level = uvicorn_root_logger.level if uvicorn_root_logger.level and uvicorn_root_logger.level > 0 else logging.INFO
-    for logger_name in ("api", "core", "database", "integration", "utils"):
+    for logger_name in ("main", "api", "core", "database", "integration", "utils"):
         app_logger = logging.getLogger(logger_name)
         app_logger.setLevel(min(level, logging.INFO))
         if app_handlers:
@@ -69,6 +104,16 @@ async def _create_default_admin():
             logger.info("Default admin user created (admin/admin123)")
 
 
+def _is_expected_migration_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    markers = (
+        "duplicate column",
+        "already exists",
+        "column exists",
+    )
+    return any(marker in text for marker in markers)
+
+
 async def _migrate_db():
     """为已有表追加新列（幂等：列已存在时跳过）。"""
     from sqlalchemy import text
@@ -92,6 +137,7 @@ async def _migrate_db():
         "ALTER TABLE replay_job ADD COLUMN assertions TEXT",
         "ALTER TABLE replay_job ADD COLUMN perf_threshold_ms INTEGER",
         "ALTER TABLE replay_job ADD COLUMN smart_noise_reduction BOOLEAN DEFAULT 0",
+        "ALTER TABLE replay_job ADD COLUMN ignore_order BOOLEAN DEFAULT 1",
         "ALTER TABLE replay_job ADD COLUMN retry_count INTEGER DEFAULT 0",
         "ALTER TABLE replay_job ADD COLUMN ignore_fields TEXT",
         "ALTER TABLE replay_job ADD COLUMN delay_ms INTEGER DEFAULT 0",
@@ -112,13 +158,55 @@ async def _migrate_db():
         "ALTER TABLE test_case ADD COLUMN scene_key VARCHAR(256)",
         "ALTER TABLE replay_suite ADD COLUMN suite_type VARCHAR(32) DEFAULT 'regression'",
         "ALTER TABLE replay_result ADD COLUMN actual_sub_calls TEXT",
+        "ALTER TABLE replay_result ADD COLUMN sub_call_diff_detail TEXT",
     ]
     async with engine.begin() as conn:
         for sql in migrations:
             try:
                 await conn.execute(text(sql))
-            except Exception:
-                pass  # 列已存在，忽略
+            except Exception as exc:
+                if _is_expected_migration_error(exc):
+                    logger.debug("Skipping already-applied migration: %s (%s)", sql, exc)
+                else:
+                    logger.error("Migration failed for statement: %s", sql)
+                    raise
+
+
+async def _verify_db_schema():
+    """Fail fast when an existing database is too old for the current code."""
+    from sqlalchemy import inspect
+    from database import engine
+
+    required_columns = {
+        "replay_job": {"fail_on_sub_call_diff", "use_sub_invocation_mocks", "ignore_order"},
+        "replay_result": {"actual_sub_calls", "sub_call_diff_detail", "diff_score"},
+        "recording": {"sub_calls", "transaction_code", "scene_key", "dedupe_hash", "governance_status"},
+    }
+    required_tables = {"recording_audit_log", "replay_audit_log"}
+
+    async with engine.begin() as conn:
+        def _inspect(sync_conn):
+            inspector = inspect(sync_conn)
+            tables = set(inspector.get_table_names())
+            missing_tables = sorted(required_tables - tables)
+            missing_columns = {}
+            for table, columns in required_columns.items():
+                if table not in tables:
+                    missing_tables.append(table)
+                    continue
+                existing = {column["name"] for column in inspector.get_columns(table)}
+                missing = sorted(columns - existing)
+                if missing:
+                    missing_columns[table] = missing
+            return missing_tables, missing_columns
+
+        missing_tables, missing_columns = await conn.run_sync(_inspect)
+
+    if missing_tables or missing_columns:
+        raise RuntimeError(
+            "Database schema is not compatible with current code. "
+            f"missing_tables={missing_tables}, missing_columns={missing_columns}"
+        )
 
 
 async def _backfill_arex_mocker_created_at():
@@ -148,18 +236,57 @@ async def _backfill_arex_mocker_created_at():
             logger.info("Backfilled arex_mocker.created_at for %d rows", updated)
 
 
+async def _cleanup_old_audit_logs(retention_days: int = 30):
+    from sqlalchemy import delete
+    from models.audit import RecordingAuditLog, ReplayAuditLog
+    from utils.timezone import now_beijing
+
+    cutoff = now_beijing() - timedelta(days=retention_days)
+    async with async_session_factory() as db:
+        replay_result = await db.execute(delete(ReplayAuditLog).where(ReplayAuditLog.created_at < cutoff))
+        recording_result = await db.execute(delete(RecordingAuditLog).where(RecordingAuditLog.created_at < cutoff))
+        await db.commit()
+    logger.info(
+        "Cleaned audit logs older than %s days: replay=%s recording=%s",
+        retention_days,
+        replay_result.rowcount,
+        recording_result.rowcount,
+    )
+
+
+async def _audit_log_cleanup_loop():
+    from utils.timezone import now_beijing
+
+    while True:
+        now = now_beijing()
+        next_midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        await asyncio.sleep(max((next_midnight - now).total_seconds(), 60))
+        try:
+            await _cleanup_old_audit_logs()
+        except Exception:
+            logger.exception("Failed to clean old audit logs")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _configure_app_logging()
+    _validate_security_config()
     await init_db()
     await _migrate_db()
+    await _verify_db_schema()
     await _backfill_arex_mocker_created_at()
     await _create_default_admin()
     from core.scheduler import scheduler, load_all_schedules
     await load_all_schedules()
     scheduler.start()
-    yield
-    scheduler.shutdown(wait=False)
+    audit_cleanup_task = asyncio.create_task(_audit_log_cleanup_loop())
+    try:
+        yield
+    finally:
+        audit_cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await audit_cleanup_task
+        scheduler.shutdown(wait=False)
 
 
 app = FastAPI(
@@ -176,6 +303,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from core.rate_limit import limiter
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 from api.v1 import auth, users, applications
 from api.arex_proxy import router as arex_proxy_router
@@ -201,4 +335,32 @@ app.include_router(compare_api.router, prefix="/api/v1")
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "1.0.0"}
+    from sqlalchemy import text
+    from integration.arex_client import ArexClient
+    from database import engine
+
+    checks = {
+        "database": {"status": "unknown"},
+        "arex_storage": {"status": "unknown", "url": settings.arex_storage_url},
+    }
+
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("SELECT 1"))
+        checks["database"] = {"status": "ok"}
+    except Exception as exc:
+        checks["database"] = {"status": "error", "message": str(exc)}
+
+    try:
+        async with ArexClient(settings.arex_storage_url) as client:
+            reachable = await client.health_check()
+        checks["arex_storage"]["status"] = "ok" if reachable else "error"
+    except Exception as exc:
+        checks["arex_storage"] = {
+            "status": "error",
+            "url": settings.arex_storage_url,
+            "message": str(exc),
+        }
+
+    status = "ok" if all(item["status"] == "ok" for item in checks.values()) else "degraded"
+    return {"status": status, "version": "1.0.0", "checks": checks}

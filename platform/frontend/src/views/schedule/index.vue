@@ -18,7 +18,7 @@
       :columns="columns"
       :data="schedules"
       :loading="loading"
-      :pagination="{ pageSize: 10 }"
+      :pagination="pagination"
       :row-key="(row: any) => row.id"
       remote
       v-model:checked-row-keys="selectedScheduleIds"
@@ -61,7 +61,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, h } from 'vue'
+import { computed, reactive, ref, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { NSpace, NH2, NButton, NDataTable, NModal, NForm, NFormItem, NInput, NSelect, NSwitch, NAlert, NTag, NPopconfirm, useMessage } from 'naive-ui'
 import { scheduleApi } from '@/api/schedules'
@@ -69,6 +69,7 @@ import { formatDateTime } from '@/utils/format'
 import { suiteApi } from '@/api/suites'
 import { useUserStore } from '@/store/user'
 import { defaultSortState, resolveSortOrder, toApiSortOrder, updateSortState } from '@/utils/tableSort'
+import { lastValidPage, loadPagedData } from '@/utils/pagination'
 
 const router = useRouter()
 const message = useMessage()
@@ -82,6 +83,23 @@ const editingId = ref<number | null>(null)
 const suiteOptions = ref<any[]>([])
 const selectedScheduleIds = ref<(string | number)[]>([])
 const sortState = ref(defaultSortState('last_run_at'))
+const pagination = reactive({
+  page: 1,
+  pageSize: 10,
+  itemCount: 0,
+  pageSizes: [10, 20, 50, 100],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 个任务`,
+  onUpdatePage: (page: number) => {
+    pagination.page = page
+    void load()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    pagination.pageSize = pageSize
+    pagination.page = 1
+    void load()
+  },
+})
 
 const notifyOpts = [
   { label: '钉钉', value: 'dingtalk' },
@@ -139,13 +157,21 @@ const columns = computed(() => [
 async function load() {
   loading.value = true
   try {
-    schedules.value = (await scheduleApi.list({
+    const page = await loadPagedData<any>(scheduleApi.list, {
       sort_by: sortState.value.columnKey,
       sort_order: toApiSortOrder(sortState.value.order),
-    })).data
+    }, pagination.page, pagination.pageSize, 100)
+    schedules.value = page.items
+    pagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && pagination.page > 1) {
+      pagination.page = lastValidPage(page.total, pagination.pageSize)
+      void load()
+      return
+    }
     selectedScheduleIds.value = []
   } catch (error: any) {
     schedules.value = []
+    pagination.itemCount = 0
     message.error(error.response?.data?.detail || '加载定时任务失败')
   } finally { loading.value = false }
 }
@@ -194,6 +220,7 @@ async function deleteSelectedSchedules() {
 
 function handleSorterChange(sorter: any) {
   sortState.value = updateSortState(sorter, 'last_run_at')
+  pagination.page = 1
   void load()
 }
 
@@ -207,7 +234,7 @@ async function triggerNow(id: number) {
 
 onMounted(async () => {
   try {
-    const suitesRes = await suiteApi.list()
+    const suitesRes = await suiteApi.list({ limit: 100 })
     suiteOptions.value = suitesRes.data.map((s: any) => ({ label: s.name, value: s.id }))
   } catch (error: any) {
     message.error(error.response?.data?.detail || '加载套件列表失败')

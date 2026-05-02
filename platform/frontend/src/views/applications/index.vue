@@ -20,7 +20,7 @@
     <n-grid cols="1 s:2 l:4" responsive="screen" :x-gap="12" :y-gap="12">
       <n-grid-item>
         <n-card>
-          <n-statistic label="应用总数" :value="apps.length" />
+          <n-statistic label="应用总数" :value="pagination.itemCount" />
         </n-card>
       </n-grid-item>
       <n-grid-item>
@@ -36,7 +36,7 @@
         <n-card>
           <n-statistic label="未挂载">
             <template #default>
-              <span style="color:#d03050">{{ offlineCount }}</span>
+              <span :style="{ color: offlineCount > 0 ? '#d03050' : '#333' }">{{ offlineCount }}</span>
             </template>
           </n-statistic>
         </n-card>
@@ -54,14 +54,14 @@
 
     <n-card title="应用列表">
       <template #header-extra>
-        <n-tag type="info" size="small">共 {{ apps.length }} 个应用</n-tag>
+        <n-tag type="info" size="small">共 {{ pagination.itemCount }} 个应用</n-tag>
       </template>
       <n-data-table
         class="applications-table"
         :columns="columns"
         :data="apps"
         :loading="loading"
-        :pagination="{ pageSize: 10 }"
+        :pagination="pagination"
         :row-key="(row: AppRow) => row.id"
         remote
         v-model:checked-row-keys="selectedAppIds"
@@ -228,7 +228,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   NAlert,
@@ -257,6 +257,7 @@ import { applicationApi } from '@/api/applications'
 import { formatDateTime } from '@/utils/format'
 import { useUserStore } from '@/store/user'
 import { defaultSortState, resolveSortOrder, toApiSortOrder, updateSortState } from '@/utils/tableSort'
+import { lastValidPage, loadPagedData } from '@/utils/pagination'
 
 type AppRow = {
   id: number
@@ -302,6 +303,23 @@ const apps = ref<AppRow[]>([])
 const loading = ref(false)
 const selectedAppIds = ref<(string | number)[]>([])
 const sortState = ref(defaultSortState('created_at'))
+const pagination = reactive({
+  page: 1,
+  pageSize: 10,
+  itemCount: 0,
+  pageSizes: [10, 20, 50, 100],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 个应用`,
+  onUpdatePage: (page: number) => {
+    pagination.page = page
+    void loadApps()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    pagination.pageSize = pageSize
+    pagination.page = 1
+    void loadApps()
+  },
+})
 const showModal = ref(false)
 const saving = ref(false)
 const editingId = ref<number | null>(null)
@@ -360,7 +378,7 @@ const columns = computed<DataTableColumns<AppRow>>(() => [
       h(
         NButton,
         { text: true, type: 'primary', onClick: () => router.push(`/applications/${row.id}`) },
-        () => row.name,
+        () => row.name || '—',
       ),
   },
   { title: '宿主机', key: 'ssh_host', width: 220 },
@@ -448,14 +466,21 @@ function createEmptyForm(): AppForm {
 async function loadApps() {
   loading.value = true
   try {
-    const res = await applicationApi.list({
+    const page = await loadPagedData<AppRow>(applicationApi.list, {
       sort_by: sortState.value.columnKey,
       sort_order: toApiSortOrder(sortState.value.order),
-    })
-    apps.value = res.data
+    }, pagination.page, pagination.pageSize, 100)
+    apps.value = page.items
+    pagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && pagination.page > 1) {
+      pagination.page = lastValidPage(page.total, pagination.pageSize)
+      void loadApps()
+      return
+    }
     selectedAppIds.value = []
   } catch (error: any) {
     apps.value = []
+    pagination.itemCount = 0
     message.error(error.response?.data?.detail || '加载应用列表失败')
   } finally {
     loading.value = false
@@ -491,6 +516,11 @@ function openEdit(app: Record<string, any>) {
 }
 
 async function save() {
+  try {
+    await formRef.value?.validate()
+  } catch {
+    return
+  }
   saving.value = true
   try {
     if (editingId.value) {
@@ -564,6 +594,7 @@ async function deleteSelectedApps() {
 
 function handleSorterChange(sorter: any) {
   sortState.value = updateSortState(sorter, 'created_at')
+  pagination.page = 1
   void loadApps()
 }
 

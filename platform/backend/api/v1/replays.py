@@ -5,34 +5,33 @@ import re
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from typing import Optional
-from urllib.parse import urlsplit
-
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
-from sqlalchemy import String, select, or_, delete, asc, desc
+from sqlalchemy import String, select, or_, delete, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.replay_context import infer_application_id_for_case_ids
 from core.replay_executor import register_ws, unregister_ws
 from core.security import require_editor, require_viewer
 from database import async_session_factory, get_db
+from models.audit import ReplayAuditLog
 from models.recording import Recording
 from models.replay import ReplayJob, ReplayResult
 from models.test_case import TestCase
-from schemas.replay import ReplayJobCreate, ReplayJobOut, ReplayResultOut
-from schemas.common import BulkDeleteResponse, BulkIdsRequest
+from schemas.replay import ReplayAuditOut, ReplayJobCreate, ReplayJobOut, ReplayResultOut
+from schemas.common import BulkDeleteResponse, BulkIdsRequest, PageOut
 from utils.failure_analyzer import analyze_failure
+from utils.query import apply_ordering
+from utils.sub_call_matcher import (
+    normalize_sub_call_type,
+    normalize_http_operation,
+    normalize_sub_call_operation,
+    normalize_sub_call_value,
+    parse_sub_call_payload,
+    unwrap_sub_call_response,
+)
 
 router = APIRouter(prefix="/replays", tags=["replays"])
-
-
-def _normalize_sort_order(value: str | None) -> str:
-    return "asc" if (value or "").lower() == "asc" else "desc"
-
-
-def _apply_ordering(stmt, primary_column, id_column, sort_order: str):
-    direction = asc if _normalize_sort_order(sort_order) == "asc" else desc
-    return stmt.order_by(direction(primary_column), direction(id_column))
 
 
 def _load_jsonish(value):
@@ -104,83 +103,6 @@ async def _build_result_source_context(db: AsyncSession, result: ReplayResult) -
     return context
 
 
-def _normalize_sub_call_type(value: object) -> str:
-    type_name = str(value or "").strip().lower()
-    if not type_name:
-        return ""
-    if "mysql" in type_name or "jdbc" in type_name:
-        return "mysql"
-    if "http" in type_name:
-        return "http"
-    return type_name
-
-
-def _normalize_http_operation(operation: str) -> str:
-    text = re.sub(r"\s+", " ", operation.strip())
-    if not text:
-        return ""
-
-    parts = text.split(" ", 1)
-    if len(parts) == 2 and parts[0].isalpha():
-        method = parts[0].upper()
-        target = parts[1].strip()
-    else:
-        method = ""
-        target = text
-
-    parsed = urlsplit(target)
-    if parsed.scheme and parsed.netloc:
-        normalized_target = parsed.path or "/"
-    elif target.startswith("/"):
-        normalized_target = urlsplit(target).path or target
-    else:
-        normalized_target = target
-
-    normalized_target = normalized_target.strip()
-    return f"{method} {normalized_target}".strip().lower()
-
-
-def _normalize_sub_call_operation(item: dict | None) -> str:
-    if not isinstance(item, dict):
-        return ""
-    operation = str(item.get("operation") or "").strip()
-    if not operation:
-        return ""
-    normalized_type = _normalize_sub_call_type(item.get("type"))
-    if normalized_type == "http":
-        return _normalize_http_operation(operation)
-    return re.sub(r"\s+", " ", operation).lower()
-
-
-def _normalize_sub_call_request(value: object) -> str:
-    if value in (None, ""):
-        return ""
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return ""
-        try:
-            return json.dumps(json.loads(text), ensure_ascii=False, sort_keys=True)
-        except Exception:
-            return re.sub(r"\s+", " ", text)
-    try:
-        return json.dumps(value, ensure_ascii=False, sort_keys=True)
-    except Exception:
-        return str(value).strip()
-
-
-def _maybe_parse_sub_call_payload(value: object):
-    if not isinstance(value, str):
-        return value
-    text = value.strip()
-    if len(text) < 2:
-        return value
-    if not ((text.startswith("{") and text.endswith("}")) or (text.startswith("[") and text.endswith("]"))):
-        return value
-    try:
-        return json.loads(text)
-    except Exception:
-        return value
 
 
 def _coerce_sub_call_number(value: object) -> Decimal | None:
@@ -203,8 +125,8 @@ def _coerce_sub_call_number(value: object) -> Decimal | None:
 
 
 def _sub_call_response_equals(recorded_value: object, replayed_value: object) -> bool:
-    recorded_value = _maybe_parse_sub_call_payload(recorded_value)
-    replayed_value = _maybe_parse_sub_call_payload(replayed_value)
+    recorded_value = unwrap_sub_call_response(recorded_value)
+    replayed_value = unwrap_sub_call_response(replayed_value)
 
     if isinstance(recorded_value, dict) and isinstance(replayed_value, dict):
         if set(recorded_value.keys()) != set(replayed_value.keys()):
@@ -234,18 +156,18 @@ def _sub_call_match_score(recorded_item: dict | None, replayed_item: dict | None
     if not isinstance(recorded_item, dict) or not isinstance(replayed_item, dict):
         return None
 
-    recorded_type = _normalize_sub_call_type(recorded_item.get("type"))
-    replayed_type = _normalize_sub_call_type(replayed_item.get("type"))
+    recorded_type = normalize_sub_call_type(recorded_item.get("type"))
+    replayed_type = normalize_sub_call_type(replayed_item.get("type"))
     if recorded_type != replayed_type:
         return None
 
-    recorded_operation = _normalize_sub_call_operation(recorded_item)
-    replayed_operation = _normalize_sub_call_operation(replayed_item)
+    recorded_operation = normalize_sub_call_operation(recorded_item)
+    replayed_operation = normalize_sub_call_operation(replayed_item)
     if recorded_operation and replayed_operation:
         if recorded_operation != replayed_operation:
             return None
-        recorded_request = _normalize_sub_call_request(recorded_item.get("request"))
-        replayed_request = _normalize_sub_call_request(replayed_item.get("request"))
+        recorded_request = normalize_sub_call_value(recorded_item.get("request"))
+        replayed_request = normalize_sub_call_value(replayed_item.get("request"))
         if recorded_request and replayed_request and recorded_request == replayed_request:
             return 3
         return 2
@@ -253,8 +175,8 @@ def _sub_call_match_score(recorded_item: dict | None, replayed_item: dict | None
     if recorded_operation or replayed_operation:
         return None
 
-    recorded_request = _normalize_sub_call_request(recorded_item.get("request"))
-    replayed_request = _normalize_sub_call_request(replayed_item.get("request"))
+    recorded_request = normalize_sub_call_value(recorded_item.get("request"))
+    replayed_request = normalize_sub_call_value(replayed_item.get("request"))
     if recorded_request and replayed_request:
         if recorded_request == replayed_request:
             return 1
@@ -321,8 +243,10 @@ async def create_replay_job(
         if inferred_application_id is not None:
             application_id = inferred_application_id
 
+    job_name = (body.name or "").strip() or f"Replay {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
     job = ReplayJob(
-        name=body.name,
+        name=job_name,
         application_id=application_id,
         status="PENDING",
         concurrency=body.concurrency,
@@ -339,6 +263,7 @@ async def create_replay_job(
         webhook_url=body.webhook_url,
         notify_type=body.notify_type,
         smart_noise_reduction=body.smart_noise_reduction,
+        ignore_order=body.ignore_order,
         retry_count=body.retry_count,
         repeat_count=body.repeat_count,
         target_host=body.target_host,
@@ -364,7 +289,7 @@ async def create_replay_job(
     return job
 
 
-@router.get("", response_model=list[ReplayJobOut])
+@router.get("", response_model=PageOut[ReplayJobOut] | list[ReplayJobOut])
 async def list_replay_jobs(
     application_id: Optional[int] = Query(None),
     status: Optional[str] = Query(None),
@@ -375,6 +300,7 @@ async def list_replay_jobs(
     sort_order: str = Query("desc"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
+    include_total: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_viewer),
 ):
@@ -394,6 +320,11 @@ async def list_replay_jobs(
         stmt = stmt.where(ReplayJob.created_at >= created_after)
     if created_before:
         stmt = stmt.where(ReplayJob.created_at <= created_before)
+    total = None
+    include_total_enabled = include_total is True
+    if include_total_enabled:
+        total_result = await db.execute(select(func.count()).select_from(stmt.subquery()))
+        total = total_result.scalar_one()
     sort_mapping = {
         "created_at": ReplayJob.created_at,
         "started_at": ReplayJob.started_at,
@@ -401,9 +332,12 @@ async def list_replay_jobs(
         "id": ReplayJob.id,
     }
     primary_column = sort_mapping.get(sort_by, ReplayJob.created_at)
-    stmt = _apply_ordering(stmt, primary_column, ReplayJob.id, sort_order).offset(skip).limit(limit)
+    stmt = apply_ordering(stmt, primary_column, ReplayJob.id, sort_order).offset(skip).limit(limit)
     result = await db.execute(stmt)
-    return result.scalars().all()
+    items = result.scalars().all()
+    if include_total_enabled:
+        return PageOut[ReplayJobOut](items=items, total=total or 0, skip=skip, limit=limit)
+    return items
 
 
 @router.get("/{job_id}", response_model=ReplayJobOut)
@@ -417,6 +351,46 @@ async def get_replay_job(
     if not job:
         raise HTTPException(status_code=404, detail="Replay job not found")
     return job
+
+
+@router.get("/{job_id}/audit-logs", response_model=PageOut[ReplayAuditOut] | list[ReplayAuditOut])
+async def list_replay_audit_logs(
+    job_id: int,
+    case_id: Optional[int] = Query(None),
+    event_type: Optional[str] = Query(None),
+    result_id: Optional[int] = Query(None),
+    transaction_code: Optional[str] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    include_total: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_viewer),
+):
+    job_result = await db.execute(select(ReplayJob).where(ReplayJob.id == job_id))
+    job = job_result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Replay job not found")
+
+    stmt = select(ReplayAuditLog).where(ReplayAuditLog.job_id == job_id)
+    if case_id is not None:
+        stmt = stmt.where(ReplayAuditLog.test_case_id == case_id)
+    if event_type:
+        stmt = stmt.where(ReplayAuditLog.event_type == event_type)
+    if result_id is not None:
+        stmt = stmt.where(ReplayAuditLog.result_id == result_id)
+    if transaction_code:
+        stmt = stmt.where(ReplayAuditLog.transaction_code == transaction_code)
+    total = None
+    include_total_enabled = include_total is True
+    if include_total_enabled:
+        total_result = await db.execute(select(func.count()).select_from(stmt.subquery()))
+        total = total_result.scalar_one()
+    stmt = stmt.order_by(desc(ReplayAuditLog.created_at), desc(ReplayAuditLog.id)).offset(skip).limit(limit)
+    result = await db.execute(stmt)
+    items = result.scalars().all()
+    if include_total_enabled:
+        return PageOut[ReplayAuditOut](items=items, total=total or 0, skip=skip, limit=limit)
+    return items
 
 
 @router.post("/bulk-delete", response_model=BulkDeleteResponse)
@@ -434,7 +408,7 @@ async def bulk_delete_replay_jobs(
     if not jobs:
         return BulkDeleteResponse(deleted=0)
 
-    blocked = [job.id for job in jobs if job.status in {"RUNNING", "PENDING"}]
+    blocked = [job.id for job in jobs if job.status == "RUNNING"]
     if blocked:
         raise HTTPException(status_code=409, detail=f"Replay jobs are still running: {blocked[0]}")
 
@@ -455,7 +429,7 @@ async def delete_replay_job(
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Replay job not found")
-    if job.status in {"RUNNING", "PENDING"}:
+    if job.status == "RUNNING":
         raise HTTPException(status_code=409, detail=f"Replay job is still running: {job.status}")
 
     await db.execute(delete(ReplayResult).where(ReplayResult.job_id == job_id))
@@ -514,6 +488,44 @@ def _pair_sub_calls(recorded: list, replayed: list) -> list:
     return pairs
 
 
+def _build_sub_call_pair_from_detail(index: int, detail: dict) -> dict:
+    detail = detail if isinstance(detail, dict) else {}
+    matched = bool(detail.get("matched"))
+    expected_response = detail.get("expected_response")
+    actual_response = detail.get("actual_response")
+    side = "both"
+    if not matched:
+        side = "replayed_only" if expected_response is None and actual_response is not None else "recorded_only"
+
+    operation = detail.get("operation") or ""
+    pair_type = detail.get("type") or ""
+    recorded = None
+    replayed = None
+    if side in {"both", "recorded_only"}:
+        recorded = {
+            "type": pair_type,
+            "operation": operation,
+            "response": expected_response,
+        }
+    if side in {"both", "replayed_only"}:
+        replayed = {
+            "type": pair_type,
+            "operation": operation,
+            "response": actual_response,
+        }
+
+    return {
+        "index": index,
+        "type": pair_type,
+        "recorded": recorded,
+        "replayed": replayed,
+        "side": side,
+        "response_matched": None if side != "both" else not bool(detail.get("has_diff")),
+        "has_diff": bool(detail.get("has_diff")),
+        "diff_result": detail.get("diff_result"),
+    }
+
+
 @router.get("/results/{result_id}/sub-call-diff")
 async def get_sub_call_diff(
     result_id: int,
@@ -554,7 +566,19 @@ async def get_sub_call_diff(
         except Exception:
             replayed_raw = []
 
-    pairs = _pair_sub_calls(recorded_raw, replayed_raw)
+    pairs = []
+    if result.sub_call_diff_detail:
+        try:
+            detail_pairs = json.loads(result.sub_call_diff_detail)
+            if isinstance(detail_pairs, list):
+                pairs = [
+                    _build_sub_call_pair_from_detail(index + 1, item)
+                    for index, item in enumerate(detail_pairs)
+                ]
+        except Exception:
+            pairs = []
+    if not pairs:
+        pairs = _pair_sub_calls(recorded_raw, replayed_raw)
     return {
         "recorded": recorded_raw,
         "replayed": replayed_raw,
@@ -562,16 +586,16 @@ async def get_sub_call_diff(
     }
 
 
-@router.get("/{job_id}/results", response_model=list[ReplayResultOut])
+@router.get("/{job_id}/results", response_model=PageOut[ReplayResultOut] | list[ReplayResultOut])
 async def list_results(
     job_id: int,
     status: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
+    include_total: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_viewer),
 ):
-    from sqlalchemy.orm import aliased
     stmt = (
         select(ReplayResult, TestCase.transaction_code)
         .outerjoin(TestCase, TestCase.id == ReplayResult.test_case_id)
@@ -579,6 +603,11 @@ async def list_results(
     )
     if status:
         stmt = stmt.where(ReplayResult.status == status)
+    total = None
+    include_total_enabled = include_total is True
+    if include_total_enabled:
+        total_result = await db.execute(select(func.count()).select_from(stmt.subquery()))
+        total = total_result.scalar_one()
     stmt = stmt.order_by(ReplayResult.id).offset(skip).limit(limit)
     rows = (await db.execute(stmt)).all()
     results = []
@@ -589,6 +618,8 @@ async def list_results(
         for key, value in context.items():
             setattr(out, key, value)
         results.append(out)
+    if include_total_enabled:
+        return PageOut[ReplayResultOut](items=results, total=total or 0, skip=skip, limit=limit)
     return results
 
 
@@ -755,10 +786,8 @@ async def get_html_report(
         actual_disp = esc(actual_raw[:4000])
 
         detail_id = f"d{i}"
-        detail_block = ""
-        if not result.is_pass:
-            detail_block = f"""<tr id="{detail_id}" class="detail-row" style="display:none">
-  <td colspan="7">
+        detail_block = f"""<tr id="{detail_id}" class="detail-row" style="display:none">
+  <td colspan="6">
     <div class="detail-grid">
       <div class="detail-section">
         <div class="detail-title">📤 请求体（录制时）</div>
@@ -784,10 +813,11 @@ async def get_html_report(
   </td>
 </tr>"""
 
-        click_attr = f'onclick="toggle(\'{detail_id}\')" style="cursor:pointer"' if not result.is_pass else ""
+        click_attr = f'onclick="toggle(\'{detail_id}\')" style="cursor:pointer"'
         interface_label = f"{esc(result.request_uri or '')}"
         if tx_code:
             interface_label += f'<br><span class="tx-code">{esc(tx_code)}</span>'
+        interface_label += '<br><span class="detail-hint">点击查看详情</span>'
         time_str = result.created_at.strftime("%Y-%m-%d %H:%M:%S") if result.created_at else "-"
         rows_html += f"""<tr class="result-row" data-status="{result.status}" {click_attr}>
   <td class="uri-cell">{interface_label}</td>
@@ -802,170 +832,39 @@ async def get_html_report(
     started = job.started_at.strftime("%Y-%m-%d %H:%M:%S") if job.started_at else "-"
     ended = job.finished_at.strftime("%Y-%m-%d %H:%M:%S") if job.finished_at else "-"
     job_name = esc(job.name or f"任务 #{job_id}")
+    from utils.report_templates import render_template
 
-    html = f"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<title>录制回放测试报告 - {job_name}</title>
-<style>
-*{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f2f5;color:#222;font-size:14px}}
-.page{{max-width:1280px;margin:0 auto;padding:20px}}
-/* 顶部标题栏 */
-.top-bar{{background:#1a1a2e;color:#fff;padding:14px 24px;border-radius:10px 10px 0 0;display:flex;align-items:center;gap:10px}}
-.top-bar h1{{font-size:16px;font-weight:600}}
-/* 信息条 */
-.meta-bar{{background:#fff;border:1px solid #e8e8e8;border-top:none;padding:12px 24px;font-size:12px;color:#666;line-height:2;border-radius:0 0 10px 10px;margin-bottom:16px}}
-.meta-bar span{{margin-right:16px}}
-.meta-bar b{{color:#333}}
-/* 统计卡片 */
-.stats{{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px}}
-.stat{{background:#fff;border-radius:10px;padding:18px 12px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.08)}}
-.stat .num{{font-size:36px;font-weight:700;line-height:1.1}}
-.stat .lbl{{font-size:12px;color:#888;margin-top:4px}}
-.stat.total .num{{color:#333}}
-.stat.pass .num{{color:#18a058}}
-.stat.fail .num{{color:#d03050}}
-.stat.err .num{{color:#f0a020}}
-.stat.rate .num{{color:{pass_color}}}
-/* 分析卡片 */
-.card{{background:#fff;border-radius:10px;padding:18px 24px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}}
-.card-title{{font-size:14px;font-weight:600;color:#444;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #f0f0f0}}
-.analysis-table{{width:100%;border-collapse:collapse}}
-.analysis-cell{{text-align:center;padding:16px 8px;border:1px solid #f5f5f5}}
-.a-icon{{font-size:22px;margin-bottom:4px}}
-.a-label{{font-size:12px;color:#666;margin-bottom:6px}}
-.a-count{{font-size:26px;font-weight:700;margin-bottom:6px}}
-.a-bar-bg{{background:#f0f0f0;border-radius:4px;height:6px;margin:4px 8px}}
-.a-bar{{height:6px;border-radius:4px}}
-.a-pct{{font-size:12px;color:#999;margin-top:4px}}
-/* 筛选条 */
-.filter-bar{{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}}
-.tab-btn{{padding:5px 14px;border-radius:20px;border:1px solid #ddd;background:#fff;cursor:pointer;font-size:13px;color:#666}}
-.tab-btn.active,.tab-btn:hover{{background:#1a1a2e;color:#fff;border-color:#1a1a2e}}
-.search-box{{margin-left:auto;padding:5px 12px;border:1px solid #ddd;border-radius:20px;font-size:13px;width:220px;outline:none}}
-.count-info{{font-size:12px;color:#999}}
-/* 结果表格 */
-table.result-table{{width:100%;border-collapse:collapse;font-size:13px}}
-table.result-table th{{background:#fafafa;padding:10px 12px;text-align:left;border-bottom:2px solid #eee;color:#555;font-weight:600}}
-table.result-table td{{padding:10px 12px;border-bottom:1px solid #f5f5f5;vertical-align:middle}}
-.result-row:hover td{{background:#fafbfc}}
-.uri-cell{{font-family:monospace;font-size:12px;max-width:320px;word-break:break-all}}
-.tx-code{{display:inline-block;background:#e8f0fe;color:#1a73e8;border-radius:4px;padding:1px 6px;font-size:11px;margin-top:2px;font-family:sans-serif}}
-.badge{{display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600}}
-.badge.pass{{background:#e8f5e9;color:#18a058}}
-.badge.fail{{background:#fce4e4;color:#d03050}}
-.badge.error{{background:#fff3e0;color:#f0a020}}
-.time-cell{{font-size:11px;color:#999;white-space:nowrap}}
-/* 详情展开 */
-.detail-row td{{padding:0;background:#fffdf5;border-bottom:1px solid #fde}}
-.detail-grid{{display:grid;grid-template-columns:1fr 1fr;gap:0;padding:16px 20px;gap:16px}}
-.detail-section{{}}
-.detail-title{{font-size:13px;font-weight:600;color:#555;margin-bottom:8px}}
-.code-pre{{background:#f8f8f8;border:1px solid #eee;border-radius:6px;padding:10px;font-size:11px;font-family:'Courier New',monospace;white-space:pre-wrap;word-break:break-all;max-height:280px;overflow-y:auto;line-height:1.5}}
-.diff-details{{background:#fff9e6;border:1px solid #ffe58f;border-radius:6px;padding:10px}}
-.diff-item{{padding:6px 0;border-bottom:1px solid #ffd;font-size:12px}}
-.diff-item:last-child{{border-bottom:none}}
-.diff-path{{color:#d03050;font-weight:600;font-family:monospace;font-size:11px}}
-.diff-val{{margin-top:3px;font-family:monospace;font-size:11px;color:#666;word-break:break-all}}
-</style>
-</head>
-<body>
-<div class="page">
-
-<div class="top-bar">
-  <span>🖥</span>
-  <h1>录制回放测试报告</h1>
-  <span style="color:#aaa;margin:0 6px">›</span>
-  <span style="opacity:.8">{esc(app_name)}</span>
-  <span style="color:#aaa;margin:0 6px">›</span>
-  <span style="opacity:.8">📋 {job_name}</span>
-</div>
-
-<div class="meta-bar">
-  <span>任务 ID: <b>#{job_id}</b></span>
-  <span>状态: <b>{status_label_map.get(job.status, job.status)}</b></span>
-  <span>开始: <b>{started}</b></span>
-  <span>结束: <b>{ended}</b></span>
-  <span>并发: <b>{job.concurrency}</b></span>
-  <span>超时: <b>{job.timeout_ms}ms</b></span>
-  <span>忽略字段: <b>{esc(ignore_meta)}</b></span>
-  <span>差异规则: <b>{esc(diff_rules_str)}</b></span>
-  <span>断言规则: <b>{esc(assertions_str)}</b></span>
-  <span>子调用 Mock: <b>{mock_mode_str}</b></span>
-</div>
-
-<div class="stats">
-  <div class="stat total"><div class="num">{job.total}</div><div class="lbl">已执行</div></div>
-  <div class="stat pass"><div class="num">{job.passed}</div><div class="lbl">通过 PASS</div></div>
-  <div class="stat fail"><div class="num">{job.failed}</div><div class="lbl">失败 FAIL</div></div>
-  <div class="stat err"><div class="num">{job.errored}</div><div class="lbl">错误 ERROR</div></div>
-  <div class="stat rate"><div class="num">{pass_rate_str}</div><div class="lbl">通过率</div></div>
-</div>
-
-<div class="card">
-  <div class="card-title">失败原因分析</div>
-  <table class="analysis-table"><tr>{analysis_cells}</tr></table>
-</div>
-
-<div class="card">
-  <div class="card-title">逐条结果</div>
-  <div class="filter-bar">
-    <button class="tab-btn active" onclick="filterStatus('ALL', event)">全部 ({job.total})</button>
-    <button class="tab-btn" onclick="filterStatus('PASS', event)">✅ PASS ({job.passed})</button>
-    <button class="tab-btn" onclick="filterStatus('FAIL', event)">❌ FAIL ({job.failed})</button>
-    <button class="tab-btn" onclick="filterStatus('ERROR', event)">⚠️ ERROR ({job.errored})</button>
-    <input class="search-box" type="text" placeholder="搜索接口路径…" oninput="doSearch(this.value)" />
-    <span class="count-info" id="countInfo">共 {job.total} 条</span>
-  </div>
-  <table class="result-table">
-    <thead><tr><th>接口</th><th>状态</th><th>差异</th><th>状态码</th><th>耗时(ms)</th><th>回放时间</th></tr></thead>
-    <tbody id="tbody">{rows_html}</tbody>
-  </table>
-</div>
-
-</div>
-<script>
-var currentStatus='ALL', currentSearch='';
-function toggle(id){{
-  var el=document.getElementById(id);
-  if(el) el.style.display=el.style.display==='none'?'table-row':'none';
-}}
-function filterStatus(s, ev){{
-  currentStatus=s;
-  document.querySelectorAll('.tab-btn').forEach(function(b){{b.classList.remove('active')}});
-  if(ev && ev.target) ev.target.classList.add('active');
-  applyFilter();
-}}
-function doSearch(v){{currentSearch=v.toLowerCase();applyFilter();}}
-function applyFilter(){{
-  var rows=document.querySelectorAll('#tbody .result-row');
-  var visible=0;
-  rows.forEach(function(row){{
-    var st=row.getAttribute('data-status');
-    var txt=row.textContent.toLowerCase();
-    var show=(currentStatus==='ALL'||st===currentStatus)&&(!currentSearch||txt.includes(currentSearch));
-    row.style.display=show?'':'none';
-    if(show) visible++;
-    // 隐藏详情行
-    var did=row.getAttribute('onclick')||'';
-    var m=did.match(/toggle\('(d\d+)'\)/);
-    if(m){{var det=document.getElementById(m[1]);if(det&&!show) det.style.display='none';}}
-  }});
-  document.getElementById('countInfo').textContent='共 '+visible+' 条';
-}}
-</script>
-</body>
-</html>"""
-
+    html = render_template(
+        "replay_report.html",
+        {
+            "job_name": job_name,
+            "job_id": job_id,
+            "app_name": esc(app_name),
+            "job_status": esc(status_label_map.get(job.status, job.status)),
+            "started": started,
+            "ended": ended,
+            "concurrency": job.concurrency,
+            "timeout_ms": job.timeout_ms,
+            "ignore_meta": esc(ignore_meta),
+            "diff_rules": esc(diff_rules_str),
+            "assertions": esc(assertions_str),
+            "mock_mode": mock_mode_str,
+            "total": job.total,
+            "passed": job.passed,
+            "failed": job.failed,
+            "errored": job.errored,
+            "pass_rate": pass_rate_str,
+            "pass_color": pass_color,
+            "analysis_cells": analysis_cells,
+            "rows_html": rows_html,
+        },
+    )
     filename = f"replay_report_{job_id}.html"
     return FastAPIResponse(
         content=html.encode("utf-8"),
         media_type="text/html; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-
 
 @router.get("/{job_id}/analysis")
 async def get_failure_analysis(
@@ -1064,7 +963,7 @@ async def get_failure_analysis(
 async def replay_progress_ws(job_id: int, websocket: WebSocket):
     """WebSocket endpoint for real-time replay progress."""
     await websocket.accept()
-    register_ws(job_id, websocket)
+    await register_ws(job_id, websocket)
     try:
         async with async_session_factory() as db:
             result = await db.execute(select(ReplayJob).where(ReplayJob.id == job_id))
@@ -1086,4 +985,4 @@ async def replay_progress_ws(job_id: int, websocket: WebSocket):
     except WebSocketDisconnect:
         pass
     finally:
-        unregister_ws(job_id, websocket)
+        await unregister_ws(job_id, websocket)

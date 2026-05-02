@@ -207,7 +207,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NAlert,
@@ -236,6 +236,7 @@ import { replayApi } from '@/api/replays'
 import { testCaseApi } from '@/api/testcases'
 import { formatDateTime } from '@/utils/format'
 import { useUserStore } from '@/store/user'
+import { unpackPagedResponse } from '@/utils/pagination'
 
 type ApplicationDetail = {
   id: number
@@ -285,6 +286,7 @@ const recentTab = ref('sessions')
 const sessionsLoading = ref(false)
 const casesLoading = ref(false)
 const jobsLoading = ref(false)
+const sessionCountPollingTimer = ref<number | null>(null)
 const testing = ref(false)
 const mounting = ref(false)
 const unmounting = ref(false)
@@ -581,16 +583,53 @@ async function loadApplication() {
   }
 }
 
-async function loadSessions() {
-  sessionsLoading.value = true
+async function loadSessions(options: { silent?: boolean } = {}) {
+  if (!options.silent) {
+    sessionsLoading.value = true
+  }
   try {
-    const res = await recordingApi.listSessions({ application_id: appId, limit: 20 })
-    sessions.value = res.data
+    const res = await recordingApi.listSessions({ application_id: appId, limit: 20, refresh_active_count: true })
+    sessions.value = unpackPagedResponse<SessionRow>(res.data).items
+    updateSessionCountPolling()
   } catch (error: any) {
     sessions.value = []
-    message.error(error.response?.data?.detail || '加载录制会话失败')
+    updateSessionCountPolling()
+    if (!options.silent) {
+      message.error(error.response?.data?.detail || '加载录制会话失败')
+    }
   } finally {
-    sessionsLoading.value = false
+    if (!options.silent) {
+      sessionsLoading.value = false
+    }
+  }
+}
+
+function shouldPollSessionList() {
+  return sessions.value.some((session) => session.status === 'active' || session.status === 'collecting')
+}
+
+function startSessionCountPolling() {
+  if (sessionCountPollingTimer.value != null) {
+    return
+  }
+  sessionCountPollingTimer.value = window.setInterval(() => {
+    void loadSessions({ silent: true })
+  }, 10_000)
+}
+
+function stopSessionCountPolling() {
+  if (sessionCountPollingTimer.value == null) {
+    return
+  }
+  window.clearInterval(sessionCountPollingTimer.value)
+  sessionCountPollingTimer.value = null
+}
+
+function updateSessionCountPolling() {
+  if (shouldPollSessionList()) {
+    startSessionCountPolling()
+  } else {
+    stopSessionCountPolling()
   }
 }
 
@@ -598,7 +637,7 @@ async function loadCases() {
   casesLoading.value = true
   try {
     const res = await testCaseApi.list({ application_id: appId, limit: 10 })
-    testCases.value = res.data
+    testCases.value = unpackPagedResponse<any>(res.data).items
   } catch (error: any) {
     testCases.value = []
     message.error(error.response?.data?.detail || '加载测试用例失败')
@@ -611,7 +650,7 @@ async function loadReplayJobs() {
   jobsLoading.value = true
   try {
     const res = await replayApi.list({ application_id: appId, limit: 10 })
-    replayJobs.value = res.data
+    replayJobs.value = unpackPagedResponse<any>(res.data).items
   } catch (error: any) {
     replayJobs.value = []
     message.error(error.response?.data?.detail || '加载回放任务失败')
@@ -700,6 +739,10 @@ async function quickCreateSession() {
 
 onMounted(() => {
   void loadPage()
+})
+
+onBeforeUnmount(() => {
+  stopSessionCountPolling()
 })
 </script>
 

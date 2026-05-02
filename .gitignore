@@ -27,3 +27,8 @@ platform/frontend/dist/
 platform/frontend/.vite/
 
 data/arex_recorder.db
+*.db
+
+# Claude Code work files
+.claude/
+platform/.env

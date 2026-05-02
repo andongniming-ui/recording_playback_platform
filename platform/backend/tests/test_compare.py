@@ -102,6 +102,34 @@ def test_diff_different_responses():
     assert score > 0.0
 
 
+def test_diff_can_enforce_array_order():
+    from utils.diff import compute_diff
+
+    original = '{"items":[1,2,3]}'
+    replayed = '{"items":[3,2,1]}'
+
+    default_diff, default_score = compute_diff(original, replayed)
+    strict_diff, strict_score = compute_diff(original, replayed, ignore_order=False)
+
+    assert default_diff is None
+    assert default_score == 0.0
+    assert strict_diff is not None
+    assert strict_score > 0.0
+
+
+def test_smart_noise_reduction_does_not_ignore_business_order_id():
+    from utils.diff import compute_diff
+
+    original = '{"order_id":"A001","id":"dynamic-1"}'
+    replayed = '{"order_id":"A002","id":"dynamic-2"}'
+
+    diff_json, score = compute_diff(original, replayed, smart_noise_reduction=True)
+
+    assert diff_json is not None
+    assert "order_id" in diff_json
+    assert score > 0.0
+
+
 def test_diff_with_ignore_fields():
     from utils.diff import compute_diff
 
@@ -147,6 +175,18 @@ def test_smart_noise_reduction_for_xml_keeps_account_number_diff():
     assert "timestamp" not in diff_json
     assert "open_date" not in diff_json
     assert score > 0.0
+
+
+def test_diff_treats_json_encoded_xml_string_as_same_xml():
+    from utils.diff import compute_diff
+
+    original = "<BookVo><idcard>440203198709237790</idcard><opendate>2026-04-27</opendate></BookVo>"
+    replayed = json.dumps(original, ensure_ascii=False)
+
+    diff_json, score = compute_diff(original, replayed)
+
+    assert diff_json is None
+    assert score == 0.0
 
 
 def test_diff_none_inputs():

@@ -101,7 +101,7 @@
             clearable
             placeholder="按状态筛选"
             style="width:160px"
-            @update:value="loadResults"
+            @update:value="reloadResultsFromFirstPage"
           />
         </n-space>
       </template>
@@ -109,11 +109,53 @@
         :columns="resultColumns"
         :data="results"
         :loading="resultsLoading"
-        :pagination="{ pageSize: 15 }"
+        :pagination="resultPagination"
+        remote
+        size="small"
+      />
+    </n-card>
+
+    <n-card title="回放审计日志">
+      <template #header-extra>
+        <n-space>
+          <n-select
+            v-model:value="auditEventType"
+            clearable
+            :options="auditEventOptions"
+            placeholder="事件类型"
+            style="width: 180px"
+            @update:value="reloadAuditLogsFromFirstPage"
+          />
+          <n-button @click="loadAuditLogs">刷新日志</n-button>
+        </n-space>
+      </template>
+      <n-data-table
+        :columns="auditColumns"
+        :data="auditLogs"
+        :loading="auditLoading"
+        :pagination="auditPagination"
+        remote
         size="small"
       />
     </n-card>
   </n-space>
+
+  <n-modal v-model:show="showAuditDetail" preset="card" style="width: 760px" title="回放审计详情">
+    <n-space vertical :size="12">
+      <n-descriptions bordered :column="2" size="small">
+        <n-descriptions-item label="事件">{{ selectedAuditLog?.event_type || '-' }}</n-descriptions-item>
+        <n-descriptions-item label="时间">{{ formatDateTime(selectedAuditLog?.created_at) }}</n-descriptions-item>
+        <n-descriptions-item label="目标">{{ selectedAuditLog?.target_url || '-' }}</n-descriptions-item>
+        <n-descriptions-item label="交易码">{{ selectedAuditLog?.transaction_code || '-' }}</n-descriptions-item>
+        <n-descriptions-item label="状态码">{{ selectedAuditLog?.actual_status_code ?? '-' }}</n-descriptions-item>
+        <n-descriptions-item label="耗时">{{ selectedAuditLog?.latency_ms != null ? `${selectedAuditLog.latency_ms}ms` : '-' }}</n-descriptions-item>
+        <n-descriptions-item label="消息" :span="2">{{ selectedAuditLog?.message || '-' }}</n-descriptions-item>
+      </n-descriptions>
+      <n-card size="small" title="Detail JSON">
+        <pre class="code-block compact">{{ prettyText(selectedAuditLog?.detail) }}</pre>
+      </n-card>
+    </n-space>
+  </n-modal>
 
   <!-- 对比详情弹窗 -->
   <n-modal v-model:show="showDiff" preset="card" style="width:1000px" title="结果对比详情">
@@ -229,7 +271,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NBreadcrumb,
@@ -254,7 +296,7 @@ import {
 } from 'naive-ui'
 import type { DataTableColumns, SelectOption, TagProps } from 'naive-ui'
 import { applicationApi } from '@/api/applications'
-import { replayApi } from '@/api/replays'
+import { replayApi, type ReplayAuditLog } from '@/api/replays'
 import { recordingApi } from '@/api/recordings'
 import { testCaseApi } from '@/api/testcases'
 import { formatDateTime } from '@/utils/format'
@@ -262,6 +304,7 @@ import SubCallPanel from '@/components/recording/SubCallPanel.vue'
 import SubCallDiffPanel from '@/components/recording/SubCallDiffPanel.vue'
 import type { SubCallDiffResult } from '@/api/replays'
 import { buildRecordingSubCallSummary, parseRecordingSubCalls } from '@/utils/recording'
+import { lastValidPage, loadPagedData } from '@/utils/pagination'
 
 type ReplayJobRow = {
   id: number
@@ -322,6 +365,11 @@ const job = ref<ReplayJobRow | null>(null)
 const appName = ref('-')
 const results = ref<ReplayResultRow[]>([])
 const resultsLoading = ref(false)
+const auditLogs = ref<ReplayAuditLog[]>([])
+const auditLoading = ref(false)
+const auditEventType = ref<string | null>(null)
+const selectedAuditLog = ref<ReplayAuditLog | null>(null)
+const showAuditDetail = ref(false)
 const resultFilter = ref<string | null>(null)
 const showDiff = ref(false)
 const selectedResult = ref<ReplayResultRow | null>(null)
@@ -332,6 +380,40 @@ const sourceRecording = ref<any | null>(null)
 const sourceRecordingSubCallSummary = ref('')
 const subCallDiff = ref<SubCallDiffResult | null>(null)
 const subCallDiffLoading = ref(false)
+const resultPagination = reactive({
+  page: 1,
+  pageSize: 15,
+  itemCount: 0,
+  pageSizes: [15, 30, 50, 100],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 条结果`,
+  onUpdatePage: (page: number) => {
+    resultPagination.page = page
+    void loadResults()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    resultPagination.pageSize = pageSize
+    resultPagination.page = 1
+    void loadResults()
+  },
+})
+const auditPagination = reactive({
+  page: 1,
+  pageSize: 10,
+  itemCount: 0,
+  pageSizes: [10, 20, 50, 100],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 条日志`,
+  onUpdatePage: (page: number) => {
+    auditPagination.page = page
+    void loadAuditLogs()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    auditPagination.pageSize = pageSize
+    auditPagination.page = 1
+    void loadAuditLogs()
+  },
+})
 
 const passRate = computed(() => {
   if (!job.value || !job.value.total) return 0
@@ -394,6 +476,19 @@ const resultFilterOptions: SelectOption[] = [
   { label: '失败', value: 'FAIL' },
   { label: '异常', value: 'ERROR' },
   { label: '超时', value: 'TIMEOUT' },
+]
+
+const auditEventOptions: SelectOption[] = [
+  { label: '任务开始', value: 'job_started' },
+  { label: '任务结束', value: 'job_finished' },
+  { label: '用例开始', value: 'case_started' },
+  { label: '请求发出', value: 'request_sent' },
+  { label: '响应收到', value: 'response_received' },
+  { label: 'Mock 加载', value: 'mock_loaded' },
+  { label: 'Mock 移除', value: 'mock_removed' },
+  { label: '子调用抓取', value: 'sub_calls_captured' },
+  { label: '用例重试', value: 'case_retry' },
+  { label: '用例结束', value: 'case_finished' },
 ]
 
 function diffScoreColor(score?: number | null) {
@@ -486,9 +581,79 @@ const resultColumns: DataTableColumns<ReplayResultRow> = [
   },
 ]
 
+const auditColumns: DataTableColumns<ReplayAuditLog> = [
+  {
+    title: '时间',
+    key: 'created_at',
+    width: 160,
+    render: (row) => formatDateTime(row.created_at),
+  },
+  {
+    title: '事件',
+    key: 'event_type',
+    width: 160,
+  },
+  {
+    title: '接口',
+    key: 'request_uri',
+    width: 260,
+    render: (row) => row.request_uri ? `${row.request_method || ''} ${row.request_uri}`.trim() : (row.target_url || '-'),
+  },
+  {
+    title: '交易码',
+    key: 'transaction_code',
+    width: 140,
+    render: (row) => row.transaction_code || '-',
+  },
+  {
+    title: '消息',
+    key: 'message',
+    minWidth: 220,
+    render: (row) => row.message || '-',
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 160,
+    render: (row) =>
+      h(NSpace, { size: 4 }, () => [
+        h(NButton, { size: 'tiny', onClick: () => openAuditDetail(row) }, () => '详情'),
+        ...(row.result_id
+          ? [
+              h(
+                NButton,
+                { size: 'tiny', type: 'primary', ghost: true, onClick: () => openAuditResult(row) },
+                () => '结果',
+              ),
+            ]
+          : []),
+      ]),
+  },
+]
+
 function prettyText(value?: string | null) {
   if (!value) return '-'
   try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value }
+}
+
+function openAuditDetail(row: ReplayAuditLog) {
+  selectedAuditLog.value = row
+  showAuditDetail.value = true
+}
+
+async function openAuditResult(row: ReplayAuditLog) {
+  if (!row.result_id) return
+  const existing = results.value.find(item => item.id === row.result_id)
+  if (existing) {
+    openDiff(existing)
+    return
+  }
+  try {
+    const res = await replayApi.getResult(row.result_id)
+    openDiff(res.data)
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '加载回放结果详情失败')
+  }
 }
 
 function rawText(value?: string | null) {
@@ -583,6 +748,28 @@ async function loadAnalysis() {
   }
 }
 
+async function loadAuditLogs() {
+  auditLoading.value = true
+  try {
+    const page = await loadPagedData<ReplayAuditLog>((params) => replayApi.getAuditLogs(jobId, params), {
+      event_type: auditEventType.value || undefined,
+    }, auditPagination.page, auditPagination.pageSize, 500)
+    auditLogs.value = page.items
+    auditPagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && auditPagination.page > 1) {
+      auditPagination.page = lastValidPage(page.total, auditPagination.pageSize)
+      void loadAuditLogs()
+      return
+    }
+  } catch (error: any) {
+    auditLogs.value = []
+    auditPagination.itemCount = 0
+    message.error(error.response?.data?.detail || '加载回放审计日志失败')
+  } finally {
+    auditLoading.value = false
+  }
+}
+
 async function loadPage() {
   try {
     const res = await replayApi.get(jobId)
@@ -596,22 +783,45 @@ async function loadPage() {
   } catch (error: any) {
     message.error(error.response?.data?.detail || '加载回放任务失败')
   }
-  await Promise.all([loadResults(), loadAnalysis()])
+  await Promise.all([loadResults(), loadAnalysis(), loadAuditLogs()])
 }
 
 async function loadResults() {
   resultsLoading.value = true
   try {
-    const params: Record<string, string | number> = { limit: 200 }
+    const params: Record<string, string | number | boolean> = {}
     if (resultFilter.value) params.status = resultFilter.value
-    const res = await replayApi.getResults(jobId, params)
-    results.value = res.data
+    const page = await loadPagedData<ReplayResultRow>(
+      (requestParams) => replayApi.getResults(jobId, requestParams),
+      params,
+      resultPagination.page,
+      resultPagination.pageSize,
+      200,
+    )
+    results.value = page.items
+    resultPagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && resultPagination.page > 1) {
+      resultPagination.page = lastValidPage(page.total, resultPagination.pageSize)
+      void loadResults()
+      return
+    }
   } catch (error: any) {
     results.value = []
+    resultPagination.itemCount = 0
     message.error(error.response?.data?.detail || '加载结果详情失败')
   } finally {
     resultsLoading.value = false
   }
+}
+
+function reloadResultsFromFirstPage() {
+  resultPagination.page = 1
+  void loadResults()
+}
+
+function reloadAuditLogsFromFirstPage() {
+  auditPagination.page = 1
+  void loadAuditLogs()
 }
 
 onMounted(() => {

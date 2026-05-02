@@ -1,0 +1,1155 @@
+{
+  "info": {
+    "_postman_id": "r8b2c1d0-1a2b-4c3d-9e5f-a001b1f20003",
+    "name": "Rental Car System",
+    "description": "AREX Recording/Replay target system: rental car management. Import into Postman and select a rental environment. Each request auto-generates an 18-digit traId and sends it in the X-Serial-No header so logs can be searched end-to-end. Complex transactions (RENT001-RENT015) produce HTTP sub-calls and JDBC activity. Simple transactions (RENT016-RENT030) are DB-only. Two environments: rental-base (port 20081) and rental-compare (port 20082) with intentional API differences.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:20081"
+    },
+    {
+      "key": "traId",
+      "value": ""
+    },
+    {
+      "key": "orderNo",
+      "value": ""
+    },
+    {
+      "key": "paymentNo",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Complex Transactions",
+      "description": "RENT001 ~ RENT015. These requests produce HTTP sub-calls and JDBC activity.",
+      "item": [
+        {
+          "name": "RENT001 车辆查询 (vehicle/query)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>VEH002</trans_code><vehicle_id>1</vehicle_id>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/vehicle/query",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vehicle",
+                "query"
+              ]
+            },
+            "description": "子调用：GET /api/internal/insurance/query\n数据库：rental_vehicle\n差异：COMPARE 多返回 maintenance_detail 字段"
+          }
+        },
+        {
+          "name": "RENT002 车辆列表 (vehicle/list)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>VEH005</trans_code><store_id>1</store_id>\n    <status>1</status>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/vehicle/list",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vehicle",
+                "list"
+              ]
+            },
+            "description": "子调用：GET /api/internal/store/info\n数据库：rental_vehicle"
+          }
+        },
+        {
+          "name": "RENT003 车辆保险查询 (vehicle/insurance)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>VEH006</trans_code><vehicle_id>1</vehicle_id>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/vehicle/insurance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vehicle",
+                "insurance"
+              ]
+            },
+            "description": "子调用：GET /api/internal/insurance/query\n数据库：rental_vehicle"
+          }
+        },
+        {
+          "name": "RENT004 创建订单 (order/create)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>ORD001</trans_code><user_id>1</user_id>\n    <vehicle_id>1</vehicle_id>\n    <store_id>1</store_id>\n    <start_time>2026-04-29 10:00:00</start_time>\n    <end_time>2026-05-01 10:00:00</end_time>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/order/create",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "order",
+                "create"
+              ]
+            },
+            "description": "子调用：GET /api/internal/vehicle/check, GET /api/internal/credit/check\n数据库：rental_vehicle, rental_user, rental_order (INSERT+UPDATE)\n差异：BASE押金=20%, COMPARE押金=30%"
+          }
+        },
+        {
+          "name": "RENT005 取消订单 (order/cancel)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>ORD003</trans_code><order_no>{{orderNo}}</order_no>\n    <cancel_reason>行程取消</cancel_reason>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/order/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "order",
+                "cancel"
+              ]
+            },
+            "description": "子调用：GET /api/internal/refund/calculate\n数据库：rental_order (UPDATE), rental_vehicle (UPDATE)"
+          }
+        },
+        {
+          "name": "RENT006 还车完成 (order/complete)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>ORD004</trans_code><order_no>{{orderNo}}</order_no>\n    <actual_return_time>2026-05-02 10:00:00</actual_return_time>\n    <damage_desc></damage_desc>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/order/complete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "order",
+                "complete"
+              ]
+            },
+            "description": "子调用：GET /api/internal/damage/check, GET /api/internal/pricing/query\n数据库：rental_order (UPDATE), rental_vehicle (UPDATE)\n差异：BASE滞纳金=50/天, COMPARE滞纳金=100/天"
+          }
+        },
+        {
+          "name": "RENT007 费用计算 (order/calculate-fee)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>ORD006</trans_code><vehicle_id>1</vehicle_id>\n    <start_time>2026-04-29 10:00:00</start_time>\n    <end_time>2026-05-01 10:00:00</end_time>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/order/calculate-fee",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "order",
+                "calculate-fee"
+              ]
+            },
+            "description": "子调用：GET /api/internal/pricing/query\n数据库：rental_vehicle"
+          }
+        },
+        {
+          "name": "RENT008 续租订单 (order/extend)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>ORD007</trans_code><order_no>{{orderNo}}</order_no>\n    <new_end_time>2026-05-03 10:00:00</new_end_time>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/order/extend",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "order",
+                "extend"
+              ]
+            },
+            "description": "子调用：GET /api/internal/vehicle/check\n数据库：rental_order (SELECT+UPDATE)"
+          }
+        },
+        {
+          "name": "RENT009 订单详情 (order/detail)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>ORD008</trans_code><order_no>{{orderNo}}</order_no>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/order/detail",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "order",
+                "detail"
+              ]
+            },
+            "description": "子调用：GET /api/internal/vehicle/check, GET /api/internal/credit/check (+GET /api/internal/insurance/query in COMPARE)\n数据库：rental_order, rental_vehicle, rental_user\n差异：COMPARE 多返回 insurance_info 字段"
+          }
+        },
+        {
+          "name": "RENT010 创建支付 (payment/create)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>PAY001</trans_code><order_no>{{orderNo}}</order_no>\n    <amount>700.00</amount>\n    <payment_method>WECHAT</payment_method>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/payment/create",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payment",
+                "create"
+              ]
+            },
+            "description": "子调用：GET /api/internal/payment-gateway/process\n数据库：rental_order, rental_payment\n差异：BASE渠道=A, COMPARE渠道=B"
+          }
+        },
+        {
+          "name": "RENT011 查询支付 (payment/query)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>PAY002</trans_code><payment_no>{{paymentNo}}</payment_no>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/payment/query",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payment",
+                "query"
+              ]
+            },
+            "description": "子调用：GET /api/internal/payment-gateway/query\n数据库：rental_payment"
+          }
+        },
+        {
+          "name": "RENT012 退款 (payment/refund)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>PAY003</trans_code><payment_no>{{paymentNo}}</payment_no>\n    <refund_amount>700.00</refund_amount>\n    <refund_reason>重复支付</refund_reason>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/payment/refund",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payment",
+                "refund"
+              ]
+            },
+            "description": "子调用：GET /api/internal/payment-gateway/refund\n数据库：rental_payment (SELECT+UPDATE)"
+          }
+        },
+        {
+          "name": "RENT013 支付对账 (payment/reconcile)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>PAY005</trans_code><reconcile_date>2026-04-29</reconcile_date>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/payment/reconcile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payment",
+                "reconcile"
+              ]
+            },
+            "description": "子调用：GET /api/internal/reconciliation/query\n数据库：rental_payment"
+          }
+        },
+        {
+          "name": "RENT014 营收报表 (statistics/revenue)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>STAT002</trans_code><start_date>2026-04-01</start_date>\n    <end_date>2026-04-30</end_date>\n    <store_id>1</store_id>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/statistics/revenue",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "statistics",
+                "revenue"
+              ]
+            },
+            "description": "子调用：GET /api/internal/report/generate\n数据库：rental_order, rental_store"
+          }
+        },
+        {
+          "name": "RENT015 用户报告 (statistics/user-report)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>STAT004</trans_code><user_id>1</user_id>\n    <start_date>2026-04-01</start_date>\n    <end_date>2026-04-30</end_date>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/statistics/user-report",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "statistics",
+                "user-report"
+              ]
+            },
+            "description": "子调用：GET /api/internal/report/generate\n数据库：rental_user, rental_order, rental_vehicle\n差异：COMPARE 多返回 membership_level 字段"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Simple Transactions",
+      "description": "RENT016 ~ RENT030. These requests are DB-only, without HTTP sub-calls.",
+      "item": [
+        {
+          "name": "RENT016 用户注册 (user/register)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>USER001</trans_code><username>newuser</username>\n    <password>pass123</password>\n    <real_name>New User</real_name>\n    <phone>13800001099</phone>\n    <email>newuser@email.com</email>\n    <id_card>110101199907071240</id_card>\n    <driver_license>DL20240099</driver_license>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/user/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "register"
+              ]
+            },
+            "description": "数据库：rental_user (INSERT)"
+          }
+        },
+        {
+          "name": "RENT017 用户登录 (user/login)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>USER002</trans_code><username>zhangsan</username>\n    <password>pass123</password>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/user/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "login"
+              ]
+            },
+            "description": "数据库：rental_user (SELECT)"
+          }
+        },
+        {
+          "name": "RENT018 用户查询 (user/query)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>USER003</trans_code><user_id>1</user_id>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/user/query",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "query"
+              ]
+            },
+            "description": "数据库：rental_user (SELECT)"
+          }
+        },
+        {
+          "name": "RENT019 用户更新 (user/update)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>USER004</trans_code><user_id>1</user_id>\n    <phone>13800001999</phone>\n    <email>updated@email.com</email>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/user/update",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "update"
+              ]
+            },
+            "description": "数据库：rental_user (SELECT+UPDATE)"
+          }
+        },
+        {
+          "name": "RENT020 车辆添加 (vehicle/add)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>VEH001</trans_code><plate_number>HU-C00001</plate_number>\n    <brand>Toyota</brand>\n    <model>RAV4</model>\n    <color>White</color>\n    <year>2024</year>\n    <seats>5</seats>\n    <displacement>2.0L</displacement>\n    <price_per_day>400.00</price_per_day>\n    <store_id>1</store_id>\n    <mileage>8000</mileage>\n    <insurance_expire>2027-06-30</insurance_expire>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/vehicle/add",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vehicle",
+                "add"
+              ]
+            },
+            "description": "数据库：rental_vehicle (INSERT)"
+          }
+        },
+        {
+          "name": "RENT021 车辆更新 (vehicle/update)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>VEH003</trans_code><vehicle_id>1</vehicle_id>\n    <price_per_day>380.00</price_per_day>\n    <status>1</status>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/vehicle/update",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vehicle",
+                "update"
+              ]
+            },
+            "description": "数据库：rental_vehicle (SELECT+UPDATE)"
+          }
+        },
+        {
+          "name": "RENT022 车辆删除 (vehicle/delete)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>VEH004</trans_code><vehicle_id>999</vehicle_id>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/vehicle/delete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vehicle",
+                "delete"
+              ]
+            },
+            "description": "数据库：rental_vehicle (DELETE)"
+          }
+        },
+        {
+          "name": "RENT023 门店添加 (store/add)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>STO001</trans_code><store_name>Nanjing Xinjiekou Store</store_name>\n    <address>Xinjiekou, Nanjing</address>\n    <phone>025-58000001</phone>\n    <business_hours>08:00-22:00</business_hours>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/store/add",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "store",
+                "add"
+              ]
+            },
+            "description": "数据库：rental_store (INSERT)"
+          }
+        },
+        {
+          "name": "RENT024 门店查询 (store/query)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>STO002</trans_code><store_id>1</store_id>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/store/query",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "store",
+                "query"
+              ]
+            },
+            "description": "数据库：rental_store (SELECT)"
+          }
+        },
+        {
+          "name": "RENT025 门店列表 (store/list)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>STO003</trans_code><status>1</status>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/store/list",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "store",
+                "list"
+              ]
+            },
+            "description": "数据库：rental_store (SELECT)\n差异：BASE按ID升序, COMPARE按create_time降序"
+          }
+        },
+        {
+          "name": "RENT026 订单查询 (order/query)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>ORD002</trans_code><order_no>{{orderNo}}</order_no>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/order/query",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "order",
+                "query"
+              ]
+            },
+            "description": "数据库：rental_order (SELECT)"
+          }
+        },
+        {
+          "name": "RENT027 订单列表 (order/list)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>ORD005</trans_code><user_id>1</user_id>\n    <status>1</status>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/order/list",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "order",
+                "list"
+              ]
+            },
+            "description": "数据库：rental_order (SELECT)"
+          }
+        },
+        {
+          "name": "RENT028 支付回调 (payment/callback)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>PAY004</trans_code><payment_no>{{paymentNo}}</payment_no>\n    <order_no>{{orderNo}}</order_no>\n    <status>2</status>\n    <gateway_trade_no>GT123456789</gateway_trade_no>\n    <pay_time>2026-04-29 10:05:00</pay_time>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/payment/callback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payment",
+                "callback"
+              ]
+            },
+            "description": "数据库：rental_payment (SELECT+UPDATE)"
+          }
+        },
+        {
+          "name": "RENT029 每日统计 (statistics/daily)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>STAT001</trans_code><stat_date>2026-04-29</stat_date>\n    <store_id>1</store_id>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/statistics/daily",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "statistics",
+                "daily"
+              ]
+            },
+            "description": "数据库：rental_order, rental_store\n差异：BASE按日期分组, COMPARE先按门店再按日期分组"
+          }
+        },
+        {
+          "name": "RENT030 车辆利用率 (statistics/utilization)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Serial-No",
+                "value": "{{traId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/xml"
+              },
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "<body>\n    <trans_code>STAT003</trans_code><stat_date>2026-04-29</stat_date>\n</body>"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/statistics/utilization",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "statistics",
+                "utilization"
+              ]
+            },
+            "description": "数据库：rental_vehicle (COUNT)"
+          }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "let traId = String(Math.floor(Math.random() * 9) + 1);",
+          "while (traId.length < 18) {",
+          "  traId += String(Math.floor(Math.random() * 10));",
+          "}",
+          "pm.collectionVariables.set(\"traId\", traId);",
+          "pm.variables.set(\"traId\", traId);"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const text = pm.response.text();",
+          "const orderMatch = text.match(/<order_no>([^<]+)<\\/order_no>/) || text.match(/\"orderNo\"\\s*:\\s*\"([^\"]+)\"/);",
+          "if (orderMatch) {",
+          "  pm.collectionVariables.set(\"orderNo\", orderMatch[1]);",
+          "  pm.variables.set(\"orderNo\", orderMatch[1]);",
+          "}",
+          "const paymentMatch = text.match(/<payment_no>([^<]+)<\\/payment_no>/) || text.match(/\"paymentNo\"\\s*:\\s*\"([^\"]+)\"/);",
+          "if (paymentMatch) {",
+          "  pm.collectionVariables.set(\"paymentNo\", paymentMatch[1]);",
+          "  pm.variables.set(\"paymentNo\", paymentMatch[1]);",
+          "}"
+        ]
+      }
+    }
+  ]
+}

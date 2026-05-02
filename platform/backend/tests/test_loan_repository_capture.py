@@ -13,6 +13,7 @@ import pytest
 from utils.repository_capture import (
     get_dynamic_class_configurations,
     lookup_repository_capture_metadata,
+    normalize_generic_database_sub_call,
     normalize_repository_sub_call,
 )
 
@@ -105,6 +106,24 @@ def test_normalize_loan_is_on_blacklist_produces_structured_sub_call():
     assert result is not None
     assert result["table"] == "blacklist"
     assert result.get("params") == {"customerId": "C001"}
+
+
+def test_normalize_generic_database_sub_call_extracts_jdbc_parameters_attribute():
+    mocker = {
+        "operationName": "query",
+        "targetRequest": {
+            "body": "select name from cust_info where idcard=?",
+            "attributes": {"parameters": '"440101199509092222"'},
+        },
+        "targetResponse": {"body": '[{"name":"Carol Wang"}]', "attributes": {}},
+    }
+
+    result = normalize_generic_database_sub_call(mocker, "Database")
+
+    assert result is not None
+    assert result["sql"] == "select name from cust_info where idcard=?"
+    assert result["params"] == ["440101199509092222"]
+    assert result["response"] == [{"name": "Carol Wang"}]
 
 
 # ---------------------------------------------------------------------------

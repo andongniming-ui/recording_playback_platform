@@ -336,7 +336,6 @@ async def _store_mocker(mocker: dict, db: AsyncSession) -> None:
             created_at_ms = None
     created_at = from_epoch_ms_beijing(created_at_ms) if created_at_ms is not None else now_beijing()
 
-
     db.add(ArexMocker(
         record_id=str(record_id),
         app_id=str(app_id),
@@ -383,8 +382,12 @@ async def save_mocker(request: Request, db: AsyncSession = Depends(get_db)):
     )
     for detail in _detail_lines_for_mockers([mocker]):
         _log_info("%s", detail)
-    await _store_mocker(mocker, db)
-    await db.commit()
+    try:
+        await _store_mocker(mocker, db)
+        await db.commit()
+    except Exception as exc:
+        _log_warning("[arex_proxy] save commit failed (record_id=%s): %s", mocker.get("recordId"), exc)
+        await db.rollback()
     return Response(content=SUCCESS_RESPONSE, status_code=200, media_type="application/json")
 
 
@@ -448,9 +451,14 @@ async def batch_save_mockers(request: Request, db: AsyncSession = Depends(get_db
         return Response(content=SUCCESS_RESPONSE, status_code=200, media_type="application/json")
 
     # Local mode: store all mockers directly
-    for mocker in mockers:
-        await _store_mocker(mocker, db)
-    await db.commit()
+    try:
+        for mocker in mockers:
+            await _store_mocker(mocker, db)
+        await db.commit()
+    except Exception as exc:
+        record_ids = [str(m.get("recordId", "?")) for m in mockers[:3]]
+        _log_warning("[arex_proxy] batchSaveMockers commit failed (record_ids=%s): %s", record_ids, exc)
+        await db.rollback()
     return Response(content=SUCCESS_RESPONSE, status_code=200, media_type="application/json")
 
 
@@ -472,7 +480,7 @@ async def query_replay_case(request: Request, db: AsyncSession = Depends(get_db)
         select(ArexMocker)
         .where(
             ArexMocker.app_id == app_id,
-            ArexMocker.is_entry_point == True,  # noqa: E712
+            ArexMocker.is_entry_point.is_(True),
         )
         .order_by(ArexMocker.created_at_ms.desc())
         .offset(page_index * page_size)
@@ -527,7 +535,7 @@ async def count_by_range(request: Request, db: AsyncSession = Depends(get_db)):
 
     stmt = select(func.count()).select_from(ArexMocker).where(
         ArexMocker.app_id == app_id,
-        ArexMocker.is_entry_point == True,  # noqa: E712
+        ArexMocker.is_entry_point.is_(True),
     )
     if begin_time_ms:
         stmt = stmt.where(ArexMocker.created_at_ms >= int(begin_time_ms))
@@ -549,7 +557,7 @@ async def cache_load(request: Request, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(ArexMocker).where(
             ArexMocker.record_id == record_id,
-            ArexMocker.is_entry_point == False,  # noqa: E712
+            ArexMocker.is_entry_point.is_(False),
         )
     )
     sub_calls = []

@@ -11,7 +11,7 @@
     <n-grid cols="1 s:2 l:4" responsive="screen" :x-gap="12" :y-gap="12" class="recording-summary">
       <n-grid-item>
         <n-card>
-          <n-statistic label="会话总数" :value="filteredSessions.length" />
+          <n-statistic label="会话总数" :value="sessionPagination.itemCount" />
         </n-card>
       </n-grid-item>
       <n-grid-item>
@@ -21,7 +21,7 @@
       </n-grid-item>
       <n-grid-item>
         <n-card>
-          <n-statistic label="治理分组" :value="recordingGroups.length" />
+          <n-statistic label="治理分组" :value="groupPagination.itemCount" />
         </n-card>
       </n-grid-item>
       <n-grid-item>
@@ -38,29 +38,29 @@
           :options="appOptions"
           clearable
           placeholder="请选择应用"
-          @update:value="loadSessions"
+          @update:value="handleApplicationFilterChange"
         />
         <n-select
           v-model:value="filterStatus"
           :options="statusOptions"
           clearable
           placeholder="会话状态"
-          @update:value="loadSessions"
+          @update:value="reloadSessionsFromFirstPage"
         />
         <n-date-picker
           v-model:value="filterDateRange"
           type="daterange"
           clearable
-          @update:value="loadSessions"
+          @update:value="reloadSessionsFromFirstPage"
         />
         <n-input
           v-model:value="sessionSearch"
           clearable
           placeholder="搜索会话名称或应用"
-          @keyup.enter="loadSessions"
+          @keyup.enter="reloadSessionsFromFirstPage"
         />
         <div class="recording-filter-actions">
-          <n-button type="primary" @click="loadSessions">查询</n-button>
+          <n-button type="primary" @click="reloadSessionsFromFirstPage">查询</n-button>
           <n-button quaternary @click="resetFilters">重置</n-button>
         </div>
       </div>
@@ -69,7 +69,7 @@
     <n-card title="录制会话">
       <template #header-extra>
         <n-space>
-          <n-tag type="info" size="small">共 {{ filteredSessions.length }} 条</n-tag>
+          <n-tag type="info" size="small">共 {{ sessionPagination.itemCount }} 条</n-tag>
           <n-button
             v-if="canEdit"
             size="small"
@@ -86,7 +86,7 @@
         :data="filteredSessions"
         :loading="sessionsLoading"
         :row-key="(row: SessionRow) => row.id"
-        :pagination="{ pageSize: 10 }"
+        :pagination="sessionPagination"
         remote
         v-model:checked-row-keys="selectedSessionIds"
         @update:sorter="handleSessionSorterChange"
@@ -102,16 +102,16 @@
             :options="governanceOptions"
             placeholder="治理状态"
             style="width: 150px"
-            @update:value="loadRecordingGroups"
+            @update:value="reloadRecordingGroupsFromFirstPage"
           />
           <n-input
             v-model:value="groupSearch"
             clearable
             placeholder="交易码 / 场景键 / URI"
             style="width: 240px"
-            @keyup.enter="loadRecordingGroups"
+            @keyup.enter="reloadRecordingGroupsFromFirstPage"
           />
-          <n-button @click="loadRecordingGroups">查询</n-button>
+          <n-button @click="reloadRecordingGroupsFromFirstPage">查询</n-button>
           <n-button
             v-if="canEdit"
             type="error"
@@ -134,7 +134,7 @@
         :columns="groupColumns"
         :data="recordingGroups"
         :loading="groupsLoading"
-        :pagination="{ pageSize: 8 }"
+        :pagination="groupPagination"
         :row-key="(row: RecordingGroupRow) => row.representative_recording_id"
         remote
         v-model:checked-row-keys="selectedGroupRecordingIds"
@@ -184,6 +184,7 @@
             clearable
             placeholder="按请求路径或交易码搜索"
             style="width: 100%"
+            @keyup.enter="reloadCurrentRecordingsFromFirstPage"
           />
           <n-space v-if="canEdit">
             <n-button
@@ -208,7 +209,7 @@
           :columns="recordingColumns"
           :data="filteredRecordings"
           :loading="recordingsLoading"
-          :pagination="{ pageSize: 15 }"
+          :pagination="recordingPagination"
           size="small"
           :row-key="(row: RecordingRow) => row.id"
           remote
@@ -338,7 +339,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NDataTable, NDatePicker, NDrawer, NDrawerContent, NGrid, NGridItem, NH2, NForm, NFormItem, NInput, NModal, NPopconfirm, NSpace, NSelect, NStatistic, NTag, NText, useMessage } from 'naive-ui'
 import type { DataTableColumns, SelectOption, TagProps } from 'naive-ui'
@@ -350,6 +351,7 @@ import { useUserStore } from '@/store/user'
 import type { RecordingSubCall } from '@/utils/recording'
 import { buildRecordingSubCallSummary, parseRecordingSubCalls } from '@/utils/recording'
 import { defaultSortState, resolveSortOrder, toApiSortOrder, updateSortState } from '@/utils/tableSort'
+import { lastValidPage, loadPagedData } from '@/utils/pagination'
 
 type SessionRow = {
   id: number
@@ -428,6 +430,58 @@ const selectedGroupRecordingIds = ref<(string | number)[]>([])
 const sessionSort = ref(defaultSortState('created_at'))
 const recordingSort = ref(defaultSortState('recorded_at'))
 const groupSort = ref(defaultSortState('latest_recorded_at'))
+const sessionCountPollingTimer = ref<number | null>(null)
+const sessionPagination = reactive({
+  page: 1,
+  pageSize: 10,
+  itemCount: 0,
+  pageSizes: [10, 20, 50, 100],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 条`,
+  onUpdatePage: (page: number) => {
+    sessionPagination.page = page
+    void loadSessions()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    sessionPagination.pageSize = pageSize
+    sessionPagination.page = 1
+    void loadSessions()
+  },
+})
+const groupPagination = reactive({
+  page: 1,
+  pageSize: 8,
+  itemCount: 0,
+  pageSizes: [8, 16, 32, 64],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 组`,
+  onUpdatePage: (page: number) => {
+    groupPagination.page = page
+    void loadRecordingGroups()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    groupPagination.pageSize = pageSize
+    groupPagination.page = 1
+    void loadRecordingGroups()
+  },
+})
+const recordingPagination = reactive({
+  page: 1,
+  pageSize: 15,
+  itemCount: 0,
+  pageSizes: [15, 30, 50, 100],
+  showSizePicker: true,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount || 0} 条录制`,
+  onUpdatePage: (page: number) => {
+    recordingPagination.page = page
+    void reloadCurrentRecordings()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    recordingPagination.pageSize = pageSize
+    recordingPagination.page = 1
+    void reloadCurrentRecordings()
+  },
+})
 
 const showConvertModal = ref(false)
 // 批量生成用例
@@ -497,14 +551,7 @@ const governanceLabelMap: Record<string, string> = {
 }
 
 const filteredSessions = computed(() => {
-  const keyword = sessionSearch.value.trim().toLowerCase()
-  if (!keyword) {
-    return sessions.value
-  }
-  return sessions.value.filter((session) => {
-    const appName = appNameMap.value[session.application_id] || ''
-    return session.name.toLowerCase().includes(keyword) || appName.toLowerCase().includes(keyword)
-  })
+  return sessions.value
 })
 
 const filteredRecordings = computed(() => {
@@ -710,10 +757,12 @@ async function loadApps() {
   }
 }
 
-async function loadSessions() {
-  sessionsLoading.value = true
+async function loadSessions(options: { silent?: boolean } = {}) {
+  if (!options.silent) {
+    sessionsLoading.value = true
+  }
   try {
-    const params: Record<string, number | string> = {}
+    const params: Record<string, number | string | boolean> = {}
     if (filterApplicationId.value != null) {
       params.application_id = filterApplicationId.value
     }
@@ -729,35 +778,101 @@ async function loadSessions() {
     }
     params.sort_by = sessionSort.value.columnKey
     params.sort_order = toApiSortOrder(sessionSort.value.order)
-    const res = await recordingApi.listSessions(params)
-    sessions.value = res.data
+    params.refresh_active_count = true
+    const page = await loadPagedData<SessionRow>(recordingApi.listSessions, params, sessionPagination.page, sessionPagination.pageSize, 100)
+    sessions.value = page.items
+    sessionPagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && sessionPagination.page > 1) {
+      sessionPagination.page = lastValidPage(page.total, sessionPagination.pageSize)
+      void loadSessions()
+      return
+    }
     selectedSessionIds.value = []
+    updateSessionCountPolling()
   } catch (error: any) {
     sessions.value = []
-    message.error(error.response?.data?.detail || '加载录制会话失败')
+    sessionPagination.itemCount = 0
+    updateSessionCountPolling()
+    if (!options.silent) {
+      message.error(error.response?.data?.detail || '加载录制会话失败')
+    }
   } finally {
-    sessionsLoading.value = false
+    if (!options.silent) {
+      sessionsLoading.value = false
+    }
+  }
+}
+
+function reloadSessionsFromFirstPage() {
+  sessionPagination.page = 1
+  void loadSessions()
+}
+
+function shouldPollSessionList() {
+  return sessions.value.some((session) => session.status === 'active' || session.status === 'collecting')
+}
+
+function startSessionCountPolling() {
+  if (sessionCountPollingTimer.value != null) {
+    return
+  }
+  sessionCountPollingTimer.value = window.setInterval(() => {
+    void loadSessions({ silent: true })
+  }, 10_000)
+}
+
+function stopSessionCountPolling() {
+  if (sessionCountPollingTimer.value == null) {
+    return
+  }
+  window.clearInterval(sessionCountPollingTimer.value)
+  sessionCountPollingTimer.value = null
+}
+
+function updateSessionCountPolling() {
+  if (shouldPollSessionList()) {
+    startSessionCountPolling()
+  } else {
+    stopSessionCountPolling()
   }
 }
 
 async function loadRecordingGroups() {
   groupsLoading.value = true
   try {
-    const res = await recordingApi.listRecordingGroups({
+    const page = await loadPagedData<RecordingGroupRow>(recordingApi.listRecordingGroups, {
       application_id: filterApplicationId.value ?? undefined,
       governance_status: groupGovernanceStatus.value || undefined,
       search: groupSearch.value.trim() || undefined,
       sort_by: groupSort.value.columnKey,
       sort_order: toApiSortOrder(groupSort.value.order),
-    })
-    recordingGroups.value = res.data
+    }, groupPagination.page, groupPagination.pageSize, 200)
+    recordingGroups.value = page.items
+    groupPagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && groupPagination.page > 1) {
+      groupPagination.page = lastValidPage(page.total, groupPagination.pageSize)
+      void loadRecordingGroups()
+      return
+    }
     selectedGroupRecordingIds.value = []
   } catch (error: any) {
     recordingGroups.value = []
+    groupPagination.itemCount = 0
     message.error(error.response?.data?.detail || '加载样本治理视图失败')
   } finally {
     groupsLoading.value = false
   }
+}
+
+function reloadRecordingGroupsFromFirstPage() {
+  groupPagination.page = 1
+  void loadRecordingGroups()
+}
+
+function handleApplicationFilterChange() {
+  sessionPagination.page = 1
+  groupPagination.page = 1
+  void Promise.all([loadSessions(), loadRecordingGroups()])
 }
 
 function resetFilters() {
@@ -767,6 +882,8 @@ function resetFilters() {
   sessionSearch.value = ''
   groupGovernanceStatus.value = null
   groupSearch.value = ''
+  sessionPagination.page = 1
+  groupPagination.page = 1
   void Promise.all([loadSessions(), loadRecordingGroups()])
 }
 
@@ -880,15 +997,24 @@ async function viewRecordings(session: SessionRow) {
   showRecordingDrawer.value = true
   recordingsLoading.value = true
   recordingSearch.value = ''
+  recordingPagination.page = 1
   selectedSessionRecordingIds.value = []
   try {
-    const res = await recordingApi.listRecordings(session.id, {
+    const page = await loadPagedData<RecordingRow>((requestParams) => recordingApi.listRecordings(session.id, requestParams), {
       sort_by: recordingSort.value.columnKey,
       sort_order: toApiSortOrder(recordingSort.value.order),
-    })
-    recordings.value = res.data
+      search: recordingSearch.value.trim() || undefined,
+    }, recordingPagination.page, recordingPagination.pageSize, 200)
+    recordings.value = page.items
+    recordingPagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && recordingPagination.page > 1) {
+      recordingPagination.page = lastValidPage(page.total, recordingPagination.pageSize)
+      void reloadCurrentRecordings()
+      return
+    }
   } catch (error: any) {
     recordings.value = []
+    recordingPagination.itemCount = 0
     message.error(error.response?.data?.detail || '加载录制数据失败')
   } finally {
     recordingsLoading.value = false
@@ -897,7 +1023,32 @@ async function viewRecordings(session: SessionRow) {
 
 async function reloadCurrentRecordings() {
   if (!selectedSession.value) return
-  await viewRecordings(selectedSession.value)
+  recordingsLoading.value = true
+  selectedSessionRecordingIds.value = []
+  try {
+    const page = await loadPagedData<RecordingRow>((requestParams) => recordingApi.listRecordings(selectedSession.value!.id, requestParams), {
+      sort_by: recordingSort.value.columnKey,
+      sort_order: toApiSortOrder(recordingSort.value.order),
+      search: recordingSearch.value.trim() || undefined,
+    }, recordingPagination.page, recordingPagination.pageSize, 200)
+    recordings.value = page.items
+    recordingPagination.itemCount = page.total
+    if (page.items.length === 0 && page.total > 0 && recordingPagination.page > 1) {
+      recordingPagination.page = lastValidPage(page.total, recordingPagination.pageSize)
+      void reloadCurrentRecordings()
+    }
+  } catch (error: any) {
+    recordings.value = []
+    recordingPagination.itemCount = 0
+    message.error(error.response?.data?.detail || '加载录制数据失败')
+  } finally {
+    recordingsLoading.value = false
+  }
+}
+
+function reloadCurrentRecordingsFromFirstPage() {
+  recordingPagination.page = 1
+  void reloadCurrentRecordings()
 }
 
 async function quickGovernance(recordingId: number, governanceStatus: string, refreshGroups = false) {
@@ -1042,16 +1193,19 @@ async function deleteSelectedGroupRecordings() {
 
 function handleSessionSorterChange(sorter: any) {
   sessionSort.value = updateSortState(sorter, 'created_at')
+  sessionPagination.page = 1
   void loadSessions()
 }
 
 function handleRecordingSorterChange(sorter: any) {
   recordingSort.value = updateSortState(sorter, 'recorded_at')
+  recordingPagination.page = 1
   void reloadCurrentRecordings()
 }
 
 function handleGroupSorterChange(sorter: any) {
   groupSort.value = updateSortState(sorter, 'latest_recorded_at')
+  groupPagination.page = 1
   void loadRecordingGroups()
 }
 
@@ -1067,6 +1221,10 @@ onMounted(async () => {
     sessionSearch.value = route.query.search
   }
   await Promise.all([loadApps(), loadSessions(), loadRecordingGroups()])
+})
+
+onBeforeUnmount(() => {
+  stopSessionCountPolling()
 })
 </script>
 

@@ -42,7 +42,7 @@ async function handleLogin() {
     params.append('password', form.value.password)
     const resp = await api.post('/auth/login', params)
     userStore.setUser(resp.data.access_token, form.value.username, resp.data.role || 'viewer')
-    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/applications'
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/dashboard'
     router.push(redirect)
   } catch (e: any) {
     message.error(e.response?.data?.detail || '登录失败')

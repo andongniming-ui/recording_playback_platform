@@ -52,6 +52,9 @@ async def _validate_suite_entry(case_id: int, suite: Suite, db: AsyncSession) ->
     if not test_case:
         raise HTTPException(status_code=404, detail="Test case not found")
 
+    if (suite.suite_type or "").lower() == "smoke" and test_case.governance_status != "approved":
+        raise HTTPException(status_code=400, detail="Only approved test cases can be added to smoke suites")
+
     if test_case.scene_key:
         existing_result = await db.execute(
             select(TestCase.id)

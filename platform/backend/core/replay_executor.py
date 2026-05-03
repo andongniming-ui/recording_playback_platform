@@ -1926,8 +1926,12 @@ async def _save_result(
         replay_result.assertion_results = assertion_results
         replay_result.is_pass = is_pass
         replay_result.latency_ms = latency_ms
-        replay_result.failure_category = failure_category
-        replay_result.failure_reason = failure_reason
+        if is_pass:
+            replay_result.failure_category = None
+            replay_result.failure_reason = None
+        elif not replay_result.failure_reason:
+            replay_result.failure_category = failure_category
+            replay_result.failure_reason = failure_reason
         replay_result.actual_sub_calls = actual_sub_calls
         replay_result.sub_call_diff_detail = sub_call_diff_detail
 

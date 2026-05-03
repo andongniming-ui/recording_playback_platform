@@ -1,7 +1,12 @@
 """Tests for application CRUD, test-connection (mocked SSH), and mount-agent."""
+import asyncio
 import pytest
 from unittest.mock import patch
 import json
+
+import database
+from models.arex_mocker import ArexMocker
+from models.recording import Recording
 
 
 APP_PAYLOAD = {
@@ -125,6 +130,54 @@ def test_get_application(client, admin_headers, created_app):
 def test_get_application_not_found(client, admin_headers):
     resp = client.get("/api/v1/applications/9999", headers=admin_headers)
     assert resp.status_code == 404
+
+
+def test_application_diagnostics_reports_recording_and_agent_uploads(client, admin_headers, created_app):
+    async def _seed():
+        async with database.async_session_factory() as db:
+            db.add(
+                Recording(
+                    application_id=created_app["id"],
+                    request_method="GET",
+                    request_uri="/api/orders",
+                    response_status=200,
+                    response_body='{"ok":true}',
+                    transaction_code="ORDER_QUERY",
+                    governance_status="raw",
+                    sub_calls='[{"type":"MySQL","operation":"SELECT orders"}]',
+                )
+            )
+            db.add(
+                ArexMocker(
+                    record_id="diag-rid",
+                    app_id=created_app["name"],
+                    category_name="Servlet",
+                    is_entry_point=True,
+                    mocker_data="{}",
+                )
+            )
+            db.add(
+                ArexMocker(
+                    record_id="diag-rid",
+                    app_id=created_app["name"],
+                    category_name="Database",
+                    is_entry_point=False,
+                    mocker_data="{}",
+                )
+            )
+            await db.commit()
+
+    asyncio.get_event_loop().run_until_complete(_seed())
+
+    resp = client.get(f"/api/v1/applications/{created_app['id']}/diagnostics", headers=admin_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["application_id"] == created_app["id"]
+    by_key = {item["key"]: item for item in body["items"]}
+    assert by_key["recordings"]["detail"]["count"] == 1
+    assert by_key["agent_upload"]["detail"]["count"] == 2
+    assert by_key["servlet_entry"]["detail"]["count"] == 1
+    assert by_key["sub_calls"]["detail"]["count"] == 1
 
 
 def test_update_application(client, admin_headers, created_app):

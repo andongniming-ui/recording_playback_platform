@@ -4,7 +4,7 @@ import base64
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -100,7 +100,11 @@ def _append_recording_audit(
 
 
 def _ensure_local_datetime(value: datetime | None) -> datetime | None:
-    return ensure_beijing_datetime(value)
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 def _track_collection_task(task: asyncio.Task) -> None:
@@ -1407,14 +1411,99 @@ async def _duplicate_count_map(db: AsyncSession, recordings: list[Recording]) ->
     return {dedupe_hash: count for dedupe_hash, count in result.all() if dedupe_hash}
 
 
+def _parse_sub_call_list(value) -> list:
+    if value in (None, "", []):
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        nested = (
+            value.get("items")
+            or value.get("subCalls")
+            or value.get("sub_invocations")
+            or value.get("subInvocations")
+        )
+        return nested if isinstance(nested, list) else [value]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return []
+        return _parse_sub_call_list(parsed)
+    return []
+
+
+def _recording_quality(recording: Recording, duplicate_count: int) -> dict:
+    """Compute a non-persistent quality score for recording governance."""
+    score = 100
+    reasons: list[str] = []
+
+    if not recording.transaction_code:
+        score -= 20
+        reasons.append("未识别交易码")
+    if recording.response_status is None:
+        score -= 25
+        reasons.append("缺少响应状态码")
+    elif recording.response_status >= 500:
+        score -= 25
+        reasons.append(f"服务端异常响应 {recording.response_status}")
+    elif recording.response_status >= 400:
+        score -= 15
+        reasons.append(f"客户端异常响应 {recording.response_status}")
+
+    if not (recording.response_body or "").strip():
+        score -= 15
+        reasons.append("缺少响应体")
+
+    sub_call_count = len(_parse_sub_call_list(recording.sub_calls))
+    if sub_call_count == 0:
+        score -= 10
+        reasons.append("未捕获子调用")
+
+    if duplicate_count > 1:
+        score -= min(20, 5 + duplicate_count * 3)
+        reasons.append(f"存在 {duplicate_count} 条重复样本")
+
+    uri = (recording.request_uri or "").lower()
+    if any(marker in uri for marker in ("/actuator", "/health", "/metrics", "/favicon", "/swagger", "/v3/api-docs")):
+        score -= 25
+        reasons.append("疑似健康检查或内部接口")
+
+    score = max(0, min(score, 100))
+    if score >= 80:
+        level = "good"
+        recommendation = "approve"
+        if not reasons:
+            reasons.append("样本完整度较高")
+    elif score >= 55:
+        level = "warning"
+        recommendation = "candidate"
+    else:
+        level = "bad"
+        recommendation = "reject"
+
+    return {
+        "quality_score": score,
+        "quality_level": level,
+        "quality_recommendation": recommendation,
+        "quality_reasons": reasons,
+    }
+
+
 async def _serialize_recordings(db: AsyncSession, recordings: list[Recording]) -> list[RecordingOut]:
     duplicate_counts = await _duplicate_count_map(db, recordings)
-    return [
-        RecordingOut.model_validate(recording).model_copy(
-            update={"duplicate_count": duplicate_counts.get(recording.dedupe_hash or "", 1)}
+    items: list[RecordingOut] = []
+    for recording in recordings:
+        duplicate_count = duplicate_counts.get(recording.dedupe_hash or "", 1)
+        items.append(
+            RecordingOut.model_validate(recording).model_copy(
+                update={
+                    "duplicate_count": duplicate_count,
+                    **_recording_quality(recording, duplicate_count),
+                }
+            )
         )
-        for recording in recordings
-    ]
+    return items
 
 
 def _representative_sort_key(recording: Recording) -> tuple[int, datetime, int]:

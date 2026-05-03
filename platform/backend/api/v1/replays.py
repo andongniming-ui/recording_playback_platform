@@ -15,10 +15,11 @@ from core.replay_executor import register_ws, unregister_ws
 from core.security import require_editor, require_viewer
 from database import async_session_factory, get_db
 from models.audit import ReplayAuditLog
+from models.application import Application
 from models.recording import Recording
 from models.replay import ReplayJob, ReplayResult
 from models.test_case import TestCase
-from schemas.replay import ReplayAuditOut, ReplayJobCreate, ReplayJobOut, ReplayResultOut
+from schemas.replay import ReplayAuditOut, ReplayJobCreate, ReplayJobOut, ReplayResultOut, ReplayRuleApplyRequest
 from schemas.common import BulkDeleteResponse, BulkIdsRequest, PageOut
 from utils.failure_analyzer import analyze_failure
 from utils.query import apply_ordering
@@ -33,6 +34,8 @@ from utils.sub_call_matcher import (
 
 router = APIRouter(prefix="/replays", tags=["replays"])
 
+_DEEPDIFF_PATH_RE = re.compile(r"\['([^']+)'\]|\[(\d+)\]")
+
 
 def _load_jsonish(value):
     if value in (None, ""):
@@ -45,6 +48,100 @@ def _load_jsonish(value):
         except Exception:
             return None
     return None
+
+
+def _json_list(value) -> list:
+    parsed = _load_jsonish(value)
+    return parsed if isinstance(parsed, list) else []
+
+
+def _dump_json_list(items: list) -> str:
+    return json.dumps(items, ensure_ascii=False)
+
+
+def _deepdiff_path_to_dot(path: str) -> str:
+    parts = []
+    for key, index in _DEEPDIFF_PATH_RE.findall(path or ""):
+        parts.append(key or index)
+    return ".".join(parts)
+
+
+def _leaf_field(path: str) -> str:
+    dot_path = _deepdiff_path_to_dot(path)
+    parts = [part for part in dot_path.split(".") if part and not part.isdigit()]
+    return parts[-1] if parts else dot_path or path
+
+
+def _suggestions_from_diff(diff_result: str | None) -> list[dict]:
+    diff = _load_jsonish(diff_result)
+    if not isinstance(diff, dict):
+        return []
+
+    suggestions: dict[str, dict] = {}
+    for change_type, changes in diff.items():
+        if not isinstance(changes, dict):
+            continue
+        for raw_path, detail in changes.items():
+            if not isinstance(raw_path, str):
+                continue
+            field = _leaf_field(raw_path)
+            dot_path = _deepdiff_path_to_dot(raw_path)
+            if not field:
+                continue
+            suggestion = suggestions.setdefault(
+                field,
+                {
+                    "key": field,
+                    "field": field,
+                    "path": dot_path or field,
+                    "raw_path": raw_path,
+                    "change_types": [],
+                    "actions": ["job_ignore_fields", "application_default_ignore_fields"],
+                },
+            )
+            if change_type not in suggestion["change_types"]:
+                suggestion["change_types"].append(change_type)
+
+            if change_type == "values_changed" and isinstance(detail, dict):
+                old_value = detail.get("old_value")
+                new_value = detail.get("new_value")
+                if isinstance(old_value, (int, float)) and isinstance(new_value, (int, float)):
+                    tolerance = abs(float(new_value) - float(old_value))
+                    suggestion["numeric_tolerance"] = round(max(tolerance, 0.01), 6)
+                    if "numeric_tolerance" not in suggestion["actions"]:
+                        suggestion["actions"].append("numeric_tolerance")
+                if isinstance(old_value, str) or isinstance(new_value, str):
+                    if "regex_match" not in suggestion["actions"]:
+                        suggestion["actions"].append("regex_match")
+
+    return sorted(suggestions.values(), key=lambda item: item["path"])
+
+
+async def _load_result_job_case_app(
+    db: AsyncSession,
+    result_id: int,
+) -> tuple[ReplayResult, ReplayJob | None, TestCase | None, Application | None]:
+    result_row = await db.execute(select(ReplayResult).where(ReplayResult.id == result_id))
+    result = result_row.scalar_one_or_none()
+    if not result:
+        raise HTTPException(status_code=404, detail="Replay result not found")
+
+    job = None
+    if result.job_id:
+        job_row = await db.execute(select(ReplayJob).where(ReplayJob.id == result.job_id))
+        job = job_row.scalar_one_or_none()
+
+    test_case = None
+    if result.test_case_id:
+        case_row = await db.execute(select(TestCase).where(TestCase.id == result.test_case_id))
+        test_case = case_row.scalar_one_or_none()
+
+    app_id = (job.application_id if job else None) or (test_case.application_id if test_case else None)
+    app = None
+    if app_id:
+        app_row = await db.execute(select(Application).where(Application.id == app_id))
+        app = app_row.scalar_one_or_none()
+    return result, job, test_case, app
 
 
 def _count_sub_call_nodes(value) -> int:
@@ -456,6 +553,61 @@ async def get_replay_result(
     for key, value in context.items():
         setattr(out, key, value)
     return out
+
+
+@router.get("/results/{result_id}/rule-suggestions")
+async def get_result_rule_suggestions(
+    result_id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_viewer),
+):
+    result, job, test_case, app = await _load_result_job_case_app(db, result_id)
+    return {
+        "result_id": result.id,
+        "job_id": result.job_id,
+        "application_id": app.id if app else None,
+        "test_case_id": test_case.id if test_case else None,
+        "suggestions": _suggestions_from_diff(result.diff_result),
+        "job_ignore_fields": _json_list(job.ignore_fields if job else None),
+        "application_default_ignore_fields": _json_list(app.default_ignore_fields if app else None),
+    }
+
+
+@router.post("/results/{result_id}/rule-suggestions/apply")
+async def apply_result_rule_suggestion(
+    result_id: int,
+    body: ReplayRuleApplyRequest,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_editor),
+):
+    result, job, _test_case, app = await _load_result_job_case_app(db, result_id)
+    suggestions = _suggestions_from_diff(result.diff_result)
+    suggestion = next((item for item in suggestions if item.get("key") == body.suggestion_key), None)
+    if not suggestion:
+        raise HTTPException(status_code=404, detail="Rule suggestion not found")
+
+    field = str(suggestion.get("field") or "").strip()
+    if not field:
+        raise HTTPException(status_code=400, detail="Rule suggestion has no field")
+
+    if body.target == "job_ignore_fields":
+        if not job:
+            raise HTTPException(status_code=404, detail="Replay job not found")
+        fields = _json_list(job.ignore_fields)
+        if field not in fields:
+            fields.append(field)
+        job.ignore_fields = _dump_json_list(fields)
+        await db.commit()
+        return {"target": body.target, "ignore_fields": fields}
+
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found for replay result")
+    fields = _json_list(app.default_ignore_fields)
+    if field not in fields:
+        fields.append(field)
+    app.default_ignore_fields = _dump_json_list(fields)
+    await db.commit()
+    return {"target": body.target, "ignore_fields": fields, "application_id": app.id}
 
 
 def _pair_sub_calls(recorded: list, replayed: list) -> list:

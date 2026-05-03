@@ -21,7 +21,7 @@ from api.v1.sessions import (
 from integration.arex_client import ArexClient
 from models.arex_mocker import ArexMocker
 from models.audit import RecordingAuditLog
-from models.recording import Recording
+from models.recording import Recording, RecordingSession
 from utils.governance import infer_transaction_code
 
 
@@ -747,6 +747,44 @@ def test_extract_sub_calls_filters_time_noise_dynamic_class():
     assert len(sub_calls) == 1
     assert sub_calls[0]["type"] == "HttpClient"
     assert sub_calls[0]["operation"] == "/internal/didi/risk"
+
+
+def test_recording_list_includes_quality_recommendation(client, admin_headers, created_app):
+    async def _seed():
+        async with database.async_session_factory() as db:
+            sess = RecordingSession(
+                application_id=created_app["id"],
+                name="quality-session",
+                status="done",
+                total_count=1,
+            )
+            db.add(sess)
+            await db.flush()
+            rec = Recording(
+                session_id=sess.id,
+                application_id=created_app["id"],
+                record_id="quality-rid",
+                request_method="GET",
+                request_uri="/health",
+                response_status=200,
+                response_body="",
+                transaction_code=None,
+                governance_status="raw",
+                sub_calls="[]",
+            )
+            db.add(rec)
+            await db.commit()
+            return sess.id
+
+    session_id = asyncio.get_event_loop().run_until_complete(_seed())
+
+    resp = client.get(f"/api/v1/sessions/{session_id}/recordings", headers=admin_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body[0]["quality_score"] < 80
+    assert body[0]["quality_level"] in {"warning", "bad"}
+    assert body[0]["quality_recommendation"] in {"candidate", "reject"}
+    assert body[0]["quality_reasons"]
 
 
 @pytest.mark.asyncio

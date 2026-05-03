@@ -178,6 +178,79 @@ def test_get_replay_job_not_found(client, admin_headers):
     assert resp.status_code == 404
 
 
+def test_replay_result_rule_suggestions_can_apply_ignore_fields(client, admin_headers, app_payload):
+    app_resp = client.post("/api/v1/applications", json=app_payload, headers=admin_headers)
+    assert app_resp.status_code == 201, app_resp.text
+    app = app_resp.json()
+
+    tc = _create_test_case(
+        client,
+        admin_headers,
+        {
+            "name": "POST /orders",
+            "application_id": app["id"],
+            "request_method": "POST",
+            "request_uri": "/orders",
+            "expected_status": 200,
+        },
+    )
+    job = _create_replay_job(client, admin_headers, [tc["id"]], application_id=app["id"]).json()
+
+    async def _seed_result():
+        async with database.async_session_factory() as db:
+            row = await db.execute(
+                select(ReplayResult).where(
+                    ReplayResult.job_id == job["id"],
+                    ReplayResult.test_case_id == tc["id"],
+                )
+            )
+            rr = row.scalar_one()
+            rr.status = "FAIL"
+            rr.request_method = "POST"
+            rr.request_uri = "/orders"
+            rr.actual_status_code = 200
+            rr.expected_response = '{"data":{"timestamp":"old"}}'
+            rr.actual_response = '{"data":{"timestamp":"new"}}'
+            rr.diff_result = json.dumps(
+                {
+                    "values_changed": {
+                        "root['data']['timestamp']": {
+                            "old_value": "old",
+                            "new_value": "new",
+                        }
+                    }
+                }
+            )
+            rr.diff_score = 0.5
+            rr.is_pass = False
+            await db.commit()
+            await db.refresh(rr)
+            return rr.id
+
+    result_id = asyncio.get_event_loop().run_until_complete(_seed_result())
+
+    suggestions = client.get(
+        f"/api/v1/replays/results/{result_id}/rule-suggestions",
+        headers=admin_headers,
+    )
+    assert suggestions.status_code == 200, suggestions.text
+    body = suggestions.json()
+    assert body["suggestions"][0]["field"] == "timestamp"
+    assert body["suggestions"][0]["path"] == "data.timestamp"
+
+    applied = client.post(
+        f"/api/v1/replays/results/{result_id}/rule-suggestions/apply",
+        json={"suggestion_key": "timestamp", "target": "application_default_ignore_fields"},
+        headers=admin_headers,
+    )
+    assert applied.status_code == 200, applied.text
+    assert applied.json()["ignore_fields"] == ["timestamp"]
+
+    fetched_app = client.get(f"/api/v1/applications/{app['id']}", headers=admin_headers)
+    assert fetched_app.status_code == 200
+    assert fetched_app.json()["default_ignore_fields"] == ["timestamp"]
+
+
 def test_delete_replay_job_removes_results(client, admin_headers, tc_payload):
     tc = _create_test_case(client, admin_headers, tc_payload)
     job = _create_replay_job(client, admin_headers, [tc["id"]]).json()

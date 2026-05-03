@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 from database import get_db
 from models.application import Application
+from models.arex_mocker import ArexMocker
 from models.audit import RecordingAuditLog, ReplayAuditLog
 from models.compare import CompareRule
 from models.recording import Recording, RecordingSession
@@ -30,6 +31,22 @@ async def _get_app_or_404(app_id: int, db: AsyncSession) -> Application:
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
     return app
+
+
+def _diagnostic_item(
+    key: str,
+    label: str,
+    status: str,
+    message: str,
+    detail: dict | None = None,
+) -> dict:
+    return {
+        "key": key,
+        "label": label,
+        "status": status,
+        "message": message,
+        "detail": detail or {},
+    }
 
 
 def _validate_docker_launch_config(app: Application) -> None:
@@ -373,4 +390,129 @@ async def agent_status(
         "status": app.agent_status,
         "pid": status_info.get("pid"),
         "arex_agent": status_info.get("arex_agent", False),
+    }
+
+
+@router.get("/{app_id}/diagnostics")
+async def application_diagnostics(
+    app_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_viewer),
+):
+    app = await _get_app_or_404(app_id, db)
+    app_identifier = app.arex_app_id or app.name
+    storage_url = app.arex_storage_url or settings.arex_storage_url
+
+    recording_count = (
+        await db.execute(select(func.count(Recording.id)).where(Recording.application_id == app.id))
+    ).scalar_one()
+    session_count = (
+        await db.execute(select(func.count(RecordingSession.id)).where(RecordingSession.application_id == app.id))
+    ).scalar_one()
+    mocker_count = (
+        await db.execute(select(func.count(ArexMocker.id)).where(ArexMocker.app_id == app_identifier))
+    ).scalar_one()
+    servlet_count = (
+        await db.execute(
+            select(func.count(ArexMocker.id)).where(
+                ArexMocker.app_id == app_identifier,
+                ArexMocker.category_name == "Servlet",
+            )
+        )
+    ).scalar_one()
+    sub_call_count = (
+        await db.execute(
+            select(func.count(ArexMocker.id)).where(
+                ArexMocker.app_id == app_identifier,
+                ArexMocker.category_name != "Servlet",
+            )
+        )
+    ).scalar_one()
+
+    latest_recording = (
+        await db.execute(
+            select(Recording.recorded_at)
+            .where(Recording.application_id == app.id)
+            .order_by(Recording.recorded_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    latest_mocker = (
+        await db.execute(
+            select(ArexMocker.created_at)
+            .where(ArexMocker.app_id == app_identifier)
+            .order_by(ArexMocker.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    items = [
+        _diagnostic_item(
+            "storage_url",
+            "AREX Storage 配置",
+            "pass" if storage_url else "fail",
+            storage_url or "未配置 AREX Storage 地址",
+            {"storage_url": storage_url},
+        ),
+        _diagnostic_item(
+            "app_id",
+            "AREX App ID",
+            "pass" if app_identifier else "fail",
+            app_identifier or "未配置应用标识",
+            {"app_id": app_identifier},
+        ),
+        _diagnostic_item(
+            "agent_status",
+            "Agent 状态",
+            "pass" if app.agent_status == "online" else "warning",
+            f"当前状态：{app.agent_status}",
+            {"agent_status": app.agent_status},
+        ),
+        _diagnostic_item(
+            "sessions",
+            "录制会话",
+            "pass" if session_count > 0 else "warning",
+            f"已有 {session_count} 个录制会话",
+            {"count": session_count},
+        ),
+        _diagnostic_item(
+            "recordings",
+            "平台录制入库",
+            "pass" if recording_count > 0 else "warning",
+            f"已入库 {recording_count} 条录制",
+            {"count": recording_count, "latest_recorded_at": latest_recording.isoformat() if latest_recording else None},
+        ),
+        _diagnostic_item(
+            "agent_upload",
+            "Agent 原始上报",
+            "pass" if mocker_count > 0 else "warning",
+            f"已接收 {mocker_count} 条原始 mocker",
+            {"count": mocker_count, "latest_mocker_at": latest_mocker.isoformat() if latest_mocker else None},
+        ),
+        _diagnostic_item(
+            "servlet_entry",
+            "入口请求捕获",
+            "pass" if servlet_count > 0 else "warning",
+            f"Servlet 入口记录 {servlet_count} 条",
+            {"count": servlet_count},
+        ),
+        _diagnostic_item(
+            "sub_calls",
+            "子调用捕获",
+            "pass" if sub_call_count > 0 else "warning",
+            f"子调用 mocker {sub_call_count} 条",
+            {"count": sub_call_count},
+        ),
+    ]
+    failed = sum(1 for item in items if item["status"] == "fail")
+    warnings = sum(1 for item in items if item["status"] == "warning")
+    overall = "fail" if failed else "warning" if warnings else "pass"
+    return {
+        "application_id": app.id,
+        "application_name": app.name,
+        "overall_status": overall,
+        "pass_count": sum(1 for item in items if item["status"] == "pass"),
+        "warning_count": warnings,
+        "fail_count": failed,
+        "items": items,
     }

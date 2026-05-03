@@ -193,3 +193,8 @@ class ReplayAuditOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ReplayRuleApplyRequest(BaseModel):
+    suggestion_key: str
+    target: Literal["job_ignore_fields", "application_default_ignore_fields"] = "application_default_ignore_fields"

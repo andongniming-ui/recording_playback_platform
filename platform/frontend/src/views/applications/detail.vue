@@ -161,6 +161,30 @@
         </n-grid>
       </n-card>
 
+      <n-card title="接入体检">
+        <template #header-extra>
+          <n-space align="center">
+            <n-tag :type="diagnosticStatusType(diagnostics?.overall_status)">
+              {{ diagnosticStatusLabel(diagnostics?.overall_status) }}
+            </n-tag>
+            <n-button size="small" :loading="diagnosticsLoading" @click="loadDiagnostics">重新体检</n-button>
+          </n-space>
+        </template>
+        <n-spin :show="diagnosticsLoading">
+          <n-grid cols="1 s:2 l:4" responsive="screen" :x-gap="12" :y-gap="12">
+            <n-grid-item v-for="item in diagnostics?.items || []" :key="item.key">
+              <div class="diagnostic-item">
+                <n-tag :type="diagnosticStatusType(item.status)" size="small">
+                  {{ diagnosticStatusLabel(item.status) }}
+                </n-tag>
+                <div class="diagnostic-label">{{ item.label }}</div>
+                <div class="diagnostic-message">{{ item.message }}</div>
+              </div>
+            </n-grid-item>
+          </n-grid>
+        </n-spin>
+      </n-card>
+
       <n-tabs v-model:value="recentTab" type="line" animated>
         <n-tab-pane name="sessions" tab="最近录制会话">
           <n-card>
@@ -223,6 +247,7 @@ import {
   NGrid,
   NGridItem,
   NSpace,
+  NSpin,
   NStatistic,
   NTabPane,
   NTabs,
@@ -271,6 +296,22 @@ type SessionRow = {
   created_at: string
 }
 
+type DiagnosticItem = {
+  key: string
+  label: string
+  status: string
+  message: string
+  detail?: Record<string, unknown>
+}
+
+type ApplicationDiagnostics = {
+  overall_status: string
+  pass_count: number
+  warning_count: number
+  fail_count: number
+  items: DiagnosticItem[]
+}
+
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
@@ -286,6 +327,8 @@ const recentTab = ref('sessions')
 const sessionsLoading = ref(false)
 const casesLoading = ref(false)
 const jobsLoading = ref(false)
+const diagnostics = ref<ApplicationDiagnostics | null>(null)
+const diagnosticsLoading = ref(false)
 const sessionCountPollingTimer = ref<number | null>(null)
 const testing = ref(false)
 const mounting = ref(false)
@@ -311,6 +354,18 @@ const statusLabelMap: Record<string, string> = {
 const launchModeLabelMap: Record<string, string> = {
   ssh_script: '宿主机脚本',
   docker_compose: 'Docker Compose',
+}
+
+const diagnosticStatusTypeMap: Record<string, NonNullable<TagProps['type']>> = {
+  pass: 'success',
+  warning: 'warning',
+  fail: 'error',
+}
+
+const diagnosticStatusLabelMap: Record<string, string> = {
+  pass: '正常',
+  warning: '待确认',
+  fail: '异常',
 }
 
 const normalizedStatus = computed(() => {
@@ -570,8 +625,16 @@ async function openReport(jobId: number) {
   }
 }
 
+function diagnosticStatusType(status?: string | null): NonNullable<TagProps['type']> {
+  return diagnosticStatusTypeMap[status || ''] || 'default'
+}
+
+function diagnosticStatusLabel(status?: string | null): string {
+  return diagnosticStatusLabelMap[status || ''] || '未体检'
+}
+
 async function loadPage() {
-  await Promise.all([loadApplication(), loadSessions(), loadCases(), loadReplayJobs()])
+  await Promise.all([loadApplication(), loadSessions(), loadCases(), loadReplayJobs(), loadDiagnostics()])
 }
 
 async function loadApplication() {
@@ -580,6 +643,19 @@ async function loadApplication() {
     app.value = res.data
   } catch (error: any) {
     message.error(error.response?.data?.detail || '加载应用详情失败')
+  }
+}
+
+async function loadDiagnostics() {
+  diagnosticsLoading.value = true
+  try {
+    const res = await applicationApi.getDiagnostics(appId)
+    diagnostics.value = res.data
+  } catch (error: any) {
+    diagnostics.value = null
+    message.error(error.response?.data?.detail || '接入体检失败')
+  } finally {
+    diagnosticsLoading.value = false
   }
 }
 
@@ -789,5 +865,27 @@ onBeforeUnmount(() => {
   word-break: break-word;
   font-size: 13px;
   line-height: 1.6;
+}
+
+.diagnostic-item {
+  min-height: 104px;
+  padding: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.diagnostic-label {
+  margin-top: 8px;
+  font-weight: 600;
+  color: #333;
+}
+
+.diagnostic-message {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #666;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 </style>

@@ -2,7 +2,7 @@ import json
 import re
 from typing import Any, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
 
 
@@ -118,6 +118,10 @@ class RecordingOut(BaseModel):
     latency_ms: Optional[int]
     tags: Optional[str]
     recorded_at: datetime
+    quality_score: Optional[int] = None
+    quality_level: Optional[str] = None
+    quality_recommendation: Optional[str] = None
+    quality_reasons: list[str] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 

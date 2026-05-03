@@ -77,6 +77,9 @@ export const replayApi = {
   getReport: (id: number) => api.get(`/replays/${id}/report`, { responseType: 'blob' }),
   getReportUrl: (id: number) => `${API_BASE_URL}/replays/${id}/report`,
   getAnalysis: (id: number) => api.get(`/replays/${id}/analysis`),
+  getRuleSuggestions: (resultId: number) => api.get(`/replays/results/${resultId}/rule-suggestions`),
+  applyRuleSuggestion: (resultId: number, data: { suggestion_key: string; target: 'job_ignore_fields' | 'application_default_ignore_fields' }) =>
+    api.post(`/replays/results/${resultId}/rule-suggestions/apply`, data),
   getSubCallDiff: (resultId: number) => api.get<SubCallDiffResult>(`/replays/results/${resultId}/sub-call-diff`),
   getAuditLogs: (jobId: number, params?: any) => api.get<ReplayAuditLog[]>(`/replays/${jobId}/audit-logs`, { params }),
 }

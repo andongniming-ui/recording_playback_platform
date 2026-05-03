@@ -11,4 +11,5 @@ export const applicationApi = {
   mountAgent: (id: number) => api.post(`/applications/${id}/mount-agent`),
   unmountAgent: (id: number) => api.post(`/applications/${id}/unmount-agent`),
   getAgentStatus: (id: number) => api.get(`/applications/${id}/agent-status`),
+  getDiagnostics: (id: number) => api.get(`/applications/${id}/diagnostics`),
 }

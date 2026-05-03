@@ -39,6 +39,8 @@ async def _validate_suite_case_selection(suite: Suite, case_ids: list[int], db: 
 
     scene_key_map: dict[str, str] = {}
     for case in cases:
+        if (suite.suite_type or "").lower() == "smoke" and case.governance_status != "approved":
+            raise HTTPException(status_code=400, detail="Only approved test cases can be added to smoke suites")
         if not case.scene_key:
             continue
         if case.scene_key in scene_key_map:

@@ -226,6 +226,37 @@
                 <div class="section-title">Diff 结果</div>
                 <pre class="code-block compact">{{ prettyText(selectedResult?.diff_result) }}</pre>
               </div>
+              <n-card v-if="ruleSuggestions.length > 0" size="small" title="规则修复建议">
+                <n-space vertical :size="8">
+                  <div v-for="item in ruleSuggestions" :key="item.key" class="rule-suggestion-row">
+                    <n-space align="center" justify="space-between" style="width: 100%">
+                      <n-space align="center" :size="8">
+                        <n-tag type="warning" size="small">{{ item.field }}</n-tag>
+                        <span class="suggestion-path">{{ item.path }}</span>
+                        <span class="suggestion-change">{{ item.change_types.join(', ') }}</span>
+                      </n-space>
+                      <n-space v-if="canEdit" :size="6">
+                        <n-button
+                          size="tiny"
+                          :loading="applyingSuggestionKey === `${item.key}:job_ignore_fields`"
+                          @click="applyRuleSuggestion(item.key, 'job_ignore_fields')"
+                        >
+                          加入本任务
+                        </n-button>
+                        <n-button
+                          size="tiny"
+                          type="primary"
+                          ghost
+                          :loading="applyingSuggestionKey === `${item.key}:application_default_ignore_fields`"
+                          @click="applyRuleSuggestion(item.key, 'application_default_ignore_fields')"
+                        >
+                          加入应用默认
+                        </n-button>
+                      </n-space>
+                    </n-space>
+                  </div>
+                </n-space>
+              </n-card>
               <div v-if="parsedAssertionResults.length > 0">
                 <div class="section-title">断言结果</div>
                 <n-space vertical :size="6">
@@ -300,6 +331,7 @@ import { replayApi, type ReplayAuditLog } from '@/api/replays'
 import { recordingApi } from '@/api/recordings'
 import { testCaseApi } from '@/api/testcases'
 import { formatDateTime } from '@/utils/format'
+import { useUserStore } from '@/store/user'
 import SubCallPanel from '@/components/recording/SubCallPanel.vue'
 import SubCallDiffPanel from '@/components/recording/SubCallDiffPanel.vue'
 import type { SubCallDiffResult } from '@/api/replays'
@@ -356,9 +388,19 @@ type ReplayResultRow = {
   transaction_code?: string | null
 }
 
+type RuleSuggestion = {
+  key: string
+  field: string
+  path: string
+  raw_path: string
+  change_types: string[]
+}
+
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
+const userStore = useUserStore()
+const canEdit = userStore.role === 'admin' || userStore.role === 'editor'
 const jobId = Number(route.params.jobId)
 
 const job = ref<ReplayJobRow | null>(null)
@@ -380,6 +422,8 @@ const sourceRecording = ref<any | null>(null)
 const sourceRecordingSubCallSummary = ref('')
 const subCallDiff = ref<SubCallDiffResult | null>(null)
 const subCallDiffLoading = ref(false)
+const ruleSuggestions = ref<RuleSuggestion[]>([])
+const applyingSuggestionKey = ref('')
 const resultPagination = reactive({
   page: 1,
   pageSize: 15,
@@ -677,6 +721,34 @@ function openDiff(row: ReplayResultRow) {
   showDiff.value = true
   void loadSourceRecording(row)
   void loadSubCallDiff(row.id)
+  void loadRuleSuggestions(row.id)
+}
+
+async function loadRuleSuggestions(resultId: number) {
+  ruleSuggestions.value = []
+  try {
+    const res = await replayApi.getRuleSuggestions(resultId)
+    ruleSuggestions.value = res.data?.suggestions || []
+  } catch {
+    ruleSuggestions.value = []
+  }
+}
+
+async function applyRuleSuggestion(
+  suggestionKey: string,
+  target: 'job_ignore_fields' | 'application_default_ignore_fields',
+) {
+  if (!selectedResult.value) return
+  applyingSuggestionKey.value = `${suggestionKey}:${target}`
+  try {
+    await replayApi.applyRuleSuggestion(selectedResult.value.id, { suggestion_key: suggestionKey, target })
+    message.success(target === 'job_ignore_fields' ? '已加入本次回放任务忽略字段' : '已加入应用默认忽略字段')
+    await loadRuleSuggestions(selectedResult.value.id)
+  } catch (error: any) {
+    message.error(error.response?.data?.detail || '应用规则建议失败')
+  } finally {
+    applyingSuggestionKey.value = ''
+  }
 }
 
 async function loadSubCallDiff(resultId: number) {
@@ -876,5 +948,20 @@ onMounted(() => {
   font-size: 12px;
   color: #999;
   margin-top: 4px;
+}
+.rule-suggestion-row {
+  padding: 8px 10px;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+  background: #fafafa;
+}
+.suggestion-path {
+  font-family: monospace;
+  font-size: 12px;
+  color: #333;
+}
+.suggestion-change {
+  font-size: 12px;
+  color: #888;
 }
 </style>

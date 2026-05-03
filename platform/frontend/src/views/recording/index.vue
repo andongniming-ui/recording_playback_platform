@@ -375,6 +375,10 @@ type RecordingRow = {
   latency_ms: number | null
   sub_calls?: RecordingSubCall[] | string | null
   recorded_at: string
+  quality_score?: number | null
+  quality_level?: string | null
+  quality_recommendation?: string | null
+  quality_reasons?: string[]
 }
 
 type RecordingGroupRow = {
@@ -550,6 +554,18 @@ const governanceLabelMap: Record<string, string> = {
   archived: '已归档',
 }
 
+const qualityLevelTypeMap: Record<string, NonNullable<TagProps['type']>> = {
+  good: 'success',
+  warning: 'warning',
+  bad: 'error',
+}
+
+const qualityRecommendationLabelMap: Record<string, string> = {
+  approve: '建议批准',
+  candidate: '建议候选',
+  reject: '建议丢弃',
+}
+
 const filteredSessions = computed(() => {
   return sessions.value
 })
@@ -650,6 +666,15 @@ const recordingColumns = computed<DataTableColumns<RecordingRow>>(() => [
   },
   { title: '交易码', key: 'transaction_code', width: 140, render: (row) => row.transaction_code || '-' },
   { title: '治理状态', key: 'governance_status', width: 100, render: (row) => governanceLabelMap[row.governance_status] || row.governance_status || '-' },
+  {
+    title: '质量',
+    key: 'quality_score',
+    width: 130,
+    render: (row) => h(NSpace, { size: 4, vertical: true }, () => [
+      h(NTag, { size: 'small', type: qualityLevelTypeMap[row.quality_level || ''] || 'default' }, () => `${row.quality_score ?? '-'}分`),
+      h('span', { class: 'quality-hint' }, qualityRecommendationLabelMap[row.quality_recommendation || ''] || '-'),
+    ]),
+  },
   { title: '重复', key: 'duplicate_count', width: 70, render: (row) => row.duplicate_count ?? 1 },
   {
     title: '子调用',
@@ -1264,6 +1289,12 @@ onBeforeUnmount(() => {
 
 .recording-grid :deep(.n-card-header) {
   align-items: center;
+}
+
+.quality-hint {
+  font-size: 12px;
+  color: #888;
+  line-height: 1.2;
 }
 
 @media (max-width: 1280px) {

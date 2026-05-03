@@ -11,6 +11,7 @@ from sqlalchemy import func, or_, select, update
 from config import settings
 import database
 from integration.arex_client import ArexClient, ArexClientError
+from utils.job_status import JobStatus, ResultStatus
 from models.application import Application
 from models.compare import CompareRule
 from models.recording import Recording
@@ -103,7 +104,7 @@ async def run_replay_job(job_id: int):
         case_ids = list(results_query.scalars().all())
 
         if not case_ids:
-            job.status = "DONE"
+            job.status = JobStatus.DONE
             job.total = 0
             await db.commit()
             await _append_replay_audit_log(
@@ -111,7 +112,7 @@ async def run_replay_job(job_id: int):
                 application_id=job.application_id,
                 event_type="job_finished",
                 message="回放任务无可执行用例，直接结束",
-                detail={"status": "DONE", "total": 0},
+                detail={"status": JobStatus.DONE, "total": 0},
             )
             return
 
@@ -153,7 +154,7 @@ async def run_replay_job(job_id: int):
         compare_rules_result = await db.execute(compare_rule_stmt.order_by(CompareRule.id))
         compare_rules = compare_rules_result.scalars().all()
 
-        job.status = "RUNNING"
+        job.status = JobStatus.RUNNING
         job.total = len(case_ids)
         job.passed = 0
         job.failed = 0
@@ -282,7 +283,7 @@ async def run_replay_job(job_id: int):
             )
             # P1: 失败重试
             for _attempt in range(job_retry_count):
-                if result.status not in ("FAIL", "ERROR", "TIMEOUT"):
+                if result.status not in (ResultStatus.FAIL, ResultStatus.ERROR, ResultStatus.TIMEOUT):
                     break
                 logger.info(
                     "Replay case %s failed (status=%s), retrying (%d/%d)…",
@@ -324,10 +325,10 @@ async def run_replay_job(job_id: int):
         async with progress_lock:
             done_count += 1
             increment_values = {}
-            if result.status == "PASS":
+            if result.status == ResultStatus.PASS:
                 passed += 1
                 increment_values["passed"] = func.coalesce(ReplayJob.passed, 0) + 1
-            elif result.status in ("FAIL", "TIMEOUT"):
+            elif result.status in (ResultStatus.FAIL, ResultStatus.TIMEOUT):
                 failed += 1
                 increment_values["failed"] = func.coalesce(ReplayJob.failed, 0) + 1
             else:
@@ -378,7 +379,7 @@ async def run_replay_job(job_id: int):
             passed = job.passed or 0
             failed = job.failed or 0
             errored = job.errored or 0
-            job.status = "FAILED" if failed > 0 or errored > 0 else "DONE"
+            job.status = JobStatus.FAILED if failed > 0 or errored > 0 else JobStatus.DONE
             job.finished_at = now_beijing()
             job.heartbeat_at = job.finished_at
             await db.commit()
@@ -389,7 +390,7 @@ async def run_replay_job(job_id: int):
         event_type="job_finished",
         message="回放任务执行完成",
         detail={
-            "status": "FAILED" if failed > 0 or errored > 0 else "DONE",
+            "status": JobStatus.FAILED if failed > 0 or errored > 0 else JobStatus.DONE,
             "passed": passed,
             "failed": failed,
             "errored": errored,
@@ -437,7 +438,7 @@ async def _execute_single(
         result = await _save_result(
             job_id=job_id,
             case_id=case_id,
-            status="ERROR",
+            status=ResultStatus.ERROR,
             is_pass=False,
             failure_category="connection_error",
             failure_reason="Test case not found",
@@ -462,7 +463,7 @@ async def _execute_single(
                 job_id=job_id,
                 case_id=case_id,
                 case=case,
-                status="ERROR",
+                status=ResultStatus.ERROR,
                 is_pass=False,
                 failure_category="mock_error",
                 failure_reason="use_sub_invocation_mocks requires a test case created from a recording",
@@ -491,7 +492,7 @@ async def _execute_single(
                 job_id=job_id,
                 case_id=case_id,
                 case=case,
-                status="ERROR",
+                status=ResultStatus.ERROR,
                 is_pass=False,
                 failure_category="mock_error",
                 failure_reason="Source recording not found or missing AREX record_id",
@@ -545,7 +546,7 @@ async def _execute_single(
     start = time.monotonic()
     actual_status = None
     actual_body = None
-    status = "ERROR"
+    status = ResultStatus.ERROR
     failure_category = None
     failure_reason = None
     mock_client: ArexClient | None = None
@@ -555,7 +556,6 @@ async def _execute_single(
     try:
         if use_mocks and mock_record_id:
             mock_client = ArexClient(arex_storage_url)
-            await mock_client.__aenter__()
             await mock_client.cache_load_mock(mock_record_id)
             mock_loaded = True
             await _append_replay_audit_log(
@@ -622,7 +622,7 @@ async def _execute_single(
         )
     except httpx.TimeoutException:
         latency_ms = timeout_ms
-        status = "TIMEOUT"
+        status = ResultStatus.TIMEOUT
         failure_category = "timeout"
         failure_reason = f"Request timed out after {timeout_ms}ms"
         await _append_replay_audit_log(
@@ -641,7 +641,7 @@ async def _execute_single(
         )
     except ArexClientError as exc:
         latency_ms = 0
-        status = "ERROR"
+        status = ResultStatus.ERROR
         failure_category = "mock_error"
         failure_reason = str(exc)
         await _append_replay_audit_log(
@@ -659,7 +659,7 @@ async def _execute_single(
         )
     except Exception as exc:
         latency_ms = int((time.monotonic() - start) * 1000)
-        status = "ERROR"
+        status = ResultStatus.ERROR
         failure_category = "connection_error"
         failure_reason = str(exc)
         await _append_replay_audit_log(
@@ -693,8 +693,6 @@ async def _execute_single(
                 )
             except Exception as exc:
                 logger.warning("Failed to remove AREX mock cache for %s: %s", mock_record_id, exc)
-        if mock_client is not None:
-            await mock_client.aclose()
 
     diff_json = None
     diff_score = None
@@ -742,10 +740,10 @@ async def _execute_single(
         perf_ok = perf_threshold_ms is None or latency_ms <= perf_threshold_ms
 
         if status_ok and diff_ok and assertions_ok and perf_ok:
-            status = "PASS"
+            status = ResultStatus.PASS
             is_pass = True
         else:
-            status = "FAIL"
+            status = ResultStatus.FAIL
             failure_category = (
                 "status_mismatch"
                 if not status_ok
@@ -765,7 +763,7 @@ async def _execute_single(
             )
 
     actual_sub_calls_json = None
-    if status in ("OK_GOT_RESPONSE", "PASS", "FAIL"):
+    if status in ("OK_GOT_RESPONSE", ResultStatus.PASS, ResultStatus.FAIL):
         if replay_arex_record_id:
             actual_sub_calls_json = await _fetch_replay_sub_calls(
                 replay_arex_record_id,
@@ -839,7 +837,7 @@ async def _execute_single(
         )
         if sub_call_failure:
             is_pass = False
-            status = "FAIL"
+            status = ResultStatus.FAIL
             failure_category, failure_reason = sub_call_failure
 
     result = await _save_result(
@@ -865,7 +863,7 @@ async def _execute_single(
         result_id=getattr(result, "id", None),
         test_case_id=case_id,
         application_id=application_id,
-        level="INFO" if status in ("PASS", "FAIL") else "ERROR",
+        level="INFO" if status in (ResultStatus.PASS, ResultStatus.FAIL) else "ERROR",
         event_type="case_finished",
         target_url=url,
         request_method=case.request_method,

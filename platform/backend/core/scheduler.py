@@ -6,6 +6,7 @@ from apscheduler.events import EVENT_JOB_MAX_INSTANCES, EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from utils.timezone import now_beijing
+from utils.job_status import JobStatus, ResultStatus, ScheduleRunStatus
 
 logger = logging.getLogger(__name__)
 
@@ -53,14 +54,14 @@ async def _run_scheduled_replay(schedule_id: int, ignore_active: bool = False):
 
         if not case_ids:
             schedule.last_run_at = now_beijing()
-            schedule.last_run_status = "FAILED"
+            schedule.last_run_status = ScheduleRunStatus.FAILED
             await db.commit()
             logger.warning("Schedule %s: no cases found in suite %s", schedule_id, schedule.suite_id)
             return
 
         if schedule_id in _running_schedule_ids:
             schedule.last_run_at = now_beijing()
-            schedule.last_run_status = "SKIPPED"
+            schedule.last_run_status = ScheduleRunStatus.SKIPPED
             await db.commit()
             logger.warning("Schedule %s skipped because previous replay is still running", schedule_id)
             return
@@ -69,14 +70,14 @@ async def _run_scheduled_replay(schedule_id: int, ignore_active: bool = False):
             application_id = await infer_application_id_for_case_ids(db, case_ids)
         except ValueError as exc:
             schedule.last_run_at = now_beijing()
-            schedule.last_run_status = "FAILED"
+            schedule.last_run_status = ScheduleRunStatus.FAILED
             await db.commit()
             logger.warning("Schedule %s: %s", schedule_id, exc)
             return
 
         if application_id is None:
             schedule.last_run_at = now_beijing()
-            schedule.last_run_status = "FAILED"
+            schedule.last_run_status = ScheduleRunStatus.FAILED
             await db.commit()
             logger.warning(
                 "Schedule %s: suite cases do not have application_id, cannot determine replay target",
@@ -87,7 +88,7 @@ async def _run_scheduled_replay(schedule_id: int, ignore_active: bool = False):
         job = ReplayJob(
             name=f"[Scheduled] {schedule.name} - {now_beijing().strftime('%Y-%m-%d %H:%M')}",
             application_id=application_id,
-            status="PENDING",
+            status=JobStatus.PENDING,
             concurrency=5,
             timeout_ms=5000,
             total=len(case_ids),
@@ -102,7 +103,7 @@ async def _run_scheduled_replay(schedule_id: int, ignore_active: bool = False):
         await db.refresh(job)
 
         for case_id in case_ids:
-            db.add(ReplayResult(job_id=job.id, test_case_id=case_id, status="PENDING", is_pass=False))
+            db.add(ReplayResult(job_id=job.id, test_case_id=case_id, status=ResultStatus.PENDING, is_pass=False))
         await db.commit()
 
         job_id = job.id
@@ -111,7 +112,7 @@ async def _run_scheduled_replay(schedule_id: int, ignore_active: bool = False):
         schedule_name = schedule.name
 
         schedule.last_run_at = now_beijing()
-        schedule.last_run_status = "RUNNING"
+        schedule.last_run_status = ScheduleRunStatus.RUNNING
         await db.commit()
         _running_schedule_ids.add(schedule_id)
 
@@ -137,7 +138,7 @@ async def _run_scheduled_replay(schedule_id: int, ignore_active: bool = False):
                 schedule_result = await db.execute(select(Schedule).where(Schedule.id == schedule_id))
                 schedule = schedule_result.scalar_one_or_none()
                 if schedule:
-                    schedule.last_run_status = "DONE" if job and job.failed == 0 and job.errored == 0 else "FAILED"
+                    schedule.last_run_status = ScheduleRunStatus.DONE if job and job.failed == 0 and job.errored == 0 else ScheduleRunStatus.FAILED
                     await db.commit()
         except Exception:
             logger.exception("Scheduled replay job %s failed unexpectedly", job_id)
@@ -145,7 +146,7 @@ async def _run_scheduled_replay(schedule_id: int, ignore_active: bool = False):
                 schedule_result = await db.execute(select(Schedule).where(Schedule.id == schedule_id))
                 schedule = schedule_result.scalar_one_or_none()
                 if schedule:
-                    schedule.last_run_status = "FAILED"
+                    schedule.last_run_status = ScheduleRunStatus.FAILED
                     await db.commit()
         finally:
             _running_schedule_ids.discard(schedule_id)

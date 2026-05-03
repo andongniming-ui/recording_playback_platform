@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, Integer, Boolean, DateTime, Text, ForeignKey, func
+from sqlalchemy import String, Integer, Boolean, DateTime, Text, ForeignKey, Index, func
 from sqlalchemy.orm import Mapped, mapped_column
 from database import Base
 
@@ -22,6 +22,11 @@ class RecordingSession(Base):
 
 class Recording(Base):
     __tablename__ = "recording"
+
+    __table_args__ = (
+        Index("ix_recording_session_id", "session_id"),
+        Index("ix_recording_application_id", "application_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     session_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("recording_session.id", ondelete="CASCADE"))

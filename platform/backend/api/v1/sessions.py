@@ -89,11 +89,7 @@ _ACTIVE_PREVIEW_PAGE_SIZE = 200
 
 
 def _get_active_preview_lock(session_id: int) -> asyncio.Lock:
-    lock = _active_preview_locks.get(session_id)
-    if lock is None:
-        lock = asyncio.Lock()
-        _active_preview_locks[session_id] = lock
-    return lock
+    return _active_preview_locks.setdefault(session_id, asyncio.Lock())
 
 
 def _append_recording_audit(
@@ -303,8 +299,6 @@ async def _sync_from_arex_storage(
         arex_url = app.arex_storage_url or settings.arex_storage_url
         app_id = app.arex_app_id or app.name
         transaction_code_fields = normalize_transaction_code_keys(app.transaction_code_fields)
-        client = ArexClient(arex_url)
-        await client.__aenter__()
 
         # Default time range: last 7 days
         now = now_beijing()
@@ -316,7 +310,10 @@ async def _sync_from_arex_storage(
         begin_time = ensure_beijing_datetime(begin_time) or begin_time
         end_time = ensure_beijing_datetime(end_time) or end_time
 
+        client = None
         try:
+            client = ArexClient(arex_url)
+            await client.__aenter__()
             if write_audit:
                 _append_recording_audit(
                     db,
@@ -652,7 +649,8 @@ async def _sync_from_arex_storage(
                     )
                     await db.commit()
         finally:
-            await client.aclose()
+            if client is not None:
+                await client.aclose()
 
 
 async def _sync_active_session_preview(session_id: int, db: AsyncSession) -> None:
@@ -928,6 +926,8 @@ async def bulk_delete_sessions(
     await db.execute(delete(Recording).where(Recording.session_id.in_([item.id for item in sessions])))
     await db.execute(delete(RecordingSession).where(RecordingSession.id.in_([item.id for item in sessions])))
     await db.commit()
+    for item in sessions:
+        _active_preview_locks.pop(item.id, None)
     return BulkDeleteResponse(deleted=len(sessions))
 
 
@@ -996,6 +996,7 @@ async def delete_session(
     await db.execute(delete(Recording).where(Recording.session_id == session_id))
     await db.delete(sess)
     await db.commit()
+    _active_preview_locks.pop(session_id, None)
 
 
 @router.get("/{session_id}/debug-storage")

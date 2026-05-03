@@ -337,6 +337,7 @@ import SubCallDiffPanel from '@/components/recording/SubCallDiffPanel.vue'
 import type { SubCallDiffResult } from '@/api/replays'
 import { buildRecordingSubCallSummary, parseRecordingSubCalls } from '@/utils/recording'
 import { lastValidPage, loadPagedData } from '@/utils/pagination'
+import { extractError } from '@/utils/error'
 
 type ReplayJobRow = {
   id: number
@@ -813,8 +814,9 @@ async function loadAnalysis() {
   try {
     const res = await replayApi.getAnalysis(jobId)
     analysisData.value = res.data
-  } catch {
+  } catch (error: any) {
     analysisData.value = null
+    message.error(extractError(error, '加载失败原因分析失败'))
   } finally {
     analysisLoading.value = false
   }

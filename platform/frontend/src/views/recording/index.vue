@@ -326,6 +326,9 @@
           </li>
         </ul>
       </n-alert>
+      <n-alert v-if="batchResult.created === 0 && batchResult.skipped === 0 && batchResult.failed === 0" type="info" :show-icon="true">
+        未生成任何用例
+      </n-alert>
     </n-space>
     <template #footer>
       <n-space justify="end">

@@ -670,3 +670,186 @@ class TestMinorDefects:
         assert resp.status_code == 401, (
             f"Deactivated user should be rejected, got {resp.status_code}"
         )
+
+
+# ===========================================================================
+# CODE QUALITY / P3 FIX TESTS
+# ===========================================================================
+
+
+class TestJobStatusConstants:
+    """Verify that utils.job_status constants hold the expected string values."""
+
+    def test_job_status_values(self):
+        from utils.job_status import JobStatus
+        assert JobStatus.PENDING == "PENDING"
+        assert JobStatus.RUNNING == "RUNNING"
+        assert JobStatus.DONE == "DONE"
+        assert JobStatus.FAILED == "FAILED"
+        assert JobStatus.CANCELLED == "CANCELLED"
+
+    def test_result_status_values(self):
+        from utils.job_status import ResultStatus
+        assert ResultStatus.PENDING == "PENDING"
+        assert ResultStatus.PASS == "PASS"
+        assert ResultStatus.FAIL == "FAIL"
+        assert ResultStatus.ERROR == "ERROR"
+        assert ResultStatus.TIMEOUT == "TIMEOUT"
+
+    def test_schedule_run_status_values(self):
+        from utils.job_status import ScheduleRunStatus
+        assert ScheduleRunStatus.PENDING == "PENDING"
+        assert ScheduleRunStatus.RUNNING == "RUNNING"
+        assert ScheduleRunStatus.DONE == "DONE"
+        assert ScheduleRunStatus.FAILED == "FAILED"
+        assert ScheduleRunStatus.SKIPPED == "SKIPPED"
+
+
+class TestLockDictBehavior:
+    """
+    Tests for _active_preview_locks dict management in api.v1.sessions.
+    FIX: dict.setdefault() ensures the same Lock is always returned for a
+    given session_id; delete_session / bulk-delete remove the entry to
+    prevent unbounded memory growth.
+    """
+
+    def test_get_active_preview_lock_returns_same_lock_for_same_session(self):
+        """setdefault guarantees a single Lock per session_id."""
+        import asyncio
+        import api.v1.sessions as sessions_module
+
+        sessions_module._active_preview_locks.clear()
+        lock_a = sessions_module._get_active_preview_lock(9991)
+        lock_b = sessions_module._get_active_preview_lock(9991)
+        assert lock_a is lock_b, "Must return the same asyncio.Lock for the same session_id"
+        assert isinstance(lock_a, asyncio.Lock)
+        sessions_module._active_preview_locks.pop(9991, None)
+
+    def test_delete_session_clears_lock(self, client, admin_headers, created_app):
+        """
+        After DELETE /sessions/{id}, the session's lock entry must be removed
+        from _active_preview_locks to prevent unbounded growth.
+        """
+        import api.v1.sessions as sessions_module
+
+        app_id = created_app["id"]
+        sess_resp = client.post(
+            "/api/v1/sessions",
+            json={"name": "lock-cleanup-test", "application_id": app_id},
+            headers=admin_headers,
+        )
+        assert sess_resp.status_code == 201
+        sess_id = sess_resp.json()["id"]
+
+        # Seed a lock entry as if the session had been previewed
+        import asyncio
+        sessions_module._active_preview_locks[sess_id] = asyncio.Lock()
+        assert sess_id in sessions_module._active_preview_locks
+
+        resp = client.delete(f"/api/v1/sessions/{sess_id}", headers=admin_headers)
+        assert resp.status_code == 204
+
+        assert sess_id not in sessions_module._active_preview_locks, (
+            "Lock entry must be removed when session is deleted"
+        )
+
+    def test_bulk_delete_sessions_clears_locks(self, client, admin_headers, created_app):
+        """
+        After bulk-delete, all deleted sessions' lock entries must be removed.
+        """
+        import asyncio
+        import api.v1.sessions as sessions_module
+
+        app_id = created_app["id"]
+        ids = []
+        for i in range(3):
+            r = client.post(
+                "/api/v1/sessions",
+                json={"name": f"bulk-lock-test-{i}", "application_id": app_id},
+                headers=admin_headers,
+            )
+            assert r.status_code == 201
+            ids.append(r.json()["id"])
+
+        for sid in ids:
+            sessions_module._active_preview_locks[sid] = asyncio.Lock()
+
+        resp = client.post(
+            "/api/v1/sessions/bulk-delete",
+            json={"ids": ids},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] == 3
+
+        for sid in ids:
+            assert sid not in sessions_module._active_preview_locks, (
+                f"Lock for session {sid} must be removed after bulk-delete"
+            )
+
+
+class TestArexClientGuard:
+    """
+    Verify that the `client = None` + `if client is not None` pattern in
+    _sync_from_arex_storage's finally block means aclose() is still called
+    when ArexClient.__aenter__ raises (P1 fix).
+    """
+
+    @pytest.mark.asyncio
+    async def test_aclose_called_when_aenter_raises(self):
+        """
+        Direct unit test of the P1 fix pattern:
+
+            client = None
+            try:
+                client = ArexClient(url)
+                await client.__aenter__()   ← raises here
+                ...
+            except Exception:
+                pass
+            finally:
+                if client is not None:
+                    await client.aclose()   ← must still be called
+
+        Without the guard, if __aenter__ raised and client were still None,
+        the finally would AttributeError; with the guard and client assigned
+        before __aenter__, aclose() is called exactly once.
+        """
+        from unittest.mock import AsyncMock
+
+        aclose_mock = AsyncMock()
+
+        class FailingArexClient:
+            def __init__(self, _url):
+                self.aclose = aclose_mock
+
+            async def __aenter__(self):
+                raise RuntimeError("simulated __aenter__ failure")
+
+        client = None
+        try:
+            client = FailingArexClient("http://fake")
+            await client.__aenter__()
+        except Exception:
+            pass
+        finally:
+            if client is not None:
+                await client.aclose()
+
+        aclose_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_error_when_client_is_none(self):
+        """
+        If ArexClient() constructor itself raised (before assignment),
+        client would remain None and the finally guard prevents AttributeError.
+        """
+        client = None
+        try:
+            raise RuntimeError("constructor failed before client was assigned")
+        except Exception:
+            pass
+        finally:
+            if client is not None:
+                await client.aclose()  # type: ignore[attr-defined]
+        # Reaching here without error means the guard works

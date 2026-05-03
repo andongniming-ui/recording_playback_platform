@@ -137,13 +137,32 @@ const trendChartOption = computed(() => ({
   }],
 }))
 
+const failureCategoryLabelMap: Record<string, string> = {
+  status_mismatch: '状态码不一致',
+  response_diff: '响应内容差异',
+  assertion_failed: '断言失败',
+  performance: '性能超限',
+  timeout: '请求超时',
+  connection_error: '连接异常',
+  mock_error: '模拟数据异常',
+  environment: '环境问题',
+  data_issue: '数据问题',
+  bug: '代码缺陷',
+  unknown: '未知原因',
+}
+
+function failureCategoryLabel(category: string | null | undefined) {
+  if (!category) return '未知原因'
+  return failureCategoryLabelMap[category] || '其他失败'
+}
+
 const pieChartOption = computed(() => ({
   tooltip: { trigger: 'item' },
   legend: { bottom: 0 },
   series: [{
     type: 'pie',
     radius: ['40%', '70%'],
-    data: failureTypes.value.map(f => ({ name: f.category || '未知', value: f.count })),
+    data: failureTypes.value.map(f => ({ name: failureCategoryLabel(f.category), value: f.count })),
     label: { formatter: '{b}: {c}' },
   }],
 }))

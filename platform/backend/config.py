@@ -14,7 +14,10 @@ class Settings(BaseSettings):
     secret_key: str = "changeme-in-production"
     enforce_secure_secret: bool = False
     ssh_keys_dir: str = str(DEFAULT_SSH_KEYS_DIR)
-    cors_origins: list[str] = ["*"]
+    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    # Initial admin password for first-run setup.
+    # If empty, a random password is generated and printed to the console.
+    admin_init_password: str = ""
     debug: bool = False
     # AREX storage 连接
     arex_storage_url: str = "http://127.0.0.1:8000"

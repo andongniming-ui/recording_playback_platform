@@ -84,24 +84,47 @@ def _configure_app_logging(log_file: str | None = None):
 
 
 async def _create_default_admin():
-    """Create default admin user if no users exist."""
+    """Create initial admin user on first run (no users in DB).
+
+    Password priority:
+      1. AR_ADMIN_INIT_PASSWORD env var (useful for CI / scripted deploys)
+      2. Randomly generated 16-char token (printed prominently to console)
+    """
+    import secrets
     from sqlalchemy import select, func
     from models.user import User
     from core.security import get_password_hash
 
     async with async_session_factory() as db:
         count_result = await db.execute(select(func.count()).select_from(User))
-        count = count_result.scalar()
-        if count == 0:
-            admin = User(
-                username="admin",
-                hashed_password=get_password_hash("admin123"),
-                role="admin",
-                is_active=True,
-            )
-            db.add(admin)
-            await db.commit()
-            logger.info("Default admin user created (admin/admin123)")
+        if count_result.scalar() != 0:
+            return
+
+        password = settings.admin_init_password.strip() or secrets.token_urlsafe(12)
+        admin = User(
+            username="admin",
+            hashed_password=get_password_hash(password),
+            role="admin",
+            is_active=True,
+        )
+        db.add(admin)
+        await db.commit()
+
+        # Print credentials to console so the operator can log in immediately.
+        # Use sys.stderr so it appears even when stdout is redirected.
+        import sys
+        border = "=" * 60
+        msg = (
+            f"\n{border}\n"
+            f"  FIRST RUN — initial admin account created\n"
+            f"  Username : admin\n"
+            f"  Password : {password}\n"
+            f"  Please log in and change the password immediately.\n"
+            f"  (Set AR_ADMIN_INIT_PASSWORD to skip this prompt.)\n"
+            f"{border}\n"
+        )
+        print(msg, file=sys.stderr, flush=True)
+        logger.warning("First-run admin created. See startup output for credentials.")
 
 
 def _is_expected_migration_error(exc: Exception) -> bool:
@@ -296,10 +319,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_cors_origins = settings.cors_origins
+_allow_credentials = True
+if "*" in _cors_origins:
+    # Browsers reject credentials with wildcard origin (CORS spec §3.2).
+    # Fall back to credentialless mode and warn the operator.
+    _allow_credentials = False
+    logger.warning(
+        "CORS: AR_CORS_ORIGINS contains '*' — allow_credentials disabled. "
+        "Set explicit origins (e.g. http://localhost:5173) to enable credentials."
+    )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )

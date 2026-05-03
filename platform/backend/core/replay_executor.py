@@ -474,6 +474,34 @@ def _count_sub_call_items(value: str | None) -> int:
     return len(_load_sub_call_list(value))
 
 
+# HttpClient mocks during replay are served from the agent's local cache
+# (cacheLoad/cacheRemove) without a storage round-trip, so the agent never
+# reports their usage back. Excluding these types prevents spurious FAIL
+# results when the only "missing" sub-calls are HttpClient calls.
+_REPLAY_UNRELIABLE_SUB_CALL_TYPES = frozenset({"httpclient", "http"})
+
+
+def _filter_sub_calls_for_strict_check(sub_calls_json: str | None) -> str | None:
+    """Strip HttpClient-type entries before strict failure check."""
+    if not sub_calls_json:
+        return sub_calls_json
+    try:
+        items = json.loads(sub_calls_json)
+    except Exception:
+        return sub_calls_json
+    if not isinstance(items, list):
+        return sub_calls_json
+    filtered = [
+        item for item in items
+        if not (
+            isinstance(item, dict)
+            and normalize_sub_call_type(item.get("type") or "").lower()
+            in _REPLAY_UNRELIABLE_SUB_CALL_TYPES
+        )
+    ]
+    return json.dumps(filtered, ensure_ascii=False) if filtered else None
+
+
 def _strict_sub_call_failure(
     *,
     expected_sub_calls_json: str | None,
@@ -483,16 +511,22 @@ def _strict_sub_call_failure(
     diff_rules: list[dict] | None = None,
     ignore_order: bool = True,
 ) -> tuple[str, str] | None:
-    expected_count = _count_sub_call_items(expected_sub_calls_json)
-    actual_count = _count_sub_call_items(actual_sub_calls_json)
+    # Strip HttpClient-type sub-calls before comparison — they are unreliable
+    # to capture during replay (agent serves them from local cache without
+    # reporting back), so their absence must not trigger a FAIL.
+    expected = _filter_sub_calls_for_strict_check(expected_sub_calls_json)
+    actual = _filter_sub_calls_for_strict_check(actual_sub_calls_json)
+
+    expected_count = _count_sub_call_items(expected)
+    actual_count = _count_sub_call_items(actual)
     if expected_count > 0 and actual_count == 0:
         return (
             "sub_call_missing",
             f"回放未抓取到子调用：录制侧 {expected_count} 条，回放侧 0 条",
         )
     if _sub_calls_have_diff(
-        expected_sub_calls_json,
-        actual_sub_calls_json,
+        expected,
+        actual,
         smart_noise_reduction=smart_noise_reduction,
         ignore_fields=ignore_fields,
         diff_rules=diff_rules,

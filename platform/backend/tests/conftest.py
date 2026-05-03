@@ -75,6 +75,8 @@ def client(tmp_path):
     mock_sched.remove_job = MagicMock()
     mock_sched.get_job = MagicMock(return_value=None)
 
+    from config import settings as _app_settings
+
     with (
         patch("core.scheduler.scheduler", mock_sched),
         patch("api.v1.schedule.add_schedule", return_value=None),
@@ -84,6 +86,8 @@ def client(tmp_path):
         # Patch main's local reference so lifespan _create_default_admin uses the
         # test factory (main.py imports async_session_factory by name at module level).
         patch("main.async_session_factory", test_factory),
+        # Ensure admin is created with a known password in tests.
+        patch.object(_app_settings, "admin_init_password", "admin123"),
     ):
 
         with TestClient(app, raise_server_exceptions=False) as c:
@@ -133,6 +137,21 @@ def editor_token(client, admin_headers):
 @pytest.fixture
 def editor_headers(editor_token):
     return {"Authorization": f"Bearer {editor_token}"}
+
+
+# ---------------------------------------------------------------------------
+# Rate-limiter reset
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Reset slowapi in-memory counters before each test to prevent 429 errors."""
+    from core.rate_limit import limiter
+    try:
+        limiter._storage.reset()
+    except Exception:
+        pass
+    yield
 
 
 # ---------------------------------------------------------------------------

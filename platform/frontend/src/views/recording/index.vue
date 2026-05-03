@@ -567,7 +567,12 @@ const filteredRecordings = computed(() => {
 
 const sessionColumns = computed<DataTableColumns<SessionRow>>(() => [
   ...(canEdit ? [{ type: 'selection' as const, disabled: (row: SessionRow) => row.status === 'active' || row.status === 'collecting' }] : []),
-  { title: 'ID', key: 'id', width: 60 },
+  {
+    title: '#',
+    key: 'seq',
+    width: 55,
+    render: (_row: SessionRow, index: number) => (sessionPagination.page - 1) * sessionPagination.pageSize + index + 1,
+  },
   {
     title: '会话名称',
     key: 'name',

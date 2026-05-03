@@ -495,7 +495,12 @@ const filteredCaseOptions = computed<SelectOption[]>(() => {
 
 const jobColumns = computed<DataTableColumns<JobRow>>(() => [
   ...(canEdit ? [{ type: 'selection' as const, disabled: (row: JobRow) => ['RUNNING', 'PENDING'].includes(row.status) }] : []),
-  { title: 'ID', key: 'id', width: 60 },
+  {
+    title: '#',
+    key: 'seq',
+    width: 55,
+    render: (_row: JobRow, index: number) => (jobPagination.page - 1) * jobPagination.pageSize + index + 1,
+  },
   { title: '任务名称', key: 'name', ellipsis: { tooltip: true } },
   {
     title: '状态',

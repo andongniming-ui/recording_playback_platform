@@ -129,6 +129,87 @@ def test_strict_sub_call_failure_detects_missing_actual_sub_calls():
 
 
 # ---------------------------------------------------------------------------
+# HttpClient sub-calls should not trigger strict failure (unreliable in replay)
+# ---------------------------------------------------------------------------
+
+
+def test_strict_sub_call_failure_ignores_missing_httpclient_only():
+    """HttpClient-only missing sub-calls must NOT trigger failure."""
+    from core.replay_executor import _strict_sub_call_failure
+
+    expected = json.dumps([{"type": "HttpClient", "operation": "/order/query"}])
+    failure = _strict_sub_call_failure(
+        expected_sub_calls_json=expected,
+        actual_sub_calls_json=None,
+    )
+    assert failure is None, (
+        "HttpClient-only missing sub-call should not trigger FAIL"
+    )
+
+
+def test_strict_sub_call_failure_still_fails_when_database_missing():
+    """Database missing sub-calls must still trigger failure even with HttpClient present."""
+    from core.replay_executor import _strict_sub_call_failure
+
+    expected = json.dumps([
+        {"type": "Database", "operation": "query"},
+        {"type": "HttpClient", "operation": "/order/query"},
+    ])
+    failure = _strict_sub_call_failure(
+        expected_sub_calls_json=expected,
+        actual_sub_calls_json=None,
+    )
+    assert failure is not None, (
+        "Database missing sub-call must still trigger FAIL"
+    )
+    assert failure[0] == "sub_call_missing"
+
+
+def test_strict_sub_call_failure_passes_when_only_httpclient_missing_from_mixed():
+    """Database present + HttpClient missing → should PASS."""
+    from core.replay_executor import _strict_sub_call_failure
+
+    expected = json.dumps([
+        {"type": "Database", "operation": "query", "response": [{"id": 1}]},
+        {"type": "HttpClient", "operation": "/order/query"},
+    ])
+    actual = json.dumps([
+        {"type": "Database", "operation": "query", "response": [{"id": 1}]},
+        # HttpClient missing from actual — should be ignored
+    ])
+    failure = _strict_sub_call_failure(
+        expected_sub_calls_json=expected,
+        actual_sub_calls_json=actual,
+    )
+    assert failure is None, (
+        "HttpClient missing from actual with Database matching should not FAIL"
+    )
+
+
+def test_filter_sub_calls_for_strict_check_removes_httpclient():
+    from core.replay_executor import _filter_sub_calls_for_strict_check
+    import json
+
+    sub_calls = json.dumps([
+        {"type": "Database", "operation": "query"},
+        {"type": "HttpClient", "operation": "/order/query"},
+        {"type": "http", "operation": "/other"},
+    ])
+    result = _filter_sub_calls_for_strict_check(sub_calls)
+    parsed = json.loads(result)
+    assert len(parsed) == 1
+    assert parsed[0]["type"] == "Database"
+
+
+def test_filter_sub_calls_for_strict_check_returns_none_when_all_httpclient():
+    from core.replay_executor import _filter_sub_calls_for_strict_check
+
+    sub_calls = json.dumps([{"type": "HttpClient", "operation": "/foo"}])
+    result = _filter_sub_calls_for_strict_check(sub_calls)
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
 # Integration: fail_on_sub_call_diff=True triggers FAIL when sub-calls differ
 # ---------------------------------------------------------------------------
 

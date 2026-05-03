@@ -44,6 +44,8 @@ class ReplayJob(Base):
 
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime)
+    worker_id: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

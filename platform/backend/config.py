@@ -35,22 +35,26 @@ class Settings(BaseSettings):
     # AREX flush 后子调用为空时的重试配置
     arex_flush_max_retries: int = 3           # 最多重试次数（0 = 不重试）
     arex_flush_retry_interval_s: float = 0.5  # 每次重试间隔（秒）
+    # 回放任务心跳。进程崩溃后，超过 timeout 仍未更新心跳的 RUNNING 任务会被恢复为 FAILED。
+    replay_job_heartbeat_interval_s: float = 5.0
+    replay_job_heartbeat_timeout_s: float = 300.0
     # 日志落盘：留空则不写文件，填路径则启用 RotatingFileHandler
     log_file: str = ""
     log_max_bytes: int = 10 * 1024 * 1024   # 10 MB
     log_backup_count: int = 5
-    # N-LS MySQL（用于从 bank_sub_call_log 获取业务步骤）
+    # ── System plugin configs (moved from hardcoded to plugin, kept here for .env) ──
+    # N-LS plugin MySQL
     nls_mysql_host: str = ""
     nls_mysql_port: int = 3306
     nls_mysql_user: str = "root"
     nls_mysql_password: str = ""
-    # didi MySQL（用于补全 JdbcTemplate 读写子调用）
-    didi_mysql_host: str = "127.0.0.1"
-    didi_mysql_port: int = 3307
+    # Didi plugin MySQL
+    didi_mysql_host: str = ""
+    didi_mysql_port: int = 3306
     didi_mysql_user: str = "root"
-    didi_mysql_password: str = "root123"
-    didi_mysql_db_sat: str = "didi_alpha"
-    didi_mysql_db_uat: str = "didi_beta"
+    didi_mysql_password: str = ""
+    didi_mysql_db_sat: str = ""
+    didi_mysql_db_uat: str = ""
 
     model_config = SettingsConfigDict(
         env_prefix="AR_",

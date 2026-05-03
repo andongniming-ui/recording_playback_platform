@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager, suppress
 from datetime import timedelta
@@ -169,6 +170,8 @@ async def _migrate_db():
         "ALTER TABLE replay_job ADD COLUMN target_host VARCHAR(512)",
         "ALTER TABLE replay_job ADD COLUMN webhook_url VARCHAR(512)",
         "ALTER TABLE replay_job ADD COLUMN notify_type VARCHAR(32)",
+        "ALTER TABLE replay_job ADD COLUMN heartbeat_at DATETIME",
+        "ALTER TABLE replay_job ADD COLUMN worker_id VARCHAR(128)",
         "ALTER TABLE replay_result ADD COLUMN diff_score REAL",
         "ALTER TABLE recording ADD COLUMN transaction_code VARCHAR(128)",
         "ALTER TABLE recording ADD COLUMN scene_key VARCHAR(256)",
@@ -201,7 +204,13 @@ async def _verify_db_schema():
     from database import engine
 
     required_columns = {
-        "replay_job": {"fail_on_sub_call_diff", "use_sub_invocation_mocks", "ignore_order"},
+        "replay_job": {
+            "fail_on_sub_call_diff",
+            "heartbeat_at",
+            "ignore_order",
+            "use_sub_invocation_mocks",
+            "worker_id",
+        },
         "replay_result": {"actual_sub_calls", "sub_call_diff_detail", "diff_score"},
         "recording": {"sub_calls", "transaction_code", "scene_key", "dedupe_hash", "governance_status"},
     }
@@ -259,6 +268,97 @@ async def _backfill_arex_mocker_created_at():
             logger.info("Backfilled arex_mocker.created_at for %d rows", updated)
 
 
+async def _recover_stale_running_jobs(stale_after: timedelta | None = None):
+    """Fail RUNNING replay jobs whose worker heartbeat is missing or stale."""
+    from sqlalchemy import select
+    from models.replay import ReplayJob
+    from models.replay import ReplayResult
+    from models.audit import ReplayAuditLog
+    from utils.timezone import now_beijing
+
+    stale_after = stale_after or timedelta(seconds=max(settings.replay_job_heartbeat_timeout_s, 1))
+    now = now_beijing()
+    cutoff = now - stale_after
+    interrupted_statuses = {"PENDING", "RUNNING"}
+    terminal_statuses = {"PASS", "FAIL", "TIMEOUT", "ERROR"}
+    recovered = 0
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(ReplayJob)
+            .where(ReplayJob.status == "RUNNING")
+            .where((ReplayJob.heartbeat_at.is_(None)) | (ReplayJob.heartbeat_at < cutoff))
+            .order_by(ReplayJob.id)
+        )
+        jobs = result.scalars().all()
+
+        for job in jobs:
+            result_rows = (
+                await db.execute(select(ReplayResult).where(ReplayResult.job_id == job.id))
+            ).scalars().all()
+
+            interrupted = 0
+            for row in result_rows:
+                if row.status in interrupted_statuses or row.status not in terminal_statuses:
+                    row.status = "ERROR"
+                    row.is_pass = False
+                    row.failure_category = "job_interrupted"
+                    row.failure_reason = "Replay worker heartbeat expired before the job completed"
+                    interrupted += 1
+
+            passed = sum(1 for row in result_rows if row.status == "PASS")
+            failed = sum(1 for row in result_rows if row.status in {"FAIL", "TIMEOUT"})
+            errored = sum(1 for row in result_rows if row.status not in {"PASS", "FAIL", "TIMEOUT"})
+
+            job.status = "FAILED"
+            job.total = job.total or len(result_rows)
+            job.passed = passed
+            job.failed = failed
+            job.errored = errored
+            job.finished_at = now
+            job.heartbeat_at = now
+            job.worker_id = None
+
+            db.add(
+                ReplayAuditLog(
+                    job_id=job.id,
+                    application_id=job.application_id,
+                    level="ERROR",
+                    event_type="job_recovered_failed",
+                    message="回放任务心跳过期，已在启动恢复时标记为失败",
+                    detail=json.dumps(
+                        {
+                            "status": "FAILED",
+                            "interrupted_results": interrupted,
+                            "passed": passed,
+                            "failed": failed,
+                            "errored": errored,
+                            "heartbeat_cutoff": cutoff.isoformat(),
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+            )
+            recovered += 1
+
+        if recovered:
+            await db.commit()
+
+    if recovered:
+        logger.warning("Recovered %d stale RUNNING replay job(s) as FAILED", recovered)
+    return recovered
+
+
+async def _stale_replay_job_recovery_loop():
+    interval = max(settings.replay_job_heartbeat_timeout_s / 2, 30)
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await _recover_stale_running_jobs()
+        except Exception:
+            logger.exception("Failed to recover stale replay jobs")
+
+
 async def _cleanup_old_audit_logs(retention_days: int = 30):
     from sqlalchemy import delete
     from models.audit import RecordingAuditLog, ReplayAuditLog
@@ -297,18 +397,23 @@ async def lifespan(app: FastAPI):
     await init_db()
     await _migrate_db()
     await _verify_db_schema()
+    await _recover_stale_running_jobs()
     await _backfill_arex_mocker_created_at()
     await _create_default_admin()
     from core.scheduler import scheduler, load_all_schedules
     await load_all_schedules()
     scheduler.start()
     audit_cleanup_task = asyncio.create_task(_audit_log_cleanup_loop())
+    stale_replay_job_task = asyncio.create_task(_stale_replay_job_recovery_loop())
     try:
         yield
     finally:
         audit_cleanup_task.cancel()
+        stale_replay_job_task.cancel()
         with suppress(asyncio.CancelledError):
             await audit_cleanup_task
+        with suppress(asyncio.CancelledError):
+            await stale_replay_job_task
         scheduler.shutdown(wait=False)
 
 
@@ -365,6 +470,12 @@ app.include_router(ci.router, prefix="/api/v1")
 from api.v1 import stats as stats_api, compare as compare_api
 app.include_router(stats_api.router, prefix="/api/v1")
 app.include_router(compare_api.router, prefix="/api/v1")
+
+# ── Initialize system plugins and refresh repository capture metadata ──
+from utils.system_plugin import load_plugins
+from utils.repository_capture import refresh_method_metadata
+load_plugins()
+refresh_method_metadata()
 
 
 @app.get("/api/health")

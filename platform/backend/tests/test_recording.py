@@ -12,7 +12,6 @@ from sqlalchemy import select, update
 from api.v1.sessions import (
     _count_visible_recordings_from_arex,
     _extract_sub_calls,
-    _fetch_didi_sub_calls,
     _fetch_dynamic_class_sub_calls,
     _remove_sub_invocation_recordings,
     _sync_active_session_preview,
@@ -23,6 +22,7 @@ from models.arex_mocker import ArexMocker
 from models.audit import RecordingAuditLog
 from models.recording import Recording, RecordingSession
 from utils.governance import infer_transaction_code
+from utils.didi_plugin import DidiPlugin
 
 
 # ---------------------------------------------------------------------------
@@ -1223,7 +1223,7 @@ async def test_fetch_didi_sub_calls_reconstructs_complex_transaction_db_steps():
     conn.cursor = AsyncMock(return_value=cursor)
     conn.close = MagicMock()
 
-    with patch("api.v1.sessions.settings") as mock_settings, \
+    with patch("utils.didi_plugin.settings") as mock_settings, \
          patch("aiomysql.connect", AsyncMock(return_value=conn)):
         mock_settings.didi_mysql_host = "127.0.0.1"
         mock_settings.didi_mysql_port = 3307
@@ -1232,7 +1232,8 @@ async def test_fetch_didi_sub_calls_reconstructs_complex_transaction_db_steps():
         mock_settings.didi_mysql_db_sat = "didi_alpha"
         mock_settings.didi_mysql_db_uat = "didi_beta"
 
-        sub_calls = await _fetch_didi_sub_calls(request_body, "didi-car-sat")
+        plugin = DidiPlugin()
+        sub_calls = await plugin.fetch_extra_sub_calls(request_body, "didi-car-sat", None, None)
 
     assert len(sub_calls) == 7
     assert sub_calls[0]["operation"] == "SELECT car_vehicle"

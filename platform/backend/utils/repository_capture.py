@@ -1,280 +1,58 @@
 import json
+import logging
 from typing import Any
 
+
+logger = logging.getLogger(__name__)
 
 NOISE_DYNAMIC_CLASS_OPERATIONS = {
     "java.lang.System.currentTimeMillis",
     "java.lang.System.nanoTime",
 }
 
+_BUILTIN_SPECS: list[dict[str, Any]] = []
+_plugins_loaded_for_metadata = False
 
-_REPOSITORY_CAPTURE_SPECS: list[dict[str, Any]] = [
-    {
-        "full_class_name": "com.arex.demo.didi.common.repository.CarDataRepository",
-        "database": "mysql",
-        "type": "MySQL",
-        "methods": [
-            {
-                "method_name": "findVehicle",
-                "parameter_types": "java.lang.String@java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["plateNo", "vin"],
-                "table": "car_vehicle",
-                "operation": "SELECT car_vehicle",
-                "status": "READ",
-            },
-            {
-                "method_name": "findCustomer",
-                "parameter_types": "java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["customerNo"],
-                "table": "car_customer",
-                "operation": "SELECT car_customer",
-                "status": "READ",
-            },
-            {
-                "method_name": "findPolicy",
-                "parameter_types": "java.lang.String@java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["policyNo", "plateNo"],
-                "table": "car_policy",
-                "operation": "SELECT car_policy",
-                "status": "READ",
-            },
-            {
-                "method_name": "findClaim",
-                "parameter_types": "java.lang.String@java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["claimNo", "plateNo"],
-                "table": "car_claim",
-                "operation": "SELECT car_claim",
-                "status": "READ",
-            },
-            {
-                "method_name": "findDispatch",
-                "parameter_types": "java.lang.String@java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["plateNo", "garageCode"],
-                "table": "car_dispatch",
-                "operation": "SELECT car_dispatch",
-                "status": "READ",
-            },
-            {
-                "method_name": "saveAudit",
-                "parameter_types": "java.lang.String@java.lang.String@java.lang.String@java.lang.String@java.lang.String@java.math.BigDecimal@java.lang.String",
-                "key_formula": "#p1",
-                "parameter_names": [
-                    "txnCode",
-                    "requestNo",
-                    "customerNo",
-                    "plateNo",
-                    "riskLevel",
-                    "quotedAmount",
-                    "variantId",
-                ],
-                "table": "car_order_audit",
-                "operation": "INSERT car_order_audit",
-                "status": "WRITE",
-            },
-            {
-                "method_name": "updateVehicleStatus",
-                "parameter_types": "java.lang.String@java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["plateNo", "status"],
-                "table": "car_vehicle",
-                "operation": "UPDATE car_vehicle",
-                "status": "WRITE",
-            },
-        ],
-    },
-    {
-        "full_class_name": "com.arex.demo.waimai.repository.WaimaiDataRepository",
-        "database": "mysql",
-        "type": "MySQL",
-        "methods": [
-            {
-                "method_name": "insertOrder",
-                "parameter_types": "java.lang.String@java.lang.String@java.lang.String@java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["orderId", "customerId", "merchantId", "status"],
-                "table": "orders",
-                "operation": "INSERT orders",
-                "status": "WRITE",
-            },
-            {
-                "method_name": "updateOrderStatus",
-                "parameter_types": "java.lang.String@java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["orderId", "status"],
-                "table": "orders",
-                "operation": "UPDATE orders",
-                "status": "WRITE",
-            },
-            {
-                "method_name": "queryOrder",
-                "parameter_types": "java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["orderId"],
-                "table": "orders",
-                "operation": "SELECT orders",
-                "status": "READ",
-            },
-            {
-                "method_name": "decrementStock",
-                "parameter_types": "java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["productId"],
-                "table": "products",
-                "operation": "UPDATE products",
-                "status": "WRITE",
-            },
-            {
-                "method_name": "incrementStock",
-                "parameter_types": "java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["productId"],
-                "table": "products",
-                "operation": "UPDATE products",
-                "status": "WRITE",
-            },
-            {
-                "method_name": "insertRefund",
-                "parameter_types": "java.lang.String@java.lang.String@java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["refundId", "orderId", "status"],
-                "table": "refunds",
-                "operation": "INSERT refunds",
-                "status": "WRITE",
-            },
-            {
-                "method_name": "searchMerchants",
-                "parameter_types": "java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["keyword"],
-                "table": "merchants",
-                "operation": "SELECT merchants",
-                "status": "READ",
-            },
-            {
-                "method_name": "queryMerchant",
-                "parameter_types": "java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["merchantId"],
-                "table": "merchants",
-                "operation": "SELECT merchants",
-                "status": "READ",
-            },
-            {
-                "method_name": "addToCart",
-                "parameter_types": "java.lang.String@java.lang.String@java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["customerId", "productId", "quantity"],
-                "table": "cart",
-                "operation": "INSERT cart",
-                "status": "WRITE",
-            },
-            {
-                "method_name": "queryCart",
-                "parameter_types": "java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["customerId"],
-                "table": "cart",
-                "operation": "SELECT cart",
-                "status": "READ",
-            },
-            {
-                "method_name": "insertReview",
-                "parameter_types": "java.lang.String@java.lang.String@java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["reviewId", "orderId", "rating"],
-                "table": "reviews",
-                "operation": "INSERT reviews",
-                "status": "WRITE",
-            },
-            {
-                "method_name": "queryRiderLocation",
-                "parameter_types": "java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["riderId"],
-                "table": "riders",
-                "operation": "SELECT riders",
-                "status": "READ",
-            },
-            {
-                "method_name": "updateWallet",
-                "parameter_types": "java.lang.String@double",
-                "key_formula": "#p0",
-                "parameter_names": ["customerId", "amount"],
-                "table": "wallets",
-                "operation": "UPDATE wallets",
-                "status": "WRITE",
-            },
-            {
-                "method_name": "queryWallet",
-                "parameter_types": "java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["customerId"],
-                "table": "wallets",
-                "operation": "SELECT wallets",
-                "status": "READ",
-            },
-            {
-                "method_name": "insertSettlement",
-                "parameter_types": "java.lang.String@java.lang.String@double",
-                "key_formula": "#p0",
-                "parameter_names": ["settlementId", "merchantId", "amount"],
-                "table": "settlements",
-                "operation": "INSERT settlements",
-                "status": "WRITE",
-            },
-        ],
-    },
-    {
-        "full_class_name": "com.arex.demo.loan.repository.LoanDataRepository",
-        "database": "mysql",
-        "type": "MySQL",
-        "methods": [
-            {
-                "method_name": "findCustomer",
-                "parameter_types": "java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["customerId"],
-                "table": "customer",
-                "operation": "SELECT customer",
-                "status": "READ",
-            },
-            {
-                "method_name": "findProduct",
-                "parameter_types": "java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["productId"],
-                "table": "product_rule",
-                "operation": "SELECT product_rule",
-                "status": "READ",
-            },
-            {
-                "method_name": "isOnBlacklist",
-                "parameter_types": "java.lang.String",
-                "key_formula": "#p0",
-                "parameter_names": ["customerId"],
-                "table": "blacklist",
-                "operation": "SELECT blacklist",
-                "status": "READ",
-            },
-        ],
-    },
-]
+def _get_all_specs() -> list[dict[str, Any]]:
+    """Aggregate repository capture specs from built-in list + all registered plugins."""
+    specs = list(_BUILTIN_SPECS)
+    try:
+        from utils.system_plugin import get_all_plugins
+        for plugin in get_all_plugins():
+            specs.extend(plugin.get_repository_specs())
+    except ImportError:
+        logger.debug("system_plugin not available, using built-in specs only")
+    return specs
 
 
-_METHOD_METADATA: dict[tuple[str, str], dict[str, Any]] = {}
-for _spec in _REPOSITORY_CAPTURE_SPECS:
-    for _method in _spec["methods"]:
-        _METHOD_METADATA[(_spec["full_class_name"], _method["method_name"])] = {
-            "full_class_name": _spec["full_class_name"],
-            "database": _spec["database"],
-            "type": _spec["type"],
-            **_method,
-        }
+def _build_method_metadata() -> dict[tuple[str, str], dict[str, Any]]:
+    metadata: dict[tuple[str, str], dict[str, Any]] = {}
+    for spec in _get_all_specs():
+        for method in spec["methods"]:
+            metadata[(spec["full_class_name"], method["method_name"])] = {
+                "full_class_name": spec["full_class_name"],
+                "database": spec["database"],
+                "type": spec["type"],
+                **method,
+            }
+    return metadata
+
+
+_METHOD_METADATA: dict[tuple[str, str], dict[str, Any]] = _build_method_metadata()
+
+
+def refresh_method_metadata(load_plugin_modules: bool = False) -> None:
+    """Rebuild _METHOD_METADATA after plugins are registered. Call once at startup."""
+    global _plugins_loaded_for_metadata
+    if load_plugin_modules and not _plugins_loaded_for_metadata:
+        try:
+            from utils.system_plugin import load_plugins
+            load_plugins()
+            _plugins_loaded_for_metadata = True
+        except ImportError:
+            logger.debug("system_plugin not available, refreshing without plugin discovery")
+    global _METHOD_METADATA
+    _METHOD_METADATA = _build_method_metadata()
 
 
 def get_dynamic_class_configurations() -> list[dict[str, str]]:
@@ -285,7 +63,7 @@ def get_dynamic_class_configurations() -> list[dict[str, str]]:
             "parameterTypes": method["parameter_types"],
             "keyFormula": method["key_formula"],
         }
-        for spec in _REPOSITORY_CAPTURE_SPECS
+        for spec in _get_all_specs()
         for method in spec["methods"]
     ]
 
@@ -428,6 +206,10 @@ def lookup_repository_capture_metadata(operation_name: str | None) -> dict[str, 
     class_name, sep, method_name = operation.rpartition(".")
     if not sep:
         return None
+    metadata = _METHOD_METADATA.get((class_name, method_name))
+    if metadata is not None:
+        return metadata
+    refresh_method_metadata(load_plugin_modules=True)
     return _METHOD_METADATA.get((class_name, method_name))
 
 

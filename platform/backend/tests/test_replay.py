@@ -2,8 +2,8 @@
 import asyncio
 import json
 from types import SimpleNamespace
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import select, update
@@ -303,6 +303,104 @@ def test_bulk_delete_replay_jobs_blocks_running_and_deletes_pending(client, admi
 
     missing = client.get(f"/api/v1/replays/{deletable['id']}", headers=admin_headers)
     assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_startup_recovery_fails_stale_running_job_and_pending_results(client, admin_headers, tc_payload):
+    from main import _recover_stale_running_jobs
+    from utils.timezone import now_beijing
+
+    first = _create_test_case(client, admin_headers, {**tc_payload, "name": "first"})
+    second = _create_test_case(client, admin_headers, {**tc_payload, "name": "second"})
+    job = _create_replay_job(client, admin_headers, [first["id"], second["id"]]).json()
+
+    old_heartbeat = now_beijing() - timedelta(minutes=10)
+    async with database.async_session_factory() as db:
+        await db.execute(
+            update(ReplayJob)
+            .where(ReplayJob.id == job["id"])
+            .values(
+                status="RUNNING",
+                total=2,
+                passed=0,
+                failed=0,
+                errored=0,
+                started_at=old_heartbeat,
+                heartbeat_at=old_heartbeat,
+                worker_id="old-worker",
+            )
+        )
+        await db.execute(
+            update(ReplayResult)
+            .where(ReplayResult.job_id == job["id"], ReplayResult.test_case_id == first["id"])
+            .values(status="PASS", is_pass=True)
+        )
+        await db.commit()
+
+    recovered = await _recover_stale_running_jobs(stale_after=timedelta(seconds=1))
+    assert recovered == 1
+
+    async with database.async_session_factory() as db:
+        fetched_job = (
+            await db.execute(select(ReplayJob).where(ReplayJob.id == job["id"]))
+        ).scalar_one()
+        results = (
+            await db.execute(
+                select(ReplayResult)
+                .where(ReplayResult.job_id == job["id"])
+                .order_by(ReplayResult.test_case_id)
+            )
+        ).scalars().all()
+        audit = (
+            await db.execute(
+                select(ReplayAuditLog).where(
+                    ReplayAuditLog.job_id == job["id"],
+                    ReplayAuditLog.event_type == "job_recovered_failed",
+                )
+            )
+        ).scalar_one_or_none()
+
+    assert fetched_job.status == "FAILED"
+    assert fetched_job.passed == 1
+    assert fetched_job.failed == 0
+    assert fetched_job.errored == 1
+    assert fetched_job.finished_at is not None
+    assert fetched_job.worker_id is None
+    assert [result.status for result in results] == ["PASS", "ERROR"]
+    assert results[1].failure_category == "job_interrupted"
+    assert audit is not None
+
+
+@pytest.mark.asyncio
+async def test_startup_recovery_keeps_fresh_running_job(client, admin_headers, tc_payload):
+    from main import _recover_stale_running_jobs
+    from utils.timezone import now_beijing
+
+    tc = _create_test_case(client, admin_headers, tc_payload)
+    job = _create_replay_job(client, admin_headers, [tc["id"]]).json()
+
+    async with database.async_session_factory() as db:
+        await db.execute(
+            update(ReplayJob)
+            .where(ReplayJob.id == job["id"])
+            .values(status="RUNNING", heartbeat_at=now_beijing(), worker_id="active-worker")
+        )
+        await db.commit()
+
+    recovered = await _recover_stale_running_jobs(stale_after=timedelta(minutes=10))
+    assert recovered == 0
+
+    async with database.async_session_factory() as db:
+        fetched_job = (
+            await db.execute(select(ReplayJob).where(ReplayJob.id == job["id"]))
+        ).scalar_one()
+        result = (
+            await db.execute(select(ReplayResult).where(ReplayResult.job_id == job["id"]))
+        ).scalar_one()
+
+    assert fetched_job.status == "RUNNING"
+    assert fetched_job.worker_id == "active-worker"
+    assert result.status == "PENDING"
 
 
 def test_list_replay_results(client, admin_headers, tc_payload):
@@ -1264,14 +1362,16 @@ async def test_fetch_replay_sub_calls_enriches_didi_reconstructed_sub_calls(tmp_
         with (
             patch("asyncio.sleep", new_callable=AsyncMock),
             patch(
-                "api.v1.sessions._fetch_didi_sub_calls",
-                AsyncMock(return_value=[{
-                    "type": "MySQL",
-                    "operation": "INSERT car_order_audit",
-                    "table": "car_order_audit",
-                    "response": {"request_no": "REQ-car000001"},
-                    "status": "WRITE",
-                }]),
+                "utils.replay_sub_call_fetch.get_plugin_for_app_id",
+                return_value=MagicMock(
+                    fetch_extra_sub_calls=AsyncMock(return_value=[{
+                        "type": "MySQL",
+                        "operation": "INSERT car_order_audit",
+                        "table": "car_order_audit",
+                        "response": {"request_no": "REQ-car000001"},
+                        "status": "WRITE",
+                    }])
+                ),
             ),
         ):
             result = await _fetch_replay_sub_calls("replay-003", case=case)
@@ -1329,14 +1429,16 @@ async def test_fetch_replay_sub_calls_enriches_didi_reconstructed_sub_calls_with
     try:
         from core.replay_executor import _fetch_replay_sub_calls
         with patch(
-            "api.v1.sessions._fetch_didi_sub_calls",
-            AsyncMock(return_value=[{
-                "type": "MySQL",
-                "operation": "INSERT car_order_audit",
-                "table": "car_order_audit",
-                "response": {"request_no": "REQ-car000001"},
-                "status": "WRITE",
-            }]),
+            "utils.replay_sub_call_fetch.get_plugin_for_app_id",
+            return_value=MagicMock(
+                fetch_extra_sub_calls=AsyncMock(return_value=[{
+                    "type": "MySQL",
+                    "operation": "INSERT car_order_audit",
+                    "table": "car_order_audit",
+                    "response": {"request_no": "REQ-car000001"},
+                    "status": "WRITE",
+                }])
+            ),
         ):
             result = await _fetch_replay_sub_calls(None, case=case)
         assert result is not None
@@ -1459,7 +1561,8 @@ async def test_fetch_replay_sub_calls_recovers_sibling_internal_http_sub_calls_w
     db_module.async_session_factory = factory
     try:
         from core.replay_executor import _fetch_replay_sub_calls
-        with patch("api.v1.sessions._fetch_didi_sub_calls", AsyncMock(return_value=[])):
+        from utils.didi_plugin import DidiPlugin
+        with patch("utils.replay_sub_call_fetch.get_plugin_for_app_id", return_value=DidiPlugin()):
             result = await _fetch_replay_sub_calls(None, case=case, anchor_created_at_ms=1005)
         assert result is not None
         parsed = json.loads(result)

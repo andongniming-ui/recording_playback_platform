@@ -113,6 +113,8 @@ class ReplayJobOut(BaseModel):
     notify_type: Optional[str] = None
     started_at: Optional[datetime]
     finished_at: Optional[datetime]
+    heartbeat_at: Optional[datetime] = None
+    worker_id: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

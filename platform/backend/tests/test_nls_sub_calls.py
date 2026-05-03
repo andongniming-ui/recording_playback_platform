@@ -56,7 +56,7 @@ def _mock_connect(conn1, conn2):
 
 @pytest.mark.asyncio
 async def test_update_bank_account_child_appended():
-    from api.v1.sessions import _fetch_nls_sub_calls
+    from utils.nls_plugin import _fetch_nls_sub_calls
 
     # conn1：查 bank_transaction_log → tx_log_id=1；查 bank_sub_call_log → 1 步骤
     cursor1 = AsyncMock()
@@ -89,7 +89,7 @@ async def test_update_bank_account_child_appended():
     conn2.cursor = AsyncMock(return_value=cursor2)
     conn2.close = MagicMock()
 
-    with patch("api.v1.sessions.settings") as mock_settings, \
+    with patch("utils.nls_plugin.settings") as mock_settings, \
          patch("aiomysql.connect", AsyncMock(side_effect=[conn1, conn2])):
         mock_settings.nls_mysql_host = "127.0.0.1"
         mock_settings.nls_mysql_port = 3306
@@ -120,7 +120,7 @@ async def test_update_bank_account_child_appended():
 
 @pytest.mark.asyncio
 async def test_update_bank_loan_child_appended():
-    from api.v1.sessions import _fetch_nls_sub_calls
+    from utils.nls_plugin import _fetch_nls_sub_calls
 
     cursor1 = AsyncMock()
     cursor1.execute = AsyncMock()
@@ -159,7 +159,7 @@ async def test_update_bank_loan_child_appended():
     conn2.cursor = AsyncMock(return_value=cursor2)
     conn2.close = MagicMock()
 
-    with patch("api.v1.sessions.settings") as mock_settings, \
+    with patch("utils.nls_plugin.settings") as mock_settings, \
          patch("aiomysql.connect", AsyncMock(side_effect=[conn1, conn2])):
         mock_settings.nls_mysql_host = "127.0.0.1"
         mock_settings.nls_mysql_port = 3306
@@ -186,7 +186,7 @@ async def test_update_bank_loan_child_appended():
 @pytest.mark.asyncio
 async def test_loan_no_fallback_from_arex_mocker_response():
     """XML 中无 loan_no，但 arex_mocker 里 findLoanByNo 响应包含 loan_no。"""
-    from api.v1.sessions import _fetch_nls_sub_calls
+    from utils.nls_plugin import _fetch_nls_sub_calls
     from models.arex_mocker import ArexMocker
     import json
 
@@ -244,7 +244,7 @@ async def test_loan_no_fallback_from_arex_mocker_response():
     mock_result.scalars.return_value.all.return_value = [mocker_row]
     mock_db.execute = AsyncMock(return_value=mock_result)
 
-    with patch("api.v1.sessions.settings") as mock_settings, \
+    with patch("utils.nls_plugin.settings") as mock_settings, \
          patch("aiomysql.connect", AsyncMock(side_effect=[conn1, conn2])):
         mock_settings.nls_mysql_host = "127.0.0.1"
         mock_settings.nls_mysql_port = 3306
@@ -272,9 +272,9 @@ async def test_loan_no_fallback_from_arex_mocker_response():
 
 @pytest.mark.asyncio
 async def test_nls_connection_failure_returns_empty():
-    from api.v1.sessions import _fetch_nls_sub_calls
+    from utils.nls_plugin import _fetch_nls_sub_calls
 
-    with patch("api.v1.sessions.settings") as mock_settings, \
+    with patch("utils.nls_plugin.settings") as mock_settings, \
          patch("aiomysql.connect", AsyncMock(side_effect=OSError("connection refused"))):
         mock_settings.nls_mysql_host = "127.0.0.1"
         mock_settings.nls_mysql_port = 3306

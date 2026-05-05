@@ -14,7 +14,7 @@ export function resolveSortOrder(state: TableSortState, columnKey: string): Tabl
 }
 
 export function updateSortState(
-  sorter: { columnKey?: string; order?: TableSortOrder } | null | undefined,
+  sorter: { columnKey?: string | number; order?: TableSortOrder } | null | undefined,
   fallbackColumnKey: string,
   fallbackOrder: Exclude<TableSortOrder, false> = 'descend',
 ): TableSortState {

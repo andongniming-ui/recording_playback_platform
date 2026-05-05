@@ -181,13 +181,13 @@ function handleNav(key: string) {
   router.push(`/${key}`)
 }
 
-function handleUserAction(key: string) {
+async function handleUserAction(key: string) {
   if (key === 'settings') {
     router.push('/settings')
     return
   }
   if (key === 'logout') {
-    userStore.clearUser()
+    await userStore.logout()
     router.push('/login')
   }
 }

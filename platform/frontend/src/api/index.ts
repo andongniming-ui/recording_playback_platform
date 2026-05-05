@@ -1,26 +1,39 @@
 import axios from 'axios'
 import { API_BASE_URL } from '@/config'
+import { useUserStore } from '@/store/user'
 
 const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
+  withCredentials: true,
 })
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
+  const userStore = useUserStore()
+  if (userStore.token) {
+    config.headers.Authorization = `Bearer ${userStore.token}`
   }
   return config
 })
 
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const userStore = useUserStore()
+    const originalRequest = error.config || {}
+    const requestUrl = String(originalRequest.url || '')
+    const isAuthRequest = requestUrl.includes('/auth/login') || requestUrl.includes('/auth/refresh')
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthRequest) {
+      originalRequest._retry = true
+      const refreshed = await userStore.refreshSession()
+      if (refreshed) {
+        originalRequest.headers = originalRequest.headers || {}
+        originalRequest.headers.Authorization = `Bearer ${userStore.token}`
+        return api(originalRequest)
+      }
+    }
     if (error.response?.status === 401) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('username')
-      localStorage.removeItem('role')
+      userStore.clearUser()
       window.location.href = '/login'
     }
     return Promise.reject(error)

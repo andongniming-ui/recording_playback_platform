@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useUserStore } from '@/store/user'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -41,24 +42,27 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to) => {
-  const token = localStorage.getItem('token')
-  const role = localStorage.getItem('role') || 'viewer'
+router.beforeEach(async (to) => {
+  const userStore = useUserStore()
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth)
   const allowedRoles = to.matched.flatMap((record) => {
     const roles = record.meta.roles
     return Array.isArray(roles) ? roles : []
   })
 
-  if (requiresAuth && !token) {
+  if (!userStore.token && (requiresAuth || to.path === '/login')) {
+    await userStore.refreshSession()
+  }
+
+  if (requiresAuth && !userStore.token) {
     return { path: '/login', query: to.fullPath !== '/' ? { redirect: to.fullPath } : undefined }
   }
 
-  if (to.path === '/login' && token) {
+  if (to.path === '/login' && userStore.token) {
     return '/dashboard'
   }
 
-  if (allowedRoles.length > 0 && !allowedRoles.includes(role)) {
+  if (allowedRoles.length > 0 && !allowedRoles.includes(userStore.role || 'viewer')) {
     return '/applications'
   }
 

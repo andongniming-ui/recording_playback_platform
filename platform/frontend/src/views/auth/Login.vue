@@ -20,6 +20,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { NCard, NForm, NFormItem, NInput, NButton, useMessage } from 'naive-ui'
 import api from '@/api'
 import { useUserStore } from '@/store/user'
+import { extractError } from '@/utils/error'
 
 const router = useRouter()
 const route = useRoute()
@@ -41,11 +42,15 @@ async function handleLogin() {
     params.append('username', form.value.username)
     params.append('password', form.value.password)
     const resp = await api.post('/auth/login', params)
-    userStore.setUser(resp.data.access_token, form.value.username, resp.data.role || 'viewer')
+    userStore.setUser({
+      access_token: resp.data.access_token,
+      username: resp.data.username || form.value.username,
+      role: resp.data.role || 'viewer',
+    })
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/dashboard'
     router.push(redirect)
-  } catch (e: any) {
-    message.error(e.response?.data?.detail || '登录失败')
+  } catch (e: unknown) {
+    message.error(extractError(e, 'Login failed'))
   } finally {
     loading.value = false
   }

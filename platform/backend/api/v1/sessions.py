@@ -56,7 +56,6 @@ from utils.arex_recording_parser import (
 )
 from utils.system_plugin import get_plugin_for_app_id
 from utils.dynamic_sub_calls import fetch_dynamic_class_sub_calls
-from utils.dynamic_sub_calls import _fetch_dynamic_class_sub_calls
 from utils.sub_call_merge import merge_sub_calls, exclude_duplicate_database_sub_calls
 from utils.sub_call_parser import (
     _stringify_sub_call_value,

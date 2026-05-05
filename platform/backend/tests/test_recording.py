@@ -12,7 +12,6 @@ from sqlalchemy import select, update
 from api.v1.sessions import (
     _count_visible_recordings_from_arex,
     _extract_sub_calls,
-    _fetch_dynamic_class_sub_calls,
     _remove_sub_invocation_recordings,
     _sync_active_session_preview,
     _sync_from_arex_storage,
@@ -23,6 +22,7 @@ from models.audit import RecordingAuditLog
 from models.recording import Recording, RecordingSession
 from utils.governance import infer_transaction_code
 from utils.didi_plugin import DidiPlugin
+from utils.dynamic_sub_calls import _fetch_dynamic_class_sub_calls
 
 
 # ---------------------------------------------------------------------------

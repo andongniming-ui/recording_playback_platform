@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  new-api:
+    image: calciumion/new-api:latest
+    container_name: new-api
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - TZ=Asia/Shanghai
+      - SQL_DSN=root:newapi123@tcp(mysql:3306)/newapi
+      - REDIS_CONN_STRING=redis://redis:6379
+    depends_on:
+      - mysql
+      - redis
+    volumes:
+      - ./data:/data
+    networks:
+      - newapi-network
+
+  mysql:
+    image: mysql:8.0
+    container_name: new-api-mysql
+    restart: always
+    environment:
+      - MYSQL_ROOT_PASSWORD=newapi123
+      - MYSQL_DATABASE=newapi
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./mysql-data:/var/lib/mysql
+    networks:
+      - newapi-network
+    command: --default-authentication-plugin=mysql_native_password
+
+  redis:
+    image: redis:7-alpine
+    container_name: new-api-redis
+    restart: always
+    volumes:
+      - ./redis-data:/data
+    networks:
+      - newapi-network
+
+networks:
+  newapi-network:
+    driver: bridge

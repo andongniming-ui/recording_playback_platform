@@ -114,6 +114,21 @@ def test_refresh_token(client):
     assert body["username"] == "admin"
 
 
+def test_refresh_token_cookie(client):
+    login = client.post(
+        "/api/v1/auth/login",
+        data={"username": "admin", "password": "admin123"},
+    )
+    assert login.status_code == 200
+    assert "ar_refresh_token" in login.cookies
+
+    resp = client.post("/api/v1/auth/refresh")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "access_token" in body
+    assert body["username"] == "admin"
+
+
 def test_refresh_with_access_token_fails(client):
     """Using an access token as refresh token must be rejected."""
     login = client.post(

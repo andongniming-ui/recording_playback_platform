@@ -1,5 +1,7 @@
 """JWT + password hashing + role-based access control utilities."""
 from datetime import datetime, timedelta, timezone
+import hashlib
+import secrets
 from typing import Optional
 import jwt
 from jwt.exceptions import InvalidTokenError as JWTError
@@ -32,15 +34,31 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
     )
-    to_encode.update({"exp": expire, "type": "access"})
+    to_encode.update({"exp": expire, "type": "access", "jti": secrets.token_urlsafe(24)})
     return jwt.encode(to_encode, settings.secret_key, algorithm=ALGORITHM)
 
 
-def create_refresh_token(data: dict) -> str:
+def create_refresh_token(data: dict) -> tuple[str, str, datetime]:
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
-    to_encode.update({"exp": expire, "type": "refresh"})
-    return jwt.encode(to_encode, settings.secret_key, algorithm=ALGORITHM)
+    jti = secrets.token_urlsafe(24)
+    to_encode.update({"exp": expire, "type": "refresh", "jti": jti})
+    return jwt.encode(to_encode, settings.secret_key, algorithm=ALGORITHM), jti, expire.replace(tzinfo=None)
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def decode_token(token: str) -> dict:
+    return jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+
+
+def decode_access_token(token: str) -> dict:
+    payload = decode_token(token)
+    if payload.get("type") != "access":
+        raise JWTError("Not an access token")
+    return payload
 
 
 async def get_current_user(
@@ -53,9 +71,7 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
-        if payload.get("type") != "access":
-            raise credentials_exception
+        payload = decode_access_token(token)
         username: str = payload.get("sub")
         if not username:
             raise credentials_exception
@@ -66,6 +82,21 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if not user or not user.is_active:
         raise credentials_exception
+    return user
+
+
+async def get_user_for_access_token(token: str, db: AsyncSession) -> User | None:
+    try:
+        payload = decode_access_token(token)
+    except JWTError:
+        return None
+    username: str | None = payload.get("sub")
+    if not username:
+        return None
+    result = await db.execute(select(User).where(User.username == username))
+    user = result.scalar_one_or_none()
+    if not user or not user.is_active:
+        return None
     return user
 
 

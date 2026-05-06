@@ -18,7 +18,7 @@
           <n-text code>AR_SECRET_KEY</n-text> — 生产环境务必修改
         </n-descriptions-item>
         <n-descriptions-item label="默认 Agent JAR">
-          <n-text code>AR_AREX_AGENT_JAR_PATH</n-text> — 默认 /home/test/arex-agent/arex-agent.jar
+          <n-text code>AR_AREX_AGENT_JAR_PATH</n-text> — 默认 /opt/arex/arex-agent.jar
         </n-descriptions-item>
       </n-descriptions>
     </n-card>

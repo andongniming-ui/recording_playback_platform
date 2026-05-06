@@ -1,4 +1,8 @@
-const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
+const configuredApiBaseUrl = (
+  window.__AREX_RECORDER_CONFIG__?.VITE_API_BASE_URL ||
+  import.meta.env.VITE_API_BASE_URL ||
+  ''
+).trim()
 
 export const API_BASE_URL = configuredApiBaseUrl || '/api/v1'
 export const API_ORIGIN = configuredApiBaseUrl

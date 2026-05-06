@@ -61,6 +61,7 @@ async def get_db() -> AsyncSession:
 async def init_db():
     """Create all tables. Import all models before calling create_all."""
     import models.user          # noqa: F401
+    import models.auth          # noqa: F401
     import models.application   # noqa: F401
     import models.recording     # noqa: F401
     import models.test_case     # noqa: F401

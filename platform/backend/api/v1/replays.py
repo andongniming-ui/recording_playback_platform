@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.replay_context import infer_application_id_for_case_ids
 from core.replay_executor import register_ws, unregister_ws
-from core.security import require_editor, require_viewer
+from core.security import get_user_for_access_token, require_editor, require_viewer
 from database import async_session_factory, get_db
 from models.audit import ReplayAuditLog
 from models.application import Application
@@ -1114,6 +1114,16 @@ async def get_failure_analysis(
 @router.websocket("/{job_id}/ws")
 async def replay_progress_ws(job_id: int, websocket: WebSocket):
     """WebSocket endpoint for real-time replay progress."""
+    token = websocket.query_params.get("token")
+    if not token:
+        auth_header = websocket.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header[7:].strip()
+    async with async_session_factory() as db:
+        if not token or not await get_user_for_access_token(token, db):
+            await websocket.close(code=1008)
+            return
+
     await websocket.accept()
     await register_ws(job_id, websocket)
     try:

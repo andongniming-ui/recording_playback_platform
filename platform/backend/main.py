@@ -12,7 +12,7 @@ from config import settings
 from database import init_db, async_session_factory
 
 logger = logging.getLogger(__name__)
-DEFAULT_SECRET_KEY = "changeme-in-production"
+DEFAULT_SECRET_KEY = "local-dev-only-change-this-secret-key"
 
 
 def _validate_security_config():
@@ -117,7 +117,7 @@ async def _create_default_admin():
         border = "=" * 60
         msg = (
             f"\n{border}\n"
-            f"  FIRST RUN — initial admin account created\n"
+            f"  FIRST RUN: initial admin account created\n"
             f"  Username : admin\n"
             f"  Password : {password}\n"
             f"  Please log in and change the password immediately.\n"
@@ -139,55 +139,19 @@ def _is_expected_migration_error(exc: Exception) -> bool:
 
 
 async def _migrate_db():
-    """为已有表追加新列（幂等：列已存在时跳过）。"""
+    """Apply additive, versioned migrations for existing databases."""
     from sqlalchemy import text
     from database import engine
+    from migrations import ADDITIVE_MIGRATIONS
 
-    migrations = [
-        "ALTER TABLE application ADD COLUMN default_ignore_fields TEXT",
-        "ALTER TABLE application ADD COLUMN default_assertions TEXT",
-        "ALTER TABLE application ADD COLUMN transaction_mappings TEXT",
-        "ALTER TABLE application ADD COLUMN transaction_code_fields TEXT",
-        "ALTER TABLE application ADD COLUMN default_perf_threshold_ms INTEGER",
-        "ALTER TABLE application ADD COLUMN launch_mode VARCHAR(32) DEFAULT 'ssh_script'",
-        "ALTER TABLE application ADD COLUMN docker_workdir VARCHAR(512)",
-        "ALTER TABLE application ADD COLUMN docker_compose_file VARCHAR(512)",
-        "ALTER TABLE application ADD COLUMN docker_service_name VARCHAR(128)",
-        "ALTER TABLE application ADD COLUMN docker_storage_url VARCHAR(512)",
-        "ALTER TABLE application ADD COLUMN docker_agent_path VARCHAR(512)",
-        "ALTER TABLE replay_job ADD COLUMN use_sub_invocation_mocks BOOLEAN DEFAULT 0",
-        "ALTER TABLE replay_job ADD COLUMN fail_on_sub_call_diff BOOLEAN DEFAULT 0",
-        "ALTER TABLE replay_job ADD COLUMN diff_rules TEXT",
-        "ALTER TABLE replay_job ADD COLUMN assertions TEXT",
-        "ALTER TABLE replay_job ADD COLUMN perf_threshold_ms INTEGER",
-        "ALTER TABLE replay_job ADD COLUMN smart_noise_reduction BOOLEAN DEFAULT 0",
-        "ALTER TABLE replay_job ADD COLUMN ignore_order BOOLEAN DEFAULT 1",
-        "ALTER TABLE replay_job ADD COLUMN retry_count INTEGER DEFAULT 0",
-        "ALTER TABLE replay_job ADD COLUMN ignore_fields TEXT",
-        "ALTER TABLE replay_job ADD COLUMN delay_ms INTEGER DEFAULT 0",
-        "ALTER TABLE replay_job ADD COLUMN repeat_count INTEGER DEFAULT 1",
-        "ALTER TABLE replay_job ADD COLUMN header_transforms TEXT",
-        "ALTER TABLE replay_job ADD COLUMN target_host VARCHAR(512)",
-        "ALTER TABLE replay_job ADD COLUMN webhook_url VARCHAR(512)",
-        "ALTER TABLE replay_job ADD COLUMN notify_type VARCHAR(32)",
-        "ALTER TABLE replay_job ADD COLUMN heartbeat_at DATETIME",
-        "ALTER TABLE replay_job ADD COLUMN worker_id VARCHAR(128)",
-        "ALTER TABLE replay_result ADD COLUMN diff_score REAL",
-        "ALTER TABLE recording ADD COLUMN transaction_code VARCHAR(128)",
-        "ALTER TABLE recording ADD COLUMN scene_key VARCHAR(256)",
-        "ALTER TABLE recording ADD COLUMN dedupe_hash VARCHAR(64)",
-        "ALTER TABLE recording ADD COLUMN governance_status VARCHAR(32) DEFAULT 'raw'",
-        "ALTER TABLE arex_mocker ADD COLUMN created_at DATETIME",
-        "ALTER TABLE recording_session ADD COLUMN recording_filter_prefixes TEXT",
-        "ALTER TABLE test_case ADD COLUMN governance_status VARCHAR(32) DEFAULT 'candidate'",
-        "ALTER TABLE test_case ADD COLUMN transaction_code VARCHAR(128)",
-        "ALTER TABLE test_case ADD COLUMN scene_key VARCHAR(256)",
-        "ALTER TABLE replay_suite ADD COLUMN suite_type VARCHAR(32) DEFAULT 'regression'",
-        "ALTER TABLE replay_result ADD COLUMN actual_sub_calls TEXT",
-        "ALTER TABLE replay_result ADD COLUMN sub_call_diff_detail TEXT",
-    ]
     async with engine.begin() as conn:
-        for sql in migrations:
+        for migration_id, description, sql in ADDITIVE_MIGRATIONS:
+            existing = await conn.execute(
+                text("SELECT migration_id FROM schema_migration WHERE migration_id = :migration_id"),
+                {"migration_id": migration_id},
+            )
+            if existing.first():
+                continue
             try:
                 await conn.execute(text(sql))
             except Exception as exc:
@@ -196,6 +160,13 @@ async def _migrate_db():
                 else:
                     logger.error("Migration failed for statement: %s", sql)
                     raise
+            await conn.execute(
+                text(
+                    "INSERT INTO schema_migration (migration_id, description) "
+                    "VALUES (:migration_id, :description)"
+                ),
+                {"migration_id": migration_id, "description": description},
+            )
 
 
 async def _verify_db_schema():
@@ -214,7 +185,7 @@ async def _verify_db_schema():
         "replay_result": {"actual_sub_calls", "sub_call_diff_detail", "diff_score"},
         "recording": {"sub_calls", "transaction_code", "scene_key", "dedupe_hash", "governance_status"},
     }
-    required_tables = {"recording_audit_log", "replay_audit_log"}
+    required_tables = {"recording_audit_log", "replay_audit_log", "schema_migration"}
 
     async with engine.begin() as conn:
         def _inspect(sync_conn):
@@ -325,7 +296,7 @@ async def _recover_stale_running_jobs(stale_after: timedelta | None = None):
                     application_id=job.application_id,
                     level="ERROR",
                     event_type="job_recovered_failed",
-                    message="回放任务心跳过期，已在启动恢复时标记为失败",
+                    message="Replay job heartbeat expired and was marked failed during startup recovery",
                     detail=json.dumps(
                         {
                             "status": "FAILED",
@@ -427,11 +398,11 @@ app = FastAPI(
 _cors_origins = settings.cors_origins
 _allow_credentials = True
 if "*" in _cors_origins:
-    # Browsers reject credentials with wildcard origin (CORS spec §3.2).
+    # Browsers reject credentials with wildcard origins.
     # Fall back to credentialless mode and warn the operator.
     _allow_credentials = False
     logger.warning(
-        "CORS: AR_CORS_ORIGINS contains '*' — allow_credentials disabled. "
+        "CORS: AR_CORS_ORIGINS contains '*'; allow_credentials disabled. "
         "Set explicit origins (e.g. http://localhost:5173) to enable credentials."
     )
 
@@ -471,7 +442,7 @@ from api.v1 import stats as stats_api, compare as compare_api
 app.include_router(stats_api.router, prefix="/api/v1")
 app.include_router(compare_api.router, prefix="/api/v1")
 
-# ── Initialize system plugins and refresh repository capture metadata ──
+# Initialize system plugins and refresh repository capture metadata.
 from utils.system_plugin import load_plugins
 from utils.repository_capture import refresh_method_metadata
 load_plugins()

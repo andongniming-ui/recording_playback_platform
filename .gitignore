@@ -21,6 +21,13 @@ __pycache__/
 ssh_keys/
 data/
 runtime/logs/
+runtime/docker-build/
+runtime/arex-agent-download-test.jar
+runtime/offline-bundle/pip/
+runtime/offline-bundle/docker/
+runtime/offline-bundle/maven/
+runtime/offline-bundle/npm/
+runtime/offline-bundle/arex-agent/
 
 platform/frontend/node_modules/
 platform/frontend/dist/

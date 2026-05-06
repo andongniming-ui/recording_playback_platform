@@ -26,12 +26,14 @@ services:
     container_name: arex-recorder-backend
     environment:
       AR_DB_TYPE: mysql
-      AR_DB_URL: mysql+aiomysql://arex:arex123@db:3306/arex_recorder
-      AR_AREX_STORAGE_URL: http://localhost:8000
-      AR_SECRET_KEY: please-change-this
-      AR_NLS_MYSQL_HOST: 172.20.0.5
-      AR_NLS_MYSQL_USER: root
-      AR_NLS_MYSQL_PASSWORD: rootpass
+      AR_DB_URL: ${AR_DB_URL:-mysql+aiomysql://arex:arex123@db:3306/arex_recorder}
+      AR_AREX_STORAGE_URL: ${AR_AREX_STORAGE_URL:-http://backend:8000}
+      AR_AREX_AGENT_STORAGE_URL: ${AR_AREX_AGENT_STORAGE_URL:-http://host.docker.internal:8000}
+      AR_AREX_AGENT_JAR_PATH: ${AR_AREX_AGENT_JAR_PATH:-/opt/arex/arex-agent.jar}
+      AR_SECRET_KEY: ${AR_SECRET_KEY:-please-change-this-dev-only}
+      AR_NLS_MYSQL_HOST: ${AR_NLS_MYSQL_HOST:-}
+      AR_NLS_MYSQL_USER: ${AR_NLS_MYSQL_USER:-root}
+      AR_NLS_MYSQL_PASSWORD: ${AR_NLS_MYSQL_PASSWORD:-}
     ports:
       - "8000:8000"
     depends_on:
@@ -43,7 +45,7 @@ services:
       - ./backend:/app
       - ./data:/app/data
       - ./ssh_keys:/app/ssh_keys
-      - /home/test/arex-agent:/home/test/arex-agent:ro
+      - ${AREX_AGENT_HOST_DIR:-./third_party/arex-agent}:/opt/arex:ro
 
   frontend:
     build:

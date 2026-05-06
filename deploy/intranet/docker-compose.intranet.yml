@@ -1,0 +1,72 @@
+services:
+  db:
+    image: ${MYSQL_IMAGE:-mysql:8.0}
+    container_name: arex-recorder-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-arex_recorder}
+      MYSQL_USER: ${MYSQL_USER:-arex}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Shanghai
+    ports:
+      - "${MYSQL_HOST_PORT:-3307}:3306"
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+      - ./mysql/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u${MYSQL_USER:-arex}", "-p${MYSQL_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    image: ${BACKEND_IMAGE:-arex-recorder-backend:1.0.0}
+    build:
+      context: ../../platform
+      dockerfile: backend/Dockerfile
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.11-slim}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+    container_name: arex-recorder-backend
+    restart: unless-stopped
+    env_file:
+      - ${ENV_FILE:-.env.production}
+    environment:
+      AR_DB_TYPE: mysql
+      AR_DB_URL: ${AR_DB_URL}
+      AR_AREX_AGENT_JAR_PATH: /opt/arex/arex-agent.jar
+      TZ: Asia/Shanghai
+    ports:
+      - "${BACKEND_HOST_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data/backend:/app/data
+      - ./ssh_keys:/app/ssh_keys
+      - ./third_party/arex-agent/arex-agent-${AREX_AGENT_VERSION:-0.4.8}.jar:/opt/arex/arex-agent.jar:ro
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-arex-recorder-frontend:1.0.0}
+    build:
+      context: ../../platform/frontend
+      dockerfile: Dockerfile
+      args:
+        NODE_BASE_IMAGE: ${NODE_BASE_IMAGE:-node:18-bullseye-slim}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+    container_name: arex-recorder-frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+    ports:
+      - "${FRONTEND_HOST_PORT:-5173}:5173"
+    depends_on:
+      - backend
+
+volumes: {}

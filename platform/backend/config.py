@@ -11,7 +11,7 @@ DEFAULT_SSH_KEYS_DIR = ROOT_DIR / "ssh_keys"
 class Settings(BaseSettings):
     db_type: str = "sqlite"
     db_url: str = f"sqlite+aiosqlite:///{DEFAULT_SQLITE_DB}"
-    secret_key: str = "changeme-in-production"
+    secret_key: str = "local-dev-only-change-this-secret-key"
     enforce_secure_secret: bool = False
     ssh_keys_dir: str = str(DEFAULT_SSH_KEYS_DIR)
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     arex_storage_url: str = "http://127.0.0.1:8000"
     arex_agent_storage_url: str = ""   # 留空则回退到 arex_storage_url
     docker_agent_storage_url: str = "http://host.docker.internal:8000"
-    arex_agent_jar_path: str = "/home/test/arex-agent/arex-agent.jar"
+    arex_agent_jar_path: str = "/opt/arex/arex-agent.jar"
     # JWT
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 7

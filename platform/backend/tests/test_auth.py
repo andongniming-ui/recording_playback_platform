@@ -112,6 +112,11 @@ def test_refresh_token(client):
     body = resp.json()
     assert "access_token" in body
     assert body["username"] == "admin"
+    old_refresh = client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": refresh_token},
+    )
+    assert old_refresh.status_code == 401
 
 
 def test_refresh_token_cookie(client):
@@ -140,5 +145,26 @@ def test_refresh_with_access_token_fails(client):
     resp = client.post(
         "/api/v1/auth/refresh",
         json={"refresh_token": access_token},
+    )
+    assert resp.status_code == 401
+
+
+def test_logout_revokes_refresh_token(client):
+    login = client.post(
+        "/api/v1/auth/login",
+        data={"username": "admin", "password": "admin123"},
+    )
+    assert login.status_code == 200
+    refresh_token = login.json()["refresh_token"]
+
+    logout = client.post(
+        "/api/v1/auth/logout",
+        json={"refresh_token": refresh_token},
+    )
+    assert logout.status_code == 200
+
+    resp = client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": refresh_token},
     )
     assert resp.status_code == 401

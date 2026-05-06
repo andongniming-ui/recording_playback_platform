@@ -1,0 +1,8 @@
+{
+  "registry-mirrors": [
+    "http://docker-mirror.intranet.example.com"
+  ],
+  "insecure-registries": [
+    "registry.intranet.example.com"
+  ]
+}

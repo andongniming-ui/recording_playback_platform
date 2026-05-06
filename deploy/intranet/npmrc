@@ -1,0 +1,7 @@
+registry=http://npm.intranet.example.com/repository/npm/
+audit=false
+fund=false
+strict-ssl=false
+
+# If the internal registry uses a trusted company CA, prefer keeping strict-ssl=true
+# and installing that CA on the build host instead of disabling TLS checks.

@@ -1,0 +1,50 @@
+"""Additive database migrations applied at application startup.
+
+Each migration is intentionally idempotent. The startup runner records every
+applied migration in schema_migration so later boots do not repeatedly execute
+the same statement.
+"""
+
+ADDITIVE_MIGRATIONS = [
+    ("20260425_001_application_default_ignore_fields", "application.default_ignore_fields", "ALTER TABLE application ADD COLUMN default_ignore_fields TEXT"),
+    ("20260425_002_application_default_assertions", "application.default_assertions", "ALTER TABLE application ADD COLUMN default_assertions TEXT"),
+    ("20260425_003_application_transaction_mappings", "application.transaction_mappings", "ALTER TABLE application ADD COLUMN transaction_mappings TEXT"),
+    ("20260425_004_application_transaction_code_fields", "application.transaction_code_fields", "ALTER TABLE application ADD COLUMN transaction_code_fields TEXT"),
+    ("20260425_005_application_default_perf_threshold_ms", "application.default_perf_threshold_ms", "ALTER TABLE application ADD COLUMN default_perf_threshold_ms INTEGER"),
+    ("20260425_006_application_launch_mode", "application.launch_mode", "ALTER TABLE application ADD COLUMN launch_mode VARCHAR(32) DEFAULT 'ssh_script'"),
+    ("20260425_007_application_docker_workdir", "application.docker_workdir", "ALTER TABLE application ADD COLUMN docker_workdir VARCHAR(512)"),
+    ("20260425_008_application_docker_compose_file", "application.docker_compose_file", "ALTER TABLE application ADD COLUMN docker_compose_file VARCHAR(512)"),
+    ("20260425_009_application_docker_service_name", "application.docker_service_name", "ALTER TABLE application ADD COLUMN docker_service_name VARCHAR(128)"),
+    ("20260425_010_application_docker_storage_url", "application.docker_storage_url", "ALTER TABLE application ADD COLUMN docker_storage_url VARCHAR(512)"),
+    ("20260425_011_application_docker_agent_path", "application.docker_agent_path", "ALTER TABLE application ADD COLUMN docker_agent_path VARCHAR(512)"),
+    ("20260426_001_replay_job_use_sub_invocation_mocks", "replay_job.use_sub_invocation_mocks", "ALTER TABLE replay_job ADD COLUMN use_sub_invocation_mocks BOOLEAN DEFAULT 0"),
+    ("20260426_002_replay_job_fail_on_sub_call_diff", "replay_job.fail_on_sub_call_diff", "ALTER TABLE replay_job ADD COLUMN fail_on_sub_call_diff BOOLEAN DEFAULT 0"),
+    ("20260426_003_replay_job_diff_rules", "replay_job.diff_rules", "ALTER TABLE replay_job ADD COLUMN diff_rules TEXT"),
+    ("20260426_004_replay_job_assertions", "replay_job.assertions", "ALTER TABLE replay_job ADD COLUMN assertions TEXT"),
+    ("20260426_005_replay_job_perf_threshold_ms", "replay_job.perf_threshold_ms", "ALTER TABLE replay_job ADD COLUMN perf_threshold_ms INTEGER"),
+    ("20260426_006_replay_job_smart_noise_reduction", "replay_job.smart_noise_reduction", "ALTER TABLE replay_job ADD COLUMN smart_noise_reduction BOOLEAN DEFAULT 0"),
+    ("20260426_007_replay_job_ignore_order", "replay_job.ignore_order", "ALTER TABLE replay_job ADD COLUMN ignore_order BOOLEAN DEFAULT 1"),
+    ("20260426_008_replay_job_retry_count", "replay_job.retry_count", "ALTER TABLE replay_job ADD COLUMN retry_count INTEGER DEFAULT 0"),
+    ("20260426_009_replay_job_ignore_fields", "replay_job.ignore_fields", "ALTER TABLE replay_job ADD COLUMN ignore_fields TEXT"),
+    ("20260426_010_replay_job_delay_ms", "replay_job.delay_ms", "ALTER TABLE replay_job ADD COLUMN delay_ms INTEGER DEFAULT 0"),
+    ("20260426_011_replay_job_repeat_count", "replay_job.repeat_count", "ALTER TABLE replay_job ADD COLUMN repeat_count INTEGER DEFAULT 1"),
+    ("20260426_012_replay_job_header_transforms", "replay_job.header_transforms", "ALTER TABLE replay_job ADD COLUMN header_transforms TEXT"),
+    ("20260426_013_replay_job_target_host", "replay_job.target_host", "ALTER TABLE replay_job ADD COLUMN target_host VARCHAR(512)"),
+    ("20260426_014_replay_job_webhook_url", "replay_job.webhook_url", "ALTER TABLE replay_job ADD COLUMN webhook_url VARCHAR(512)"),
+    ("20260426_015_replay_job_notify_type", "replay_job.notify_type", "ALTER TABLE replay_job ADD COLUMN notify_type VARCHAR(32)"),
+    ("20260504_001_replay_job_heartbeat_at", "replay_job.heartbeat_at", "ALTER TABLE replay_job ADD COLUMN heartbeat_at DATETIME"),
+    ("20260504_002_replay_job_worker_id", "replay_job.worker_id", "ALTER TABLE replay_job ADD COLUMN worker_id VARCHAR(128)"),
+    ("20260426_016_replay_result_diff_score", "replay_result.diff_score", "ALTER TABLE replay_result ADD COLUMN diff_score REAL"),
+    ("20260427_001_recording_transaction_code", "recording.transaction_code", "ALTER TABLE recording ADD COLUMN transaction_code VARCHAR(128)"),
+    ("20260427_002_recording_scene_key", "recording.scene_key", "ALTER TABLE recording ADD COLUMN scene_key VARCHAR(256)"),
+    ("20260427_003_recording_dedupe_hash", "recording.dedupe_hash", "ALTER TABLE recording ADD COLUMN dedupe_hash VARCHAR(64)"),
+    ("20260427_004_recording_governance_status", "recording.governance_status", "ALTER TABLE recording ADD COLUMN governance_status VARCHAR(32) DEFAULT 'raw'"),
+    ("20260427_005_arex_mocker_created_at", "arex_mocker.created_at", "ALTER TABLE arex_mocker ADD COLUMN created_at DATETIME"),
+    ("20260427_006_recording_session_filter_prefixes", "recording_session.recording_filter_prefixes", "ALTER TABLE recording_session ADD COLUMN recording_filter_prefixes TEXT"),
+    ("20260427_007_test_case_governance_status", "test_case.governance_status", "ALTER TABLE test_case ADD COLUMN governance_status VARCHAR(32) DEFAULT 'candidate'"),
+    ("20260427_008_test_case_transaction_code", "test_case.transaction_code", "ALTER TABLE test_case ADD COLUMN transaction_code VARCHAR(128)"),
+    ("20260427_009_test_case_scene_key", "test_case.scene_key", "ALTER TABLE test_case ADD COLUMN scene_key VARCHAR(256)"),
+    ("20260427_010_replay_suite_suite_type", "replay_suite.suite_type", "ALTER TABLE replay_suite ADD COLUMN suite_type VARCHAR(32) DEFAULT 'regression'"),
+    ("20260428_001_replay_result_actual_sub_calls", "replay_result.actual_sub_calls", "ALTER TABLE replay_result ADD COLUMN actual_sub_calls TEXT"),
+    ("20260428_002_replay_result_sub_call_diff_detail", "replay_result.sub_call_diff_detail", "ALTER TABLE replay_result ADD COLUMN sub_call_diff_detail TEXT"),
+]

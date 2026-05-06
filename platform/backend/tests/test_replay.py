@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from starlette.websockets import WebSocketDisconnect
 from sqlalchemy import select, update
 
 from api.v1.replays import _build_result_source_context, _count_sub_call_nodes
@@ -43,6 +44,17 @@ def _create_replay_job(client, headers, case_ids, **extra):
     }
     payload.update(extra)
     return client.post("/api/v1/replays", json=payload, headers=headers)
+
+
+def test_replay_progress_ws_requires_access_token(client):
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/api/v1/replays/1/ws"):
+            pass
+
+
+def test_replay_progress_ws_accepts_valid_access_token(client, admin_token):
+    with client.websocket_connect(f"/api/v1/replays/1/ws?token={admin_token}") as ws:
+        ws.close()
 
 
 def test_create_replay_job(client, admin_headers, tc_payload):

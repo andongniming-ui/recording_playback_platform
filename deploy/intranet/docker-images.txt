@@ -1,0 +1,13 @@
+# Images required by intranet deployment.
+# Pull and mirror these when the intranet has a Docker registry.
+
+# Platform (main service)
+python:3.11-slim
+node:18-bullseye-slim
+mysql:8.0
+arex-recorder-backend:1.0.0
+arex-recorder-frontend:1.0.0
+
+# AI Gateway (optional, required for AI analysis features)
+calciumion/new-api:latest
+redis:7-alpine

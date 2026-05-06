@@ -32,3 +32,10 @@ data/arex_recorder.db
 # Claude Code work files
 .claude/
 platform/.env
+
+# Intranet deployment runtime files
+deploy/intranet/.env.production
+deploy/intranet/.env.ai-gateway
+deploy/intranet/data/
+deploy/intranet/ssh_keys/
+deploy/intranet/third_party/arex-agent/*.jar

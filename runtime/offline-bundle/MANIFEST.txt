@@ -1,0 +1,8 @@
+generated_at=2026-05-06T12:52:14+08:00
+python_packages=60
+npm_cache_files=228
+maven_repository_archive=yes
+docker_base_images_archive=yes
+docker_platform_images_archive=yes
+docker_ai_gateway_images_archive=yes
+arex_agent=yes

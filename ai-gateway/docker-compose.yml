@@ -2,14 +2,15 @@ version: '3.8'
 
 services:
   new-api:
-    image: calciumion/new-api:latest
+    image: ${NEW_API_IMAGE:-calciumion/new-api:latest}
+    pull_policy: never
     container_name: new-api
     restart: always
     ports:
-      - "3000:3000"
+      - "${NEW_API_PORT:-3000}:3000"
     environment:
       - TZ=Asia/Shanghai
-      - SQL_DSN=root:newapi123@tcp(mysql:3306)/newapi
+      - SQL_DSN=root:${MYSQL_ROOT_PASSWORD:-newapi123}@tcp(mysql:3306)/newapi
       - REDIS_CONN_STRING=redis://redis:6379
     depends_on:
       - mysql
@@ -20,11 +21,12 @@ services:
       - newapi-network
 
   mysql:
-    image: mysql:8.0
+    image: ${MYSQL_IMAGE:-mysql:8.0}
+    pull_policy: never
     container_name: new-api-mysql
     restart: always
     environment:
-      - MYSQL_ROOT_PASSWORD=newapi123
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-newapi123}
       - MYSQL_DATABASE=newapi
       - TZ=Asia/Shanghai
     volumes:
@@ -34,7 +36,8 @@ services:
     command: --default-authentication-plugin=mysql_native_password
 
   redis:
-    image: redis:7-alpine
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    pull_policy: never
     container_name: new-api-redis
     restart: always
     volumes:

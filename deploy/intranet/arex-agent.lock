@@ -1,0 +1,7 @@
+AREX_AGENT_VERSION=0.4.8
+AREX_AGENT_FILE=arex-agent-0.4.8.jar
+AREX_AGENT_TARGET_PATH=deploy/intranet/third_party/arex-agent/arex-agent-0.4.8.jar
+AREX_AGENT_SHA256=5ce0dbf9a8e5d1530510847e39f31ebb3d25ddebfbc97624d277c0ed6b083c88
+
+# Keep the approved AREX Java agent in the target path above.
+# The file itself is intentionally not committed here; copy it into the deployment bundle.

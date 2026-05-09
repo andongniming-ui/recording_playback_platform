@@ -51,7 +51,7 @@
             批量删除{{ selectedJobIds.length > 0 ? ` (${selectedJobIds.length})` : '' }}
           </n-button>
           <n-button size="small" @click="loadJobs">刷新</n-button>
-          <n-button size="small" @click="router.push('/replay/history')">回放历史</n-button>
+          <n-button size="small" @click="router.push('/replay/history')">回放任务</n-button>
         </n-space>
       </template>
       <n-data-table

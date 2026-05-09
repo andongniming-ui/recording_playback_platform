@@ -51,9 +51,9 @@
             <n-tag :type="statusTypeMap[normalizedStatus] || 'default'">
               {{ statusLabelMap[normalizedStatus] || '未知' }}
             </n-tag>
-            <n-button v-if="canEdit" size="small" @click="testConnection" :loading="testing">测试连接</n-button>
+            <n-button v-if="canEdit && !isManualAgentMode" size="small" @click="testConnection" :loading="testing">测试连接</n-button>
             <n-button
-              v-if="canEdit && normalizedStatus !== 'online'"
+              v-if="canEdit && !isManualAgentMode && normalizedStatus !== 'online'"
               size="small"
               type="primary"
               @click="mountAgent"
@@ -62,7 +62,7 @@
               挂载 Agent
             </n-button>
             <n-button
-              v-if="canEdit && normalizedStatus === 'online'"
+              v-if="canEdit && !isManualAgentMode && normalizedStatus === 'online'"
               size="small"
               type="warning"
               @click="unmountAgent"
@@ -83,7 +83,9 @@
 
       <n-card title="接入信息">
         <n-descriptions bordered :column="2" label-placement="left">
-          <n-descriptions-item label="宿主机">{{ app.ssh_user }}@{{ app.ssh_host }}:{{ app.ssh_port }}</n-descriptions-item>
+          <n-descriptions-item label="业务地址">
+            {{ app.launch_mode === 'manual_javaagent' ? app.ssh_host : `${app.ssh_user}@${app.ssh_host}:${app.ssh_port}` }}
+          </n-descriptions-item>
           <n-descriptions-item label="服务端口">{{ app.service_port }}</n-descriptions-item>
         </n-descriptions>
         <n-collapse arrow-placement="right" style="margin-top: 12px">
@@ -91,13 +93,13 @@
             <n-descriptions bordered :column="2" label-placement="left">
               <n-descriptions-item label="启动模式">{{ launchModeLabel }}</n-descriptions-item>
               <n-descriptions-item label="JVM 进程名">{{ app.jvm_process_name || '-' }}</n-descriptions-item>
-              <n-descriptions-item label="AREX App ID">{{ app.arex_app_id || app.name }}</n-descriptions-item>
-              <n-descriptions-item label="AREX Storage">{{ app.arex_storage_url || '使用全局配置' }}</n-descriptions-item>
+              <n-descriptions-item label="采集应用 ID">{{ app.arex_app_id || app.name }}</n-descriptions-item>
+              <n-descriptions-item label="采集服务">{{ app.arex_storage_url || '使用全局配置' }}</n-descriptions-item>
               <n-descriptions-item label="Docker 工作目录">{{ app.docker_workdir || '-' }}</n-descriptions-item>
               <n-descriptions-item label="Compose 文件">{{ app.docker_compose_file || 'docker-compose.yml' }}</n-descriptions-item>
               <n-descriptions-item label="Compose 服务名">{{ app.docker_service_name || '-' }}</n-descriptions-item>
               <n-descriptions-item label="Docker Storage">{{ app.docker_storage_url || '使用平台默认 Docker storage URL' }}</n-descriptions-item>
-              <n-descriptions-item label="Agent 挂载路径">{{ app.docker_agent_path || '/opt/arex/arex-agent.jar' }}</n-descriptions-item>
+              <n-descriptions-item label="Agent 挂载路径">{{ app.docker_agent_path || '/opt/traffic-agent/agent.jar' }}</n-descriptions-item>
               <n-descriptions-item label="Agent 状态">{{ statusLabelMap[normalizedStatus] || '未知' }}</n-descriptions-item>
             </n-descriptions>
           </n-collapse-item>
@@ -121,7 +123,12 @@
           </n-collapse-item>
         </n-collapse>
         <n-alert type="info" :show-icon="false" style="margin-top: 16px">
-          录制数据由目标 JVM 中的 AREX Agent 采集后同步到平台，页面仅展示已同步结果。
+          <template v-if="isManualAgentMode">
+            当前应用使用手动 Java Agent 启动方式，平台不会执行 SSH 连接测试或挂载 Agent；请确认启动参数中的采集应用 ID、采集服务地址与这里的配置一致。
+          </template>
+          <template v-else>
+            录制数据由目标 JVM 中的采集 Agent 同步到平台，页面仅展示已同步结果。
+          </template>
         </n-alert>
       </n-card>
 
@@ -150,7 +157,7 @@
             </n-button>
           </n-grid-item>
           <n-grid-item>
-            <n-button block @click="router.push('/replay/history')">查看回放历史</n-button>
+            <n-button block @click="router.push('/replay/history')">查看回放任务</n-button>
           </n-grid-item>
           <n-grid-item>
             <n-button block @click="router.push(`/testcases?application_id=${appId}`)">查看测试用例</n-button>
@@ -215,7 +222,7 @@
         <n-tab-pane name="replays" tab="最近回放任务">
           <n-card>
             <template #header-extra>
-              <n-button size="small" @click="router.push('/replay/history')">回放历史</n-button>
+              <n-button size="small" @click="router.push('/replay/history')">回放任务</n-button>
             </template>
             <n-data-table
               :columns="jobColumns"
@@ -354,6 +361,7 @@ const statusLabelMap: Record<string, string> = {
 const launchModeLabelMap: Record<string, string> = {
   ssh_script: '宿主机脚本',
   docker_compose: 'Docker Compose',
+  manual_javaagent: '手动 Java Agent',
 }
 
 const diagnosticStatusTypeMap: Record<string, NonNullable<TagProps['type']>> = {
@@ -381,6 +389,8 @@ const launchModeLabel = computed(() => {
   const value = (app.value?.launch_mode || 'ssh_script').toLowerCase()
   return launchModeLabelMap[value] || value
 })
+
+const isManualAgentMode = computed(() => (app.value?.launch_mode || '').toLowerCase() === 'manual_javaagent')
 
 const mappingPreview = computed(() => {
   if (!app.value?.transaction_mappings || !Array.isArray(app.value.transaction_mappings) || app.value.transaction_mappings.length === 0) {
@@ -428,16 +438,15 @@ const dockerTemplatePreview = computed(() => {
   const serviceName = app.value.docker_service_name || app.value.name
   const workdir = app.value.docker_workdir || '.'
   const composeFile = app.value.docker_compose_file || 'docker-compose.yml'
-  const agentHostPath = `${workdir.replace(/\/$/, '')}/.arex-recorder/arex-agent.jar`
-  const agentPath = app.value.docker_agent_path || '/opt/arex/arex-agent.jar'
+  const agentHostPath = `${workdir.replace(/\/$/, '')}/.traffic-recorder/agent.jar`
+  const agentPath = app.value.docker_agent_path || '/opt/traffic-agent/agent.jar'
   const { host: storageHost, port: storagePort } = parseStorageHostPort(
     app.value.docker_storage_url || 'http://host.docker.internal:8093',
   )
   const serviceNameSafe = serviceName
-  const appIdSafe = app.value.arex_app_id || app.value.name
-  const sampleRate = Math.max(0, Math.min(100, Math.round((app.value.sample_rate ?? 1) * 100)))
+  const overrideFile = `.traffic-recorder/docker-compose.recorder.override.yml`
   return [
-    '# Docker Compose AREX 启动模板',
+    '# Docker Compose 采集启动模板',
     `workdir: ${workdir}`,
     `compose_file: ${composeFile}`,
     `service_name: ${serviceNameSafe}`,
@@ -448,12 +457,13 @@ const dockerTemplatePreview = computed(() => {
     '      extra_hosts:',
     '        - "host.docker.internal:host-gateway"',
     '      environment:',
-    `        JAVA_TOOL_OPTIONS: "-javaagent:${agentPath} -Darex.service.name=${appIdSafe} -Darex.storage.service.host=${storageHost} -Darex.storage.service.port=${storagePort} -Darex.record.rate=${sampleRate}"`,
+    `        JAVA_TOOL_OPTIONS: "-javaagent:${agentPath} <采集启动参数>"`,
+    `        # 采集服务地址: ${storageHost}:${storagePort}`,
     '      volumes:',
     `        - "${agentHostPath}:${agentPath}:ro"`,
     '',
     'platform command:',
-    `  cd ${workdir} && docker compose -f ${composeFile} -f .arex-recorder/docker-compose.arex.override.yml up -d --force-recreate ${serviceNameSafe}`,
+    `  cd ${workdir} && docker compose -f ${composeFile} -f ${overrideFile} up -d --force-recreate ${serviceNameSafe}`,
   ].join('\n')
 })
 

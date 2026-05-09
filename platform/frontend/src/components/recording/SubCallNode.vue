@@ -118,7 +118,7 @@ const requestText = computed(() => {
       return '（请求体未采集，请在上方“SQL / 参数”查看数据库调用参数）'
     }
     if (props.item.source === 'agent') {
-      return '（AREX Agent 未采集到请求参数值；当前仅上报了方法/类型信息）'
+      return '（采集 Agent 未采集到请求参数值；当前仅上报了方法/类型信息）'
     }
     return '（未采集到请求参数）'
   }

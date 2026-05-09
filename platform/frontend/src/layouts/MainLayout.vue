@@ -20,7 +20,7 @@
           </svg>
         </div>
         <div v-if="!collapsed" class="brand-copy">
-          <div class="brand-title">AREX Recorder</div>
+          <div class="brand-title">Recorder</div>
           <div class="brand-subtitle">录制、回放、对比</div>
         </div>
       </div>
@@ -123,8 +123,8 @@ const pageTitleMap: Record<string, string> = {
   recording: '录制中心',
   testcases: '测试用例库',
   replay: '发起回放',
-  'replay-history': '回放历史',
-  results: '执行结果',
+  'replay-history': '回放任务',
+  results: '结果明细',
   suites: '回放套件',
   schedule: '定时回放',
   compare: '双环境对比',
@@ -133,7 +133,10 @@ const pageTitleMap: Record<string, string> = {
   users: '用户管理',
 }
 
-const pageTitle = computed(() => pageTitleMap[activeKey.value] || 'AREX Recorder')
+const pageTitle = computed(() => {
+  if (route.path.startsWith('/results')) return pageTitleMap.results
+  return pageTitleMap[activeKey.value] || 'Recorder'
+})
 
 const todayLabel = computed(() => {
   const now = new Date()
@@ -149,8 +152,8 @@ const menuOptions: MenuOption[] = [
   { label: '录制中心', key: 'recording', icon: () => h('span', '录') },
   { label: '测试用例库', key: 'testcases', icon: () => h('span', '例') },
   { label: '发起回放', key: 'replay', icon: () => h('span', '回') },
-  { label: '回放历史', key: 'replay-history', icon: () => h('span', '史') },
-  { label: '执行结果', key: 'results', icon: () => h('span', '结') },
+  { label: '回放任务', key: 'replay-history', icon: () => h('span', '史') },
+  { label: '结果明细', key: 'results', icon: () => h('span', '结') },
   { label: '回放套件', key: 'suites', icon: () => h('span', '套') },
   { label: '定时回放', key: 'schedule', icon: () => h('span', '定') },
   { label: '双环境对比', key: 'compare', icon: () => h('span', '比') },
@@ -159,7 +162,7 @@ const menuOptions: MenuOption[] = [
   { label: '平台指引', key: 'settings', icon: () => h('span', '指') },
 ]
 
-const firstVersionHiddenMenuKeys = new Set(['compare', 'ci', 'users', 'settings'])
+const firstVersionHiddenMenuKeys = new Set(['results', 'schedule', 'compare', 'ci', 'users', 'settings'])
 const visibleMenuOptions = computed(() =>
   menuOptions.filter((item) => !firstVersionHiddenMenuKeys.has(String(item.key))),
 )

@@ -75,7 +75,7 @@
           页面采用上下结构展示，表格列间距和左右留白已拉宽，便于大屏阅读。
         </n-alert>
         <n-alert type="warning" :show-icon="false">
-          新增 / 编辑时只需要补充宿主机、端口、服务进程和 AREX 配置即可。
+          新增 / 编辑时只需要补充业务地址、服务端口、服务进程和采集配置即可。
         </n-alert>
       </n-space>
     </n-card>
@@ -100,17 +100,25 @@
       <n-form-item label="宿主机地址" path="ssh_host" :rule="{ required: true, message: '请输入宿主机地址' }">
         <n-input v-model:value="form.ssh_host" placeholder="IP 或域名" />
       </n-form-item>
-      <n-form-item label="宿主机用户" path="ssh_user" :rule="{ required: true, message: '请输入宿主机用户' }">
+      <n-form-item
+        v-if="form.launch_mode !== 'manual_javaagent'"
+        label="宿主机用户"
+        path="ssh_user"
+        :rule="{ required: true, message: '请输入宿主机用户' }"
+      >
         <n-input v-model:value="form.ssh_user" placeholder="例如：ubuntu" />
       </n-form-item>
-      <n-form-item label="宿主机端口">
+      <n-form-item v-if="form.launch_mode !== 'manual_javaagent'" label="宿主机端口">
         <n-input-number v-model:value="form.ssh_port" />
       </n-form-item>
       <n-form-item label="启动模式">
         <n-select v-model:value="form.launch_mode" :options="launchModeOptions" />
       </n-form-item>
-      <n-alert type="info" :show-icon="false">
+      <n-alert v-if="form.launch_mode === 'docker_compose'" type="info" :show-icon="false">
         Docker 模式由平台生成启动模板并通过 docker compose 控制容器重建，不再修改 start.sh。
+      </n-alert>
+      <n-alert v-else-if="form.launch_mode === 'manual_javaagent'" type="info" :show-icon="false">
+        手动 Java Agent 模式表示业务应用已由开发自行添加 -javaagent 启动参数；平台只登记应用并用于录制同步和回放，不再执行连接测试或挂载 Agent。
       </n-alert>
       <template v-if="form.launch_mode === 'docker_compose'">
         <n-form-item label="Docker 工作目录" path="docker_workdir" :rule="{ required: true, message: '请输入 Docker 工作目录' }">
@@ -126,17 +134,17 @@
           <n-input v-model:value="form.docker_storage_url" placeholder="留空则使用平台默认 Docker storage URL" />
         </n-form-item>
         <n-form-item label="Agent 挂载路径">
-          <n-input v-model:value="form.docker_agent_path" placeholder="/opt/arex/arex-agent.jar" />
+          <n-input v-model:value="form.docker_agent_path" placeholder="/opt/traffic-agent/agent.jar" />
         </n-form-item>
       </template>
-      <n-form-item label="密钥路径">
+      <n-form-item v-if="form.launch_mode !== 'manual_javaagent'" label="密钥路径">
         <n-input
           v-model:value="form.ssh_key_path"
           placeholder="/path/to/key"
           :input-props="{ autocomplete: 'new-password' }"
         />
       </n-form-item>
-      <n-form-item label="连接密码">
+      <n-form-item v-if="form.launch_mode !== 'manual_javaagent'" label="连接密码">
         <n-input
           v-model:value="form.ssh_password"
           type="password"
@@ -147,13 +155,13 @@
       <n-form-item label="服务端口">
         <n-input-number v-model:value="form.service_port" />
       </n-form-item>
-      <n-form-item label="JVM 进程名">
+      <n-form-item v-if="form.launch_mode !== 'manual_javaagent'" label="JVM 进程名">
         <n-input v-model:value="form.jvm_process_name" placeholder="用于 pgrep 识别" />
       </n-form-item>
-      <n-form-item label="AREX App ID">
+      <n-form-item label="采集应用 ID">
         <n-input v-model:value="form.arex_app_id" />
       </n-form-item>
-      <n-form-item label="AREX Storage 地址">
+      <n-form-item label="采集服务地址">
         <n-input v-model:value="form.arex_storage_url" placeholder="留空则使用全局配置" />
       </n-form-item>
       <n-form-item label="采样率">
@@ -263,6 +271,7 @@ type AppRow = {
   id: number
   name: string
   ssh_host: string
+  launch_mode?: 'ssh_script' | 'docker_compose' | 'manual_javaagent'
   ssh_key_path?: string | null
   has_password?: boolean
   service_port: number
@@ -278,7 +287,7 @@ type AppForm = {
   ssh_host: string
   ssh_user: string
   ssh_port: number
-  launch_mode: 'ssh_script' | 'docker_compose'
+  launch_mode: 'ssh_script' | 'docker_compose' | 'manual_javaagent'
   ssh_key_path: string
   ssh_password: string
   docker_workdir: string
@@ -366,6 +375,7 @@ const statusLabelMap: Record<string, string> = {
 const launchModeOptions = [
   { label: '宿主机脚本', value: 'ssh_script' },
   { label: 'Docker Compose', value: 'docker_compose' },
+  { label: '手动 Java Agent', value: 'manual_javaagent' },
 ]
 
 const columns = computed<DataTableColumns<AppRow>>(() => [
@@ -415,11 +425,13 @@ const columns = computed<DataTableColumns<AppRow>>(() => [
       const normalizedStatus = normalizeAgentStatus(row.agent_status)
       return h(NSpace, { size: 8, wrap: true }, () => [
         h(NButton, { size: 'tiny', onClick: () => router.push(`/applications/${row.id}`) }, () => '查看详情'),
-        ...(canEdit ? [
+        ...(canEdit && row.launch_mode !== 'manual_javaagent' ? [
           h(NButton, { size: 'tiny', onClick: () => testConn(row.id) }, () => '连接测试'),
           normalizedStatus === 'online'
             ? h(NButton, { size: 'tiny', type: 'warning', onClick: () => unmount(row.id) }, () => '卸载 Agent')
             : h(NButton, { size: 'tiny', type: 'info', onClick: () => mount(row.id) }, () => '挂载 Agent'),
+          h(NButton, { size: 'tiny', onClick: () => openEdit(row) }, () => '编辑'),
+        ] : canEdit ? [
           h(NButton, { size: 'tiny', onClick: () => openEdit(row) }, () => '编辑'),
         ] : []),
         ...(userStore.role === 'admin'
@@ -451,7 +463,7 @@ function createEmptyForm(): AppForm {
     docker_compose_file: 'docker-compose.yml',
     docker_service_name: '',
     docker_storage_url: '',
-    docker_agent_path: '/opt/arex/arex-agent.jar',
+    docker_agent_path: '/opt/traffic-agent/agent.jar',
     service_port: 8080,
     jvm_process_name: '',
     arex_app_id: '',

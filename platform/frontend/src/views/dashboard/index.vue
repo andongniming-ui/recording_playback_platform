@@ -6,8 +6,8 @@
         <n-button @click="router.push('/recording')">录制中心</n-button>
         <n-button @click="router.push('/testcases')">测试用例</n-button>
         <n-button @click="router.push('/replay')">发起回放</n-button>
-        <n-button @click="router.push('/replay/history')">回放历史</n-button>
-        <n-button @click="router.push('/results')">执行结果</n-button>
+        <n-button @click="router.push('/replay/history')">回放任务</n-button>
+        <n-button @click="router.push('/results')">结果明细</n-button>
       </n-space>
     </n-card>
 

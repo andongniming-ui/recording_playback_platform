@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Query
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func, or_, update
 import asyncio
@@ -16,7 +16,7 @@ from models.replay import ReplayJob, ReplayResult
 from models.suite import SuiteCase
 from models.test_case import TestCase
 from models.user import User
-from schemas.application import ApplicationCreate, ApplicationUpdate, ApplicationOut
+from schemas.application import ApplicationCreate, ApplicationRegister, ApplicationUpdate, ApplicationOut
 from schemas.common import BulkDeleteResponse, BulkIdsRequest, PageOut
 from core.security import require_viewer, require_editor, require_admin, get_current_user
 from config import settings
@@ -64,6 +64,20 @@ def _validate_docker_launch_config(app: Application) -> None:
             status_code=422,
             detail="launch_mode=docker_compose requires: " + ", ".join(missing),
         )
+
+
+def _is_manual_javaagent_mode(app: Application) -> bool:
+    return (app.launch_mode or "").lower() == "manual_javaagent"
+
+
+def _normalize_application_data(data: dict) -> dict:
+    launch_mode = (data.get("launch_mode") or "ssh_script").lower()
+    if launch_mode == "manual_javaagent":
+        data["ssh_user"] = data.get("ssh_user") or ""
+        data["ssh_key_path"] = None
+        data["ssh_password"] = None
+        data["jvm_process_name"] = None
+    return data
 
 
 async def _delete_application_graph(db: AsyncSession, app_ids: list[int]) -> int:
@@ -200,8 +214,68 @@ async def create_application(
     _: User = Depends(require_editor),
 ):
     data = {k: (v.strip() if isinstance(v, str) else v) for k, v in payload.model_dump().items()}
+    data = _normalize_application_data(data)
     app = Application(**data)
     db.add(app)
+    await db.commit()
+    await db.refresh(app)
+    return ApplicationOut.from_orm_with_meta(app)
+
+
+@router.post("/register", response_model=ApplicationOut)
+async def register_application(
+    payload: ApplicationRegister,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_editor),
+):
+    """Register an app that is started manually with the Java agent."""
+    app_name = payload.app_name.strip()
+    host = payload.host.strip()
+    if not app_name:
+        raise HTTPException(status_code=422, detail="app_name is required")
+    if not host:
+        raise HTTPException(status_code=422, detail="host is required")
+    storage_url = payload.storage_url.strip() if payload.storage_url else None
+    storage_url = storage_url or None
+    app_id = payload.app_id.strip() if payload.app_id else ""
+    app_id = app_id or app_name
+
+    result = await db.execute(
+        select(Application).where(Application.name == app_name).order_by(Application.id).limit(1)
+    )
+    app = result.scalars().first()
+    if app is None:
+        app = Application(
+            name=app_name,
+            description=payload.description,
+            ssh_host=host,
+            ssh_user="",
+            ssh_key_path=None,
+            ssh_password=None,
+            ssh_port=22,
+            launch_mode="manual_javaagent",
+            service_port=payload.port,
+            jvm_process_name=None,
+            arex_app_id=app_id,
+            arex_storage_url=storage_url,
+            sample_rate=payload.sample_rate,
+        )
+        db.add(app)
+        response.status_code = status.HTTP_201_CREATED
+    else:
+        app.description = payload.description if payload.description is not None else app.description
+        app.ssh_host = host
+        app.ssh_user = ""
+        app.ssh_key_path = None
+        app.ssh_password = None
+        app.launch_mode = "manual_javaagent"
+        app.service_port = payload.port
+        app.jvm_process_name = None
+        app.arex_app_id = app_id
+        app.arex_storage_url = storage_url
+        app.sample_rate = payload.sample_rate
+
     await db.commit()
     await db.refresh(app)
     return ApplicationOut.from_orm_with_meta(app)
@@ -226,8 +300,9 @@ async def update_application(
 ):
     app = await _get_app_or_404(app_id, db)
     update_data = payload.model_dump(exclude_unset=True)
-    # 密码为空字符串时不覆盖原有密码（前端留空 = 不修改密码）
-    if "ssh_password" in update_data and not update_data["ssh_password"]:
+    update_data = _normalize_application_data(update_data)
+    # Empty password means "keep the existing password" unless manual mode clears SSH config.
+    if (update_data.get("launch_mode") or app.launch_mode) != "manual_javaagent" and "ssh_password" in update_data and not update_data["ssh_password"]:
         update_data.pop("ssh_password")
     for field, value in update_data.items():
         if isinstance(value, str):
@@ -263,6 +338,8 @@ async def test_connection(
 ):
     from integration import ssh_executor
     app = await _get_app_or_404(app_id, db)
+    if _is_manual_javaagent_mode(app):
+        return {"success": True, "message": "Manual agent mode does not require SSH connection testing"}
     result = await asyncio.to_thread(ssh_executor.test_connection, app)
     return result
 
@@ -275,6 +352,8 @@ async def mount_agent(
     _: User = Depends(require_editor),
 ):
     app = await _get_app_or_404(app_id, db)
+    if _is_manual_javaagent_mode(app):
+        return {"message": "Manual agent mode does not require platform-side agent mounting", "status": app.agent_status}
     app.agent_status = "mounting"
     await db.commit()
 
@@ -295,8 +374,8 @@ async def mount_agent(
                     ssh_executor.deploy_docker_agent, app, agent_jar, arex_url
                 )
             else:
-                # JDK8/legacy AREX agents may need to talk to this recorder backend
-                # proxy first instead of hitting arex-storage directly.
+                # JDK8/legacy agents may need to talk to this recorder backend
+                # proxy first instead of hitting storage directly.
                 arex_url = (
                     settings.arex_agent_storage_url
                     or app.arex_storage_url
@@ -339,6 +418,8 @@ async def unmount_agent(
 ):
     from integration import ssh_executor
     app = await _get_app_or_404(app_id, db)
+    if _is_manual_javaagent_mode(app):
+        return {"message": "Manual agent mode does not require platform-side agent unmounting", "status": app.agent_status}
 
     if (app.launch_mode or "ssh_script").lower() == "docker_compose":
         result = await asyncio.to_thread(ssh_executor.remove_docker_agent, app)
@@ -449,16 +530,16 @@ async def application_diagnostics(
     items = [
         _diagnostic_item(
             "storage_url",
-            "AREX Storage 配置",
+            "采集服务配置",
             "pass" if storage_url else "fail",
-            storage_url or "未配置 AREX Storage 地址",
+            storage_url or "未配置采集服务地址",
             {"storage_url": storage_url},
         ),
         _diagnostic_item(
             "app_id",
-            "AREX App ID",
+            "采集应用 ID",
             "pass" if app_identifier else "fail",
-            app_identifier or "未配置应用标识",
+            app_identifier or "未配置采集应用 ID",
             {"app_id": app_identifier},
         ),
         _diagnostic_item(
@@ -486,21 +567,21 @@ async def application_diagnostics(
             "agent_upload",
             "Agent 原始上报",
             "pass" if mocker_count > 0 else "warning",
-            f"已接收 {mocker_count} 条原始 mocker",
+            f"已接收 {mocker_count} 条原始上报",
             {"count": mocker_count, "latest_mocker_at": latest_mocker.isoformat() if latest_mocker else None},
         ),
         _diagnostic_item(
             "servlet_entry",
             "入口请求捕获",
             "pass" if servlet_count > 0 else "warning",
-            f"Servlet 入口记录 {servlet_count} 条",
+            f"入口记录 {servlet_count} 条",
             {"count": servlet_count},
         ),
         _diagnostic_item(
             "sub_calls",
             "子调用捕获",
             "pass" if sub_call_count > 0 else "warning",
-            f"子调用 mocker {sub_call_count} 条",
+            f"子调用记录 {sub_call_count} 条",
             {"count": sub_call_count},
         ),
     ]

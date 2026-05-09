@@ -2,7 +2,7 @@
   <div>
     <n-alert v-if="!pairs.length" type="default" :show-icon="false" style="color:#999">
       {{ replayed.length === 0
-          ? 'Agent 未上报子调用（回放时 AREX Agent 可能未启动或未配置录制模式）'
+          ? 'Agent 未上报子调用（回放时采集 Agent 可能未启动或未配置录制模式）'
           : '暂无子调用数据' }}
     </n-alert>
 

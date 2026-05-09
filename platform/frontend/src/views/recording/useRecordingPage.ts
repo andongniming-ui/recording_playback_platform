@@ -392,7 +392,7 @@ function rangeEndIso(value: number) {
 
 async function loadApps() {
   try {
-    const res = await applicationApi.list()
+    const res = await applicationApi.list({ limit: 100 })
     appOptions.value = res.data.map((app: { id: number; name: string }) => ({
       label: app.name,
       value: app.id,

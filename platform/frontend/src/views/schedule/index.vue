@@ -227,7 +227,7 @@ function handleSorterChange(sorter: any) {
 async function triggerNow(id: number) {
   try {
     await scheduleApi.trigger(id)
-    message.success('已触发，可到回放历史查看执行进度')
+    message.success('已触发，可到回放任务查看执行进度')
     router.push('/replay/history')
   } catch (error: any) { message.error(error.response?.data?.detail || '触发失败') }
 }

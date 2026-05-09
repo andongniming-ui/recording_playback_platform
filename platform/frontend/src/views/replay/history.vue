@@ -1,6 +1,6 @@
 <template>
   <n-space vertical :size="16">
-    <n-card title="回放历史">
+    <n-card title="回放任务">
       <template #header-extra>
         <n-space>
           <n-button @click="loadJobs">刷新</n-button>
@@ -242,7 +242,10 @@ async function loadJobs() {
     if (filterStatus.value) params.status = filterStatus.value
     if (dateRange.value) {
       params.created_after = new Date(dateRange.value[0]).toISOString()
-      params.created_before = new Date(dateRange.value[1]).toISOString()
+      // dateRange[1] 是当天 23:59:59，加上 23:59:59.999 = 86399999ms
+      const endOfDay = new Date(dateRange.value[1])
+      endOfDay.setHours(23, 59, 59, 999)
+      params.created_before = endOfDay.toISOString()
     }
     params.sort_by = sortState.value.columnKey
     params.sort_order = toApiSortOrder(sortState.value.order)
@@ -258,7 +261,7 @@ async function loadJobs() {
   } catch (error: any) {
     jobs.value = []
     pagination.itemCount = 0
-    message.error(error.response?.data?.detail || '加载回放历史失败')
+    message.error(error.response?.data?.detail || '加载回放任务失败')
   } finally {
     loading.value = false
   }

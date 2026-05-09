@@ -1,4 +1,5 @@
 const configuredApiBaseUrl = (
+  window.__TRAFFIC_RECORDER_CONFIG__?.VITE_API_BASE_URL ||
   window.__AREX_RECORDER_CONFIG__?.VITE_API_BASE_URL ||
   import.meta.env.VITE_API_BASE_URL ||
   ''

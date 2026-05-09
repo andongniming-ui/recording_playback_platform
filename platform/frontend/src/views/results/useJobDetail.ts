@@ -428,7 +428,7 @@ async function openReport() {
     document.body.removeChild(a)
     setTimeout(() => URL.revokeObjectURL(url), 10_000)
   } catch (error: unknown) {
-    message.error(extractError(error, 'Apply rule suggestion failed'))
+    message.error(extractError(error, '导出报告失败'))
   }
 }
 
@@ -462,7 +462,7 @@ async function loadAuditLogs() {
   } catch (error: unknown) {
     auditLogs.value = []
     auditPagination.itemCount = 0
-    message.error(extractError(error, 'Export report failed'))
+    message.error(extractError(error, '加载审计日志失败'))
   } finally {
     auditLoading.value = false
   }
@@ -479,7 +479,7 @@ async function loadPage() {
       appName.value = '-'
     }
   } catch (error: unknown) {
-    message.error(extractError(error, 'Load replay audit logs failed'))
+    message.error(extractError(error, '加载回放任务失败'))
   }
   await Promise.all([loadResults(), loadAnalysis(), loadAuditLogs()])
 }
@@ -506,7 +506,7 @@ async function loadResults() {
   } catch (error: unknown) {
     results.value = []
     resultPagination.itemCount = 0
-    message.error(extractError(error, 'Load replay job failed'))
+    message.error(extractError(error, '加载回放结果失败'))
   } finally {
     resultsLoading.value = false
   }

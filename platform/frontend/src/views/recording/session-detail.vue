@@ -59,7 +59,7 @@
 
     <n-card title="录制数据">
       <n-alert type="info" :show-icon="false" style="margin-bottom: 12px">
-        创建会话后先点击“开始录制”，真实请求正常跑起来后再点击“停止录制”。平台会自动从 arex-storage 收集这次录制的数据并把状态推进到“收集中 / 已完成”。
+        创建会话后先点击“开始录制”，真实请求正常跑起来后再点击“停止录制”。平台会自动从采集服务收集这次录制的数据并把状态推进到“收集中 / 已完成”。
       </n-alert>
       <template #header-extra>
         <n-space>

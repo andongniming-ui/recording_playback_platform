@@ -1,6 +1,6 @@
 <template>
   <div style="display: flex; justify-content: center; align-items: center; height: 100vh; background: #f5f5f5">
-    <n-card title="AREX Recorder 登录" style="width: 400px">
+    <n-card title="Recorder 登录" style="width: 400px">
       <n-form ref="formRef" :model="form" :rules="rules">
         <n-form-item label="用户名" path="username">
           <n-input v-model:value="form.username" placeholder="请输入用户名" />

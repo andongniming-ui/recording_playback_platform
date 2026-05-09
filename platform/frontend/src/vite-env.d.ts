@@ -9,6 +9,9 @@ interface ImportMeta {
 }
 
 interface Window {
+  __TRAFFIC_RECORDER_CONFIG__?: {
+    VITE_API_BASE_URL?: string
+  }
   __AREX_RECORDER_CONFIG__?: {
     VITE_API_BASE_URL?: string
   }

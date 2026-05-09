@@ -19,7 +19,7 @@
           <n-button type="primary" @click="loadDiff">查看 Diff</n-button>
           <n-alert v-if="!diffData" type="info" :show-icon="false" style="font-size:13px;line-height:2">
             <strong>使用步骤：</strong><br />
-            ① 在「执行结果」页找到某条回放记录，复制其 <strong>结果 ID</strong>（Result ID）<br />
+            ① 在「结果明细」页找到某条回放记录，复制其 <strong>结果 ID</strong>（Result ID）<br />
             ② 将 ID 填入上方输入框，点击「查看 Diff」<br />
             ③ 即可对比期望响应与实际响应，并查看差异字段详情
           </n-alert>

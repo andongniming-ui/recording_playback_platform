@@ -46,11 +46,11 @@ class ApplicationBase(BaseModel):
     name: str
     description: Optional[str] = None
     ssh_host: str
-    ssh_user: str
+    ssh_user: Optional[str] = None
     ssh_key_path: Optional[str] = None
     ssh_password: Optional[str] = None
     ssh_port: int = 22
-    launch_mode: Literal["ssh_script", "docker_compose"] = "ssh_script"
+    launch_mode: Literal["ssh_script", "docker_compose", "manual_javaagent"] = "ssh_script"
     docker_workdir: Optional[str] = None
     docker_compose_file: Optional[str] = None
     docker_service_name: Optional[str] = None
@@ -92,6 +92,8 @@ class ApplicationBase(BaseModel):
 class ApplicationCreate(ApplicationBase):
     @model_validator(mode="after")
     def _validate_launch_mode_requirements(self):
+        if self.launch_mode != "manual_javaagent" and not (self.ssh_user or "").strip():
+            raise ValueError("ssh_user is required unless launch_mode=manual_javaagent")
         if self.launch_mode == "docker_compose":
             missing = []
             if not self.docker_workdir:
@@ -111,12 +113,22 @@ class ApplicationUpdate(ApplicationBase):
     ssh_user: Optional[str] = None
 
 
+class ApplicationRegister(BaseModel):
+    app_name: str = Field(min_length=1, max_length=256)
+    app_id: Optional[str] = Field(default=None, max_length=128)
+    host: str = Field(min_length=1, max_length=256)
+    port: int = Field(default=8080, ge=1, le=65535)
+    storage_url: Optional[str] = Field(default=None, max_length=512)
+    sample_rate: float = Field(default=1.0, ge=0, le=1)
+    description: Optional[str] = None
+
+
 class ApplicationOut(BaseModel):
     id: int
     name: str
     description: Optional[str]
     ssh_host: str
-    ssh_user: str
+    ssh_user: Optional[str] = None
     ssh_port: int
     launch_mode: str = "ssh_script"
     docker_workdir: Optional[str] = None
@@ -124,7 +136,7 @@ class ApplicationOut(BaseModel):
     docker_service_name: Optional[str] = None
     docker_storage_url: Optional[str] = None
     docker_agent_path: Optional[str] = None
-    has_password: bool = False     # 是否已设置 SSH 密码（不返回明文）
+    has_password: bool = False     # Whether an SSH password is set; never returns plaintext.
     service_port: int
     jvm_process_name: Optional[str]
     agent_status: str

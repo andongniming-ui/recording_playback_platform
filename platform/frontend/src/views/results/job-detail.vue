@@ -2,7 +2,7 @@
   <n-space vertical :size="16">
     <n-space justify="space-between" align="center">
       <n-breadcrumb>
-        <n-breadcrumb-item @click="router.push('/replay/history')">回放历史</n-breadcrumb-item>
+        <n-breadcrumb-item @click="router.push('/replay/history')">回放任务</n-breadcrumb-item>
         <n-breadcrumb-item>任务 #{{ jobId }}</n-breadcrumb-item>
       </n-breadcrumb>
       <n-space>

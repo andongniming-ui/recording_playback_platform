@@ -263,7 +263,7 @@
           v-model:value="resultFilter"
           :options="resultFilterOptions"
           clearable
-          placeholder="按执行结果筛选"
+          placeholder="按结果明细筛选"
           style="width: 180px"
           @update:value="reloadResultsFromFirstPage"
         />

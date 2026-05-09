@@ -112,6 +112,62 @@ def test_create_application_docker_mode_requires_core_fields(client, admin_heade
     assert "docker_service_name" in resp.text
 
 
+def test_register_application_creates_manual_javaagent_app(client, admin_headers):
+    payload = {
+        "app_name": "fitness-sat",
+        "app_id": "fitness-sat",
+        "host": "128.196.162.10",
+        "port": 8080,
+        "storage_url": "http://128.196.162.2:18000",
+        "sample_rate": 1,
+    }
+    resp = client.post("/api/v1/applications/register", json=payload, headers=admin_headers)
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["name"] == "fitness-sat"
+    assert body["launch_mode"] == "manual_javaagent"
+    assert body["ssh_host"] == "128.196.162.10"
+    assert body["ssh_user"] == ""
+    assert body["service_port"] == 8080
+    assert body["arex_app_id"] == "fitness-sat"
+    assert body["arex_storage_url"] == "http://128.196.162.2:18000"
+
+
+def test_register_application_updates_existing_app_by_name(client, admin_headers):
+    first = client.post(
+        "/api/v1/applications/register",
+        json={
+            "app_name": "fitness-sat",
+            "host": "128.196.162.10",
+            "port": 8080,
+        },
+        headers=admin_headers,
+    )
+    assert first.status_code == 201, first.text
+    app_id = first.json()["id"]
+
+    second = client.post(
+        "/api/v1/applications/register",
+        json={
+            "app_name": "fitness-sat",
+            "app_id": "fitness-sat-v2",
+            "host": "128.196.162.11",
+            "port": 18080,
+            "storage_url": "http://128.196.162.2:18000",
+        },
+        headers=admin_headers,
+    )
+    assert second.status_code == 200, second.text
+    body = second.json()
+    assert body["id"] == app_id
+    assert body["ssh_host"] == "128.196.162.11"
+    assert body["service_port"] == 18080
+    assert body["arex_app_id"] == "fitness-sat-v2"
+
+    listed = client.get("/api/v1/applications", headers=admin_headers)
+    assert len([item for item in listed.json() if item["name"] == "fitness-sat"]) == 1
+
+
 def test_list_applications(client, admin_headers):
     client.post("/api/v1/applications", json=APP_PAYLOAD, headers=admin_headers)
     resp = client.get("/api/v1/applications", headers=admin_headers)

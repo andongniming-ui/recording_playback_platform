@@ -5,8 +5,8 @@
         系统配置通过环境变量或 <code>.env</code> 文件设置，修改后需重启后端服务。
       </n-alert>
       <n-descriptions bordered :column="1" style="margin-top:16px">
-        <n-descriptions-item label="AREX Storage URL">
-          <n-text code>AR_AREX_STORAGE_URL</n-text> — 默认 http://127.0.0.1:8000
+        <n-descriptions-item label="采集服务 URL">
+          默认 http://127.0.0.1:8000，具体变量名以部署包配置文件为准
         </n-descriptions-item>
         <n-descriptions-item label="数据库类型">
           <n-text code>AR_DB_TYPE</n-text> — sqlite / mysql
@@ -18,7 +18,7 @@
           <n-text code>AR_SECRET_KEY</n-text> — 生产环境务必修改
         </n-descriptions-item>
         <n-descriptions-item label="默认 Agent JAR">
-          <n-text code>AR_AREX_AGENT_JAR_PATH</n-text> — 默认 /opt/arex/arex-agent.jar
+          默认由部署包挂载，具体路径以部署包配置文件为准
         </n-descriptions-item>
       </n-descriptions>
     </n-card>

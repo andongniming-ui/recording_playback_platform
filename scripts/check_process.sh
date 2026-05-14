@@ -1,6 +1,7 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 echo "=== python3 processes ==="
-ps aux | grep python3 | grep -v grep
+ps aux | grep python3 | grep -v grep || true
 echo "=== frontend ==="
 curl -s -o /dev/null -w "%{http_code}" http://localhost:5173/
 echo ""

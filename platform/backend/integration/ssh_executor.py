@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 import json
 import paramiko
+from config import settings
 from models.application import Application
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,19 @@ logger = logging.getLogger(__name__)
 def _build_client(app: Application, retries: int = 3) -> paramiko.SSHClient:
     """Build SSH client with retry mechanism."""
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    if settings.ssh_known_hosts_path:
+        client.load_host_keys(settings.ssh_known_hosts_path)
+    else:
+        client.load_system_host_keys()
+
+    if settings.ssh_strict_host_key_checking:
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    else:
+        logger.warning(
+            "SSH strict host key checking is disabled; automatically trusting host %s",
+            app.ssh_host,
+        )
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
     connect_kwargs: dict = {
         "hostname": app.ssh_host,
@@ -64,7 +77,7 @@ def discover_pid(app: Application) -> int | None:
     try:
         client = _build_client(app)
         name = app.jvm_process_name
-        _, stdout, stderr = client.exec_command(f"pgrep -f '{name}'")
+        _, stdout, stderr = client.exec_command(f"pgrep -f {shlex.quote(name)}")
         out = stdout.read().decode().strip()
         err = stderr.read().decode().strip()
         client.close()

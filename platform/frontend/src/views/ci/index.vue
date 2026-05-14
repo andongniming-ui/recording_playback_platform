@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <n-space vertical :size="16">
     <n-card title="API Token 管理">
       <template #header-extra>
@@ -53,7 +53,7 @@
   </n-modal>
 
   <!-- 显示新 Token -->
-  <n-modal v-model:show="showToken" title="Token 已生成" preset="card" style="width:500px">
+  <n-modal v-model:show="showToken" title="Token 已生成" preset="card" style="width:500px" @after-leave="clearNewToken">
     <n-alert type="warning" title="请立即保存！Token 仅显示一次">
       <n-input :value="newToken" readonly type="text" style="font-family:monospace;margin-top:8px" />
     </n-alert>
@@ -162,8 +162,12 @@ async function revokeToken(id: number) {
 function copyToken() {
   navigator.clipboard
     .writeText(newToken.value)
-    .then(() => message.success('已复制到剪贴板'))
-    .catch(() => message.error('复制失败，请手动复制'))
+    .then(() => message.success('Copied'))
+    .catch(() => message.error('Copy failed, copy manually'))
+}
+
+function clearNewToken() {
+  newToken.value = ''
 }
 
 onMounted(load)

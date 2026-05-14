@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.replay_context import infer_application_id_for_case_ids
 from core.replay_executor import register_ws, unregister_ws
 from core.security import get_user_for_access_token, require_editor, require_viewer
-from database import async_session_factory, get_db
+import database
+from database import get_db
 from models.audit import ReplayAuditLog
 from models.application import Application
 from models.recording import Recording
@@ -1119,7 +1120,7 @@ async def replay_progress_ws(job_id: int, websocket: WebSocket):
         auth_header = websocket.headers.get("authorization", "")
         if auth_header.lower().startswith("bearer "):
             token = auth_header[7:].strip()
-    async with async_session_factory() as db:
+    async with database.async_session_factory() as db:
         if not token or not await get_user_for_access_token(token, db):
             await websocket.close(code=1008)
             return
@@ -1127,7 +1128,7 @@ async def replay_progress_ws(job_id: int, websocket: WebSocket):
     await websocket.accept()
     await register_ws(job_id, websocket)
     try:
-        async with async_session_factory() as db:
+        async with database.async_session_factory() as db:
             result = await db.execute(select(ReplayJob).where(ReplayJob.id == job_id))
             job = result.scalar_one_or_none()
             if job:

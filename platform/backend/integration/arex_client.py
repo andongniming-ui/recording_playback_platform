@@ -1,9 +1,36 @@
 """
 AREX Storage REST API client.
 Replaces repeater_client.py — no Hessian, no SFTP, pure async HTTP.
+
+Connection pool design
+----------------------
+Every call to  ``async with ArexClient(url) as c``  in the old code created a
+brand-new httpx.AsyncClient and closed it on exit.  When the frontend polls
+``GET /sessions?refresh_active_count=true`` every 10 s and there are 20+
+active sessions, this produces hundreds of short-lived TCP connections per
+minute, rapidly exhausting the process's file-descriptor limit (Errno 24:
+Too many open files) and taking down the whole uvicorn worker.
+
+The fix is a module-level dict that maps ``base_url → httpx.AsyncClient``.
+Instances are created on first use and **never closed inside a request**.
+They are closed only during application shutdown via ``close_all_clients()``.
+
+Usage
+-----
+* Short-lived context manager style (backward compatible):
+    async with ArexClient(url) as client:
+        result = await client.query_recordings(...)
+
+* Long-lived singleton style (recommended in background tasks):
+    client = ArexClient.get_shared(url)
+    result = await client.query_recordings(...)
+
+* Application shutdown (call from lifespan finally block):
+    await ArexClient.close_all_clients()
 """
 import httpx
 from datetime import datetime, timezone
+from typing import ClassVar
 
 
 class ArexClientError(Exception):
@@ -14,22 +41,77 @@ class ArexClientError(Exception):
 class ArexClient:
     """Async HTTP client for arex-storage REST API."""
 
+    # ------------------------------------------------------------------ #
+    # Global connection-pool registry (url → shared AsyncClient)
+    # ------------------------------------------------------------------ #
+    _pool: ClassVar[dict[str, "ArexClient"]] = {}
+
+    @classmethod
+    def get_shared(cls, base_url: str) -> "ArexClient":
+        """Return (or lazily create) the shared ArexClient for *base_url*.
+
+        The returned client is backed by a persistent httpx.AsyncClient that
+        is reused across all callers.  It must NOT be closed by the caller —
+        use ``close_all_clients()`` during application shutdown instead.
+        """
+        key = base_url.rstrip("/")
+        if key not in cls._pool:
+            instance = cls(key)
+            instance._client = httpx.AsyncClient(
+                timeout=30.0,
+                limits=httpx.Limits(
+                    max_connections=20,
+                    max_keepalive_connections=10,
+                    keepalive_expiry=30,
+                ),
+            )
+            cls._pool[key] = instance
+        return cls._pool[key]
+
+    @classmethod
+    async def close_all_clients(cls) -> None:
+        """Close every pooled httpx.AsyncClient.  Call once at app shutdown."""
+        for instance in list(cls._pool.values()):
+            if instance._client is not None:
+                await instance._client.aclose()
+                instance._client = None
+        cls._pool.clear()
+
+    # ------------------------------------------------------------------ #
+    # Instance lifecycle
+    # ------------------------------------------------------------------ #
+
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
         self._client: httpx.AsyncClient | None = None
+        # Track whether *this* instance owns its client (i.e. it was NOT
+        # obtained via get_shared and should be closed on __aexit__).
+        self._owns_client: bool = False
 
     async def __aenter__(self):
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=30.0)
+            # Backward-compat: stand-alone ``async with ArexClient(url)`` use.
+            # Create a private client that will be closed on __aexit__.
+            self._client = httpx.AsyncClient(
+                timeout=30.0,
+                limits=httpx.Limits(
+                    max_connections=10,
+                    max_keepalive_connections=5,
+                    keepalive_expiry=30,
+                ),
+            )
+            self._owns_client = True
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
-        await self.aclose()
+        if self._owns_client:
+            await self.aclose()
 
     async def aclose(self) -> None:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+        self._owns_client = False
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -129,11 +211,8 @@ class ArexClient:
         GET /api/storage/record/saveTest/
         """
         try:
-            if self._client is not None:
-                resp = await self._client.get(f"{self.base_url}/api/storage/record/saveTest/")
-            else:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    resp = await client.get(f"{self.base_url}/api/storage/record/saveTest/")
+            client = self._get_client()
+            resp = await client.get(f"{self.base_url}/api/storage/record/saveTest/")
             return resp.status_code == 200
         except Exception:
             return False
@@ -141,6 +220,23 @@ class ArexClient:
     # ------------------------------------------------------------------ #
     # Private helpers
     # ------------------------------------------------------------------ #
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """Return the active httpx client, raising if not initialised."""
+        if self._client is not None:
+            return self._client
+        # Caller forgot to use ``async with`` or ``get_shared`` — create a
+        # temporary client so we don't crash, but warn in logs.
+        import logging
+        logging.getLogger(__name__).warning(
+            "ArexClient._get_client called without an active httpx client "
+            "(base_url=%s). Creating a temporary client — prefer using "
+            "ArexClient.get_shared() or 'async with ArexClient(url)' instead.",
+            self.base_url,
+        )
+        self._client = httpx.AsyncClient(timeout=30.0)
+        self._owns_client = True
+        return self._client
 
     @staticmethod
     def _to_epoch_ms(dt: datetime) -> int:
@@ -155,19 +251,11 @@ class ArexClient:
         """POST to arex-storage; raise ArexClientError on failure."""
         url = f"{self.base_url}{path}"
         try:
-            if self._client is not None:
-                resp = await self._client.post(
-                    url,
-                    json=body,
-                    headers={"Content-Type": "application/json"},
-                )
-            else:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    resp = await client.post(
-                        url,
-                        json=body,
-                        headers={"Content-Type": "application/json"},
-                    )
+            resp = await self._get_client().post(
+                url,
+                json=body,
+                headers={"Content-Type": "application/json"},
+            )
         except httpx.RequestError as e:
             raise ArexClientError(f"Network error calling {url}: {e}") from e
         if resp.status_code != 200:
@@ -180,11 +268,7 @@ class ArexClient:
         """GET from arex-storage; raise ArexClientError on failure."""
         url = f"{self.base_url}{path}"
         try:
-            if self._client is not None:
-                resp = await self._client.get(url)
-            else:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    resp = await client.get(url)
+            resp = await self._get_client().get(url)
         except httpx.RequestError as e:
             raise ArexClientError(f"Network error calling {url}: {e}") from e
         if resp.status_code != 200:

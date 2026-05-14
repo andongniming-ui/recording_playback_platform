@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager, suppress
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI
@@ -13,10 +13,14 @@ from database import init_db, async_session_factory
 
 logger = logging.getLogger(__name__)
 DEFAULT_SECRET_KEY = "local-dev-only-change-this-secret-key"
+WEAK_SECRET_KEYS = {
+    DEFAULT_SECRET_KEY,
+    "please-change-this-dev-only",
+}
 
 
 def _validate_security_config():
-    if settings.secret_key != DEFAULT_SECRET_KEY:
+    if settings.secret_key not in WEAK_SECRET_KEYS:
         return
     message = (
         "AR_SECRET_KEY is still using the default development value. "
@@ -348,6 +352,29 @@ async def _cleanup_old_audit_logs(retention_days: int = 30):
     )
 
 
+async def _cleanup_expired_refresh_tokens(retention_days: int | None = None):
+    from sqlalchemy import delete, or_
+    from models.auth import RefreshToken
+
+    retention_days = (
+        settings.refresh_token_cleanup_retention_days
+        if retention_days is None
+        else retention_days
+    )
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=max(retention_days, 0))
+    async with async_session_factory() as db:
+        result = await db.execute(
+            delete(RefreshToken).where(
+                or_(
+                    RefreshToken.expires_at < cutoff,
+                    RefreshToken.revoked_at < cutoff,
+                )
+            )
+        )
+        await db.commit()
+    logger.info("Cleaned expired refresh tokens: deleted=%s", result.rowcount)
+
+
 async def _audit_log_cleanup_loop():
     from utils.timezone import now_beijing
 
@@ -359,6 +386,16 @@ async def _audit_log_cleanup_loop():
             await _cleanup_old_audit_logs()
         except Exception:
             logger.exception("Failed to clean old audit logs")
+
+
+async def _refresh_token_cleanup_loop():
+    interval = max(settings.refresh_token_cleanup_interval_hours, 1) * 3600
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await _cleanup_expired_refresh_tokens()
+        except Exception:
+            logger.exception("Failed to clean expired refresh tokens")
 
 
 @asynccontextmanager
@@ -375,17 +412,26 @@ async def lifespan(app: FastAPI):
     await load_all_schedules()
     scheduler.start()
     audit_cleanup_task = asyncio.create_task(_audit_log_cleanup_loop())
+    refresh_token_cleanup_task = asyncio.create_task(_refresh_token_cleanup_loop())
     stale_replay_job_task = asyncio.create_task(_stale_replay_job_recovery_loop())
     try:
         yield
     finally:
         audit_cleanup_task.cancel()
+        refresh_token_cleanup_task.cancel()
         stale_replay_job_task.cancel()
         with suppress(asyncio.CancelledError):
             await audit_cleanup_task
         with suppress(asyncio.CancelledError):
+            await refresh_token_cleanup_task
+        with suppress(asyncio.CancelledError):
             await stale_replay_job_task
         scheduler.shutdown(wait=False)
+        # Close all shared httpx connection-pool instances gracefully.
+        from integration.arex_client import ArexClient
+        await ArexClient.close_all_clients()
+        from api.arex_proxy import _close_proxy_client
+        await _close_proxy_client()
 
 
 app = FastAPI(
@@ -457,7 +503,7 @@ async def health():
 
     checks = {
         "database": {"status": "unknown"},
-        "arex_storage": {"status": "unknown", "url": settings.arex_storage_url},
+        "arex_storage": {"status": "unknown"},
     }
 
     try:
@@ -465,18 +511,19 @@ async def health():
             await conn.execute(text("SELECT 1"))
         checks["database"] = {"status": "ok"}
     except Exception as exc:
-        checks["database"] = {"status": "error", "message": str(exc)}
+        checks["database"] = {"status": "error"}
+        if settings.debug:
+            checks["database"]["message"] = str(exc)
 
     try:
         async with ArexClient(settings.arex_storage_url) as client:
             reachable = await client.health_check()
         checks["arex_storage"]["status"] = "ok" if reachable else "error"
     except Exception as exc:
-        checks["arex_storage"] = {
-            "status": "error",
-            "url": settings.arex_storage_url,
-            "message": str(exc),
-        }
+        checks["arex_storage"] = {"status": "error"}
+        if settings.debug:
+            checks["arex_storage"]["url"] = settings.arex_storage_url
+            checks["arex_storage"]["message"] = str(exc)
 
     status = "ok" if all(item["status"] == "ok" for item in checks.values()) else "degraded"
     return {"status": status, "version": "1.0.0", "checks": checks}

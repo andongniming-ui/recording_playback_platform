@@ -1,15 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 OUT_DIR_INPUT="${1:-${ROOT_DIR}/runtime/offline-bundle}"
-mkdir -p "${OUT_DIR_INPUT}"
-OUT_DIR="$(cd "${OUT_DIR_INPUT}" && pwd)"
+mkdir -p "$(dirname "${OUT_DIR_INPUT}")"
+FINAL_OUT_DIR="$(cd "$(dirname "${OUT_DIR_INPUT}")" && pwd)/$(basename "${OUT_DIR_INPUT}")"
+WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/arex-offline-bundle.XXXXXX")"
+OUT_DIR="${WORK_ROOT}/bundle"
 FRONTEND_DIR="${ROOT_DIR}/platform/frontend"
 AGENT_JAR="${2:-}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+PIP_DEFAULT_TIMEOUT="${PIP_DEFAULT_TIMEOUT:-120}"
+PIP_RETRIES="${PIP_RETRIES:-10}"
+PIP_DOWNLOAD_MODE="${PIP_DOWNLOAD_MODE:-auto}"
 AREX_AGENT_VERSION="${AREX_AGENT_VERSION:-0.4.8}"
 AREX_AGENT_URL="${AREX_AGENT_URL:-https://github.com/arextest/arex-agent-java/releases/download/v${AREX_AGENT_VERSION}/arex-agent.jar}"
+
+cleanup() {
+  rm -rf "${WORK_ROOT}"
+}
+trap cleanup EXIT
 
 ensure_image() {
   local image="$1"
@@ -19,23 +30,39 @@ ensure_image() {
   docker pull "${image}"
 }
 
-mkdir -p "${OUT_DIR}/pip" "${OUT_DIR}/npm" "${OUT_DIR}/maven" "${OUT_DIR}/docker" "${OUT_DIR}/arex-agent"
+mkdir -p "${OUT_DIR}/pip" "${OUT_DIR}/npm" "${OUT_DIR}/frontend" "${OUT_DIR}/maven" "${OUT_DIR}/docker" "${OUT_DIR}/arex-agent"
 
-if command -v docker >/dev/null 2>&1; then
+if [[ "${PIP_DOWNLOAD_MODE}" == "docker" ]] || { [[ "${PIP_DOWNLOAD_MODE}" == "auto" ]] && command -v docker >/dev/null 2>&1; }; then
   ensure_image python:3.11-slim
   docker run --rm \
     -v "${ROOT_DIR}/platform/requirements.txt:/requirements.txt:ro" \
     -v "${OUT_DIR}/pip:/wheelhouse" \
     python:3.11-slim \
-    python -m pip download --dest /wheelhouse --requirement /requirements.txt
+    python -m pip download \
+      --default-timeout "${PIP_DEFAULT_TIMEOUT}" \
+      --retries "${PIP_RETRIES}" \
+      --dest /wheelhouse \
+      --requirement /requirements.txt
+elif [[ "${PIP_DOWNLOAD_MODE}" == "host" || "${PIP_DOWNLOAD_MODE}" == "auto" ]]; then
+  "${PYTHON_BIN}" -m pip download \
+    --default-timeout "${PIP_DEFAULT_TIMEOUT}" \
+    --retries "${PIP_RETRIES}" \
+    -r "${ROOT_DIR}/platform/requirements.txt" \
+    -d "${OUT_DIR}/pip"
 else
-  "${PYTHON_BIN}" -m pip download -r "${ROOT_DIR}/platform/requirements.txt" -d "${OUT_DIR}/pip"
+  echo "Invalid PIP_DOWNLOAD_MODE=${PIP_DOWNLOAD_MODE}; expected auto, docker, or host" >&2
+  exit 2
 fi
 
 if [[ -f "${FRONTEND_DIR}/package-lock.json" ]]; then
   (cd "${FRONTEND_DIR}" && npm ci --cache "${OUT_DIR}/npm" --prefer-offline --no-audit --no-fund)
+  (cd "${FRONTEND_DIR}" && npm run build)
   cp "${FRONTEND_DIR}/package.json" "${OUT_DIR}/npm/package.json"
   cp "${FRONTEND_DIR}/package-lock.json" "${OUT_DIR}/npm/package-lock.json"
+  cp -a "${FRONTEND_DIR}/dist" "${OUT_DIR}/frontend/dist"
+  cp -a "${FRONTEND_DIR}/node_modules" "${OUT_DIR}/frontend/node_modules"
+  (cd "${FRONTEND_DIR}" && sha256sum package-lock.json) > "${OUT_DIR}/frontend/package-lock.sha256"
+  (cd "${FRONTEND_DIR}" && find dist -type f -print0 | sort -z | xargs -0 sha256sum) > "${OUT_DIR}/frontend/dist.sha256"
   tar -C "${OUT_DIR}" -czf "${OUT_DIR}/npm-cache.tgz" npm
 fi
 
@@ -51,7 +78,7 @@ fi
 ensure_image python:3.11-slim
 ensure_image node:18-bullseye-slim
 ensure_image mysql:8.0
-"${ROOT_DIR}/deploy/intranet/build-images-from-bundle.sh" "${OUT_DIR}"
+"${SCRIPT_DIR}/build-images-from-bundle.sh" "${OUT_DIR}"
 
 if [[ -n "${AGENT_JAR}" ]]; then
   cp "${AGENT_JAR}" "${OUT_DIR}/arex-agent/arex-agent-${AREX_AGENT_VERSION}.jar"
@@ -59,6 +86,17 @@ else
   curl -L --fail --retry 5 --connect-timeout 20 --output "${OUT_DIR}/arex-agent/arex-agent-${AREX_AGENT_VERSION}.jar" "${AREX_AGENT_URL}"
 fi
 (cd "${OUT_DIR}/arex-agent" && sha256sum "arex-agent-${AREX_AGENT_VERSION}.jar" > "arex-agent-${AREX_AGENT_VERSION}.jar.sha256")
+
+if [[ -f "${SCRIPT_DIR}/arex-agent.lock" ]]; then
+  expected_agent_sha="$(grep -E '^AREX_AGENT_SHA256=' "${SCRIPT_DIR}/arex-agent.lock" | tail -n 1 | cut -d '=' -f 2- || true)"
+  if [[ -n "${expected_agent_sha}" ]]; then
+    actual_agent_sha="$(sha256sum "${OUT_DIR}/arex-agent/arex-agent-${AREX_AGENT_VERSION}.jar" | awk '{print $1}')"
+    [[ "${actual_agent_sha}" == "${expected_agent_sha}" ]] || {
+      echo "AREX agent sha256 mismatch. Expected ${expected_agent_sha}, got ${actual_agent_sha}" >&2
+      exit 1
+    }
+  fi
+fi
 
 cat > "${OUT_DIR}/MANIFEST.txt" <<EOF
 generated_at=$(date -Iseconds)
@@ -68,10 +106,13 @@ npm_cache_files=$(find "${OUT_DIR}/npm" -type f | wc -l)
 maven_repository_archive=$(if [[ -f "${OUT_DIR}/maven/repository.tgz" ]]; then echo yes; else echo no; fi)
 docker_base_images_archive=$(if [[ -f "${OUT_DIR}/docker/base-images.tar" ]]; then echo yes; else echo no; fi)
 docker_platform_images_archive=$(if [[ -f "${OUT_DIR}/docker/arex-recorder-images.tar" ]]; then echo yes; else echo no; fi)
+frontend_dist_hashes=$(if [[ -f "${OUT_DIR}/frontend/dist.sha256" ]]; then echo yes; else echo no; fi)
 arex_agent=$(if [[ -f "${OUT_DIR}/arex-agent/arex-agent-${AREX_AGENT_VERSION}.jar" ]]; then echo yes; else echo no; fi)
+git_commit=$(cd "${ROOT_DIR}" && git rev-parse --short HEAD 2>/dev/null || echo unknown)
+git_dirty=$(cd "${ROOT_DIR}" && if git diff --quiet --ignore-submodules -- 2>/dev/null && git diff --cached --quiet --ignore-submodules -- 2>/dev/null; then echo no; else echo yes; fi)
 EOF
 
-"${SCRIPT_DIR:-$(dirname "$0")}/verify-offline-bundle.sh" "${OUT_DIR}" || {
+"${SCRIPT_DIR}/verify-offline-bundle.sh" "${OUT_DIR}" || {
   echo "Offline bundle was created, but verification failed. Check the messages above." >&2
   exit 1
 }
@@ -83,6 +124,7 @@ This directory contains dependency caches prepared from an external-network mach
 
 - `pip/`: Python wheels and source distributions from `platform/requirements.txt`.
 - `npm/`: npm cache produced by `npm ci --cache`.
+- `frontend/`: the exact frontend `dist/` and `node_modules/` used to build the image.
 - `maven/repository.tgz`: Maven local repository snapshot from the build machine.
 - `docker/base-images.tar`: Python, Node, and MySQL base/runtime images.
 - `docker/arex-recorder-images.tar`: Built platform backend/frontend images.
@@ -96,4 +138,13 @@ Intranet import:
 4. Run `deploy/intranet/deploy-intranet.sh`.
 EOF
 
-echo "Offline bundle prepared at ${OUT_DIR}"
+rm -rf "${FINAL_OUT_DIR}.previous"
+if [[ -d "${FINAL_OUT_DIR}" ]]; then
+  mv "${FINAL_OUT_DIR}" "${FINAL_OUT_DIR}.previous"
+fi
+mv "${OUT_DIR}" "${FINAL_OUT_DIR}"
+rm -rf "${FINAL_OUT_DIR}.previous"
+trap - EXIT
+rm -rf "${WORK_ROOT}"
+
+echo "Offline bundle prepared at ${FINAL_OUT_DIR}"

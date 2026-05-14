@@ -22,16 +22,19 @@ Local endpoints handled natively:
   POST /api/storage/replay/query/cacheLoad
   POST /api/storage/replay/query/cacheRemove
 """
+import asyncio
 import json
 import logging
+import secrets
 import re
 from collections import Counter
 from datetime import datetime
+from ipaddress import ip_address, ip_network
 from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 import zstandard as zstd
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -78,11 +81,66 @@ def _is_proxy_mode() -> bool:
     url = (settings.arex_storage_url or "").strip()
     if not url:
         return False
-    return not (url.startswith("http://localhost") or url.startswith("http://127.0.0.1"))
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False
+    local_hosts = {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "0.0.0.0",
+        "backend",
+        "arex-recorder-backend",
+    }
+    if host in local_hosts:
+        return False
+    try:
+        if ip_address(host).is_loopback:
+            return False
+    except ValueError:
+        pass
+    return True
 
 
 def _client_host(request: Request) -> str:
     return request.client.host if request.client else "-"
+
+
+def _is_private_client_host(host: str) -> bool:
+    if not host or host == "-":
+        return False
+    try:
+        addr = ip_address(host)
+    except ValueError:
+        return False
+    if addr.is_loopback or addr.is_private or addr.is_link_local:
+        return True
+    # Docker bridge networks are usually private, but keep this explicit for
+    # older Python/ipaddress behavior and easier operator reasoning.
+    return any(addr in network for network in (
+        ip_network("10.0.0.0/8"),
+        ip_network("172.16.0.0/12"),
+        ip_network("192.168.0.0/16"),
+    ))
+
+
+async def _require_agent_ingest_allowed(request: Request) -> None:
+    host = _client_host(request)
+    if settings.arex_proxy_allow_private_only and not _is_private_client_host(host):
+        logger.warning("[arex_proxy] rejected non-private agent ingest client=%s", host)
+        raise HTTPException(status_code=403, detail="Agent ingest is restricted to private networks")
+
+    expected = (settings.arex_agent_shared_secret or "").strip()
+    if expected:
+        provided = (
+            request.headers.get("x-arex-agent-secret")
+            or request.headers.get("x-agent-secret")
+            or ""
+        ).strip()
+        if not secrets.compare_digest(provided, expected):
+            logger.warning("[arex_proxy] rejected agent ingest with invalid secret client=%s", host)
+            raise HTTPException(status_code=401, detail="Invalid agent secret")
 
 
 def _truncate(value, limit: int = 240) -> str | None:
@@ -287,6 +345,31 @@ def _summarize_config_body(body: dict | None) -> dict:
     }
 
 
+_proxy_client: httpx.AsyncClient | None = None
+_proxy_client_lock = asyncio.Lock()
+
+
+async def _get_proxy_client() -> httpx.AsyncClient:
+    global _proxy_client
+    if _proxy_client is not None and not _proxy_client.is_closed:
+        return _proxy_client
+    async with _proxy_client_lock:
+        if _proxy_client is not None and not _proxy_client.is_closed:
+            return _proxy_client
+        _proxy_client = httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+        )
+        return _proxy_client
+
+
+async def _close_proxy_client() -> None:
+    global _proxy_client
+    if _proxy_client is not None:
+        await _proxy_client.aclose()
+        _proxy_client = None
+
+
 async def _proxy(request: Request, path: str) -> Response:
     """Forward request as-is to external arex-storage."""
     target_url = f"{settings.arex_storage_url}{path}"
@@ -296,13 +379,13 @@ async def _proxy(request: Request, path: str) -> Response:
         if k.lower() not in ("host", "content-length")
     }
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.request(
-                method=request.method,
-                url=target_url,
-                content=body,
-                headers=headers,
-            )
+        client = await _get_proxy_client()
+        resp = await client.request(
+            method=request.method,
+            url=target_url,
+            content=body,
+            headers=headers,
+        )
         return Response(
             content=resp.content,
             status_code=resp.status_code,
@@ -358,6 +441,7 @@ async def health_check():
 
 @router.post("/api/storage/record/save")
 async def save_mocker(request: Request, db: AsyncSession = Depends(get_db)):
+    await _require_agent_ingest_allowed(request)
     if _is_proxy_mode():
         return await _proxy(request, "/api/storage/record/save")
 
@@ -393,6 +477,7 @@ async def save_mocker(request: Request, db: AsyncSession = Depends(get_db)):
 
 @router.post("/api/storage/record/batchSaveMockers")
 async def batch_save_mockers(request: Request, db: AsyncSession = Depends(get_db)):
+    await _require_agent_ingest_allowed(request)
     raw = await request.body()
     decompressed = _decompress(raw)
 
@@ -424,23 +509,35 @@ async def batch_save_mockers(request: Request, db: AsyncSession = Depends(get_db
         _log_info("%s", detail)
 
     if _is_proxy_mode():
-        # Proxy mode: forward each mocker individually to arex-storage
+        # Proxy mode: forward mockers concurrently to arex-storage
         save_url = f"{settings.arex_storage_url}/api/storage/record/save"
-        errors = []
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            for mocker in mockers:
-                try:
-                    resp = await client.post(
-                        save_url,
-                        json=mocker,
-                        headers={"Content-Type": "application/json"},
-                    )
-                    if resp.status_code != 200:
-                        errors.append(f"{mocker.get('recordId','?')}: {resp.status_code}")
-                except Exception as e:
-                    errors.append(str(e))
+        errors: list[str] = []
+        _concurrency = 20
+
+        async def _forward_one(mocker: dict, client: httpx.AsyncClient) -> None:
+            try:
+                resp = await client.post(
+                    save_url,
+                    json=mocker,
+                    headers={"Content-Type": "application/json"},
+                )
+                if resp.status_code != 200:
+                    errors.append(f"{mocker.get('recordId','?')}: {resp.status_code}")
+            except Exception as e:
+                logger.warning("[arex_proxy] batchSaveMockers forward failed for %s: %s", mocker.get("recordId", "?"), e)
+                errors.append(str(e))
+
+        sem = asyncio.Semaphore(_concurrency)
+        async def _forward_with_limit(mocker: dict, client: httpx.AsyncClient) -> None:
+            async with sem:
+                await _forward_one(mocker, client)
+
+        async with httpx.AsyncClient(timeout=30.0, limits=httpx.Limits(max_connections=_concurrency)) as client:
+            tasks = [_forward_with_limit(m, client) for m in mockers]
+            await asyncio.gather(*tasks)
 
         if errors:
+            logger.warning("[arex_proxy] batchSaveMockers proxy: %d/%d forward errors: %s", len(errors), len(mockers), errors[:5])
             return Response(
                 content=json.dumps({
                     "responseStatusType": {"responseCode": 1, "responseDesc": str(errors)}
@@ -466,6 +563,7 @@ async def batch_save_mockers(request: Request, db: AsyncSession = Depends(get_db
 
 @router.post("/api/storage/replay/query/replayCase")
 async def query_replay_case(request: Request, db: AsyncSession = Depends(get_db)):
+    await _require_agent_ingest_allowed(request)
     if _is_proxy_mode():
         return await _proxy(request, "/api/storage/replay/query/replayCase")
 
@@ -504,6 +602,7 @@ async def query_replay_case(request: Request, db: AsyncSession = Depends(get_db)
 
 @router.post("/api/storage/replay/query/viewRecord")
 async def view_record(request: Request, db: AsyncSession = Depends(get_db)):
+    await _require_agent_ingest_allowed(request)
     if _is_proxy_mode():
         return await _proxy(request, "/api/storage/replay/query/viewRecord")
 
@@ -525,6 +624,7 @@ async def view_record(request: Request, db: AsyncSession = Depends(get_db)):
 
 @router.post("/api/storage/replay/query/countByRange")
 async def count_by_range(request: Request, db: AsyncSession = Depends(get_db)):
+    await _require_agent_ingest_allowed(request)
     if _is_proxy_mode():
         return await _proxy(request, "/api/storage/replay/query/countByRange")
 
@@ -548,6 +648,7 @@ async def count_by_range(request: Request, db: AsyncSession = Depends(get_db)):
 
 @router.post("/api/storage/replay/query/cacheLoad")
 async def cache_load(request: Request, db: AsyncSession = Depends(get_db)):
+    await _require_agent_ingest_allowed(request)
     if _is_proxy_mode():
         return await _proxy(request, "/api/storage/replay/query/cacheLoad")
 

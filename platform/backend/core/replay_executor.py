@@ -80,6 +80,7 @@ async def _broadcast_progress(job_id: int, data: dict):
         try:
             await ws.send_json(data)
         except Exception:
+            logger.debug("WebSocket send failed for job %s, marking as dead", job_id)
             dead.add(ws)
     if dead:
         async with _ws_connections_lock:
@@ -555,7 +556,9 @@ async def _execute_single(
 
     try:
         if use_mocks and mock_record_id:
-            mock_client = ArexClient(arex_storage_url)
+            # Use the shared connection-pool client instead of creating a new
+            # httpx.AsyncClient per case — avoids fd exhaustion under load.
+            mock_client = ArexClient.get_shared(arex_storage_url)
             await mock_client.cache_load_mock(mock_record_id)
             mock_loaded = True
             await _append_replay_audit_log(

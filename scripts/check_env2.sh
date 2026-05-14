@@ -1,14 +1,16 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/project.sh"
 exec > /tmp/check_env_output.txt 2>&1
 
 echo "=== Browser check ==="
 python3 -m playwright install chromium 2>&1 | tail -3
 
 echo "=== Backend process ==="
-ps aux | grep uvicorn | grep -v grep
+ps aux | grep uvicorn | grep -v grep || true
 
 echo "=== Frontend process ==="
-ps aux | grep vite | grep -v grep
+ps aux | grep vite | grep -v grep || true
 
 echo "=== Backend API test ==="
 curl -s -X POST http://localhost:8000/api/v1/auth/login \

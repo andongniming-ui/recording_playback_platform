@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 
 from database import get_db, async_session_factory
 from models.recording import RecordingSession, Recording
+from models.test_case import TestCase
 from models.application import Application
 from models.arex_mocker import ArexMocker
 from models.audit import RecordingAuditLog
@@ -127,7 +128,7 @@ def _ensure_local_datetime(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
+        return ensure_beijing_datetime(value)
     return value
 
 
@@ -719,15 +720,21 @@ async def _refresh_active_session_remote_counts(db: AsyncSession, sessions: list
         recording_filter_prefixes = _normalize_recording_filter_prefixes(sess.recording_filter_prefixes)
         transaction_code_fields = normalize_transaction_code_keys(app.transaction_code_fields)
         try:
-            async with ArexClient(app.arex_storage_url or settings.arex_storage_url) as client:
-                remote_count = await _count_visible_recordings_from_arex(
-                    client,
-                    app_id=app_id,
-                    begin_time=ensure_beijing_datetime(sess.start_time) or sess.start_time,
-                    end_time=now,
-                    recording_filter_prefixes=recording_filter_prefixes,
-                    transaction_code_fields=transaction_code_fields,
-                )
+            # Use the shared connection-pool client to avoid creating a new
+            # httpx.AsyncClient (and thus a new file descriptor) on every poll.
+            # Previously ``async with ArexClient(url)`` was called here which
+            # opened and immediately closed a TCP connection for each active
+            # session.  With 20+ sessions and a 10-second frontend poll this
+            # exhausted the process fd limit (Errno 24: Too many open files).
+            client = ArexClient.get_shared(app.arex_storage_url or settings.arex_storage_url)
+            remote_count = await _count_visible_recordings_from_arex(
+                client,
+                app_id=app_id,
+                begin_time=ensure_beijing_datetime(sess.start_time) or sess.start_time,
+                end_time=now,
+                recording_filter_prefixes=recording_filter_prefixes,
+                transaction_code_fields=transaction_code_fields,
+            )
         except Exception as exc:
             logger.info("刷新录制中会话 %s 的 AREX 计数失败: %s", sess.id, exc)
             continue
@@ -877,7 +884,10 @@ async def list_sessions(
     result = await db.execute(stmt)
     items = result.scalars().all()
     if refresh_active_count:
-        await _refresh_active_session_remote_counts(db, items)
+        try:
+            await _refresh_active_session_remote_counts(db, items)
+        except Exception as exc:
+            logger.warning("Failed to refresh active recording counts while listing sessions: %s", exc)
     if include_total:
         return RecordingSessionPageOut(items=items, total=total or 0, skip=skip, limit=limit)
     return items
@@ -922,8 +932,15 @@ async def bulk_delete_sessions(
     if blocked:
         raise HTTPException(status_code=409, detail=f"Sessions are still running: {blocked[0]}")
 
-    await db.execute(delete(Recording).where(Recording.session_id.in_([item.id for item in sessions])))
-    await db.execute(delete(RecordingSession).where(RecordingSession.id.in_([item.id for item in sessions])))
+    session_id_list = [item.id for item in sessions]
+    rec_result = await db.execute(select(Recording.id).where(Recording.session_id.in_(session_id_list)))
+    rec_ids = [row[0] for row in rec_result.all()]
+    if rec_ids:
+        await db.execute(
+            update(TestCase).where(TestCase.source_recording_id.in_(rec_ids)).values(source_recording_id=None)
+        )
+    await db.execute(delete(Recording).where(Recording.session_id.in_(session_id_list)))
+    await db.execute(delete(RecordingSession).where(RecordingSession.id.in_(session_id_list)))
     await db.commit()
     for item in sessions:
         _active_preview_locks.pop(item.id, None)
@@ -991,7 +1008,12 @@ async def delete_session(
         raise HTTPException(status_code=404, detail="Session not found")
     if sess.status in {"active", "collecting"}:
         raise HTTPException(status_code=409, detail=f"Session is still running: {sess.status}")
-    # Explicitly delete child recordings first (SQLite may not enforce FK cascade)
+    rec_result = await db.execute(select(Recording.id).where(Recording.session_id == session_id))
+    rec_ids = [row[0] for row in rec_result.all()]
+    if rec_ids:
+        await db.execute(
+            update(TestCase).where(TestCase.source_recording_id.in_(rec_ids)).values(source_recording_id=None)
+        )
     await db.execute(delete(Recording).where(Recording.session_id == session_id))
     await db.delete(sess)
     await db.commit()
@@ -1010,6 +1032,9 @@ async def debug_arex_storage(
     """
     from integration.arex_client import ArexClient
     from datetime import timedelta
+
+    if not settings.debug:
+        raise HTTPException(status_code=404, detail="Not found")
 
     result = await db.execute(select(RecordingSession).where(RecordingSession.id == session_id))
     sess = result.scalar_one_or_none()
@@ -1299,6 +1324,9 @@ async def bulk_delete_recordings(
         return BulkDeleteResponse(deleted=0)
 
     session_ids = [recording.session_id for recording in recordings if recording.session_id]
+    await db.execute(
+        update(TestCase).where(TestCase.source_recording_id.in_(recording_ids)).values(source_recording_id=None)
+    )
     await db.execute(delete(Recording).where(Recording.id.in_([recording.id for recording in recordings])))
     await _refresh_session_total_counts(db, session_ids)
     await db.commit()
@@ -1317,6 +1345,9 @@ async def delete_recording(
         raise HTTPException(status_code=404, detail="Recording not found")
 
     session_id = rec.session_id
+    await db.execute(
+        update(TestCase).where(TestCase.source_recording_id == recording_id).values(source_recording_id=None)
+    )
     await db.delete(rec)
     if session_id:
         await _refresh_session_total_counts(db, [session_id])

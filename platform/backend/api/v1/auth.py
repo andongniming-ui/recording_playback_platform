@@ -2,7 +2,7 @@ from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Request, Re
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import datetime
+from datetime import datetime, timezone
 import jwt
 from jwt.exceptions import InvalidTokenError as JWTError
 
@@ -20,6 +20,10 @@ from config import settings
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 REFRESH_TOKEN_COOKIE = "ar_refresh_token"
+
+
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
@@ -61,8 +65,6 @@ async def _revoke_refresh_token(
     token: str,
     replaced_by_jti: str | None = None,
 ) -> bool:
-    from utils.timezone import now_beijing
-
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
     except JWTError:
@@ -75,7 +77,7 @@ async def _revoke_refresh_token(
     if not stored or stored.token_hash != hash_token(token):
         return False
     stored.revoked = True
-    stored.revoked_at = now_beijing().replace(tzinfo=None)
+    stored.revoked_at = _utc_now_naive()
     stored.replaced_by_jti = replaced_by_jti
     return True
 
@@ -136,7 +138,7 @@ async def refresh_token(
         not stored_token
         or stored_token.revoked
         or stored_token.token_hash != hash_token(token)
-        or stored_token.expires_at < datetime.utcnow()
+        or stored_token.expires_at < _utc_now_naive()
     ):
         raise credentials_exception
 

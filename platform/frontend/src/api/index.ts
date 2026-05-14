@@ -2,6 +2,8 @@ import axios from 'axios'
 import { API_BASE_URL } from '@/config'
 import { useUserStore } from '@/store/user'
 
+let redirectingToLogin = false
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
@@ -34,7 +36,10 @@ api.interceptors.response.use(
     }
     if (error.response?.status === 401) {
       userStore.clearUser()
-      window.location.href = '/login'
+      if (!redirectingToLogin && window.location.pathname !== '/login') {
+        redirectingToLogin = true
+        window.location.assign('/login')
+      }
     }
     return Promise.reject(error)
   }

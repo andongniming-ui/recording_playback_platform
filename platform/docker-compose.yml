@@ -27,7 +27,7 @@ services:
     environment:
       AR_DB_TYPE: mysql
       AR_DB_URL: ${AR_DB_URL:-mysql+aiomysql://arex:arex123@db:3306/arex_recorder}
-      AR_AREX_STORAGE_URL: ${AR_AREX_STORAGE_URL:-http://backend:8000}
+      AR_AREX_STORAGE_URL: ${AR_AREX_STORAGE_URL:-http://127.0.0.1:8000}
       AR_AREX_AGENT_STORAGE_URL: ${AR_AREX_AGENT_STORAGE_URL:-http://host.docker.internal:8000}
       AR_AREX_AGENT_JAR_PATH: ${AR_AREX_AGENT_JAR_PATH:-/opt/arex/arex-agent.jar}
       AR_SECRET_KEY: ${AR_SECRET_KEY:-please-change-this-dev-only}
@@ -46,12 +46,20 @@ services:
       - ./data:/app/data
       - ./ssh_keys:/app/ssh_keys
       - ${AREX_AGENT_HOST_DIR:-./third_party/arex-agent}:/opt/arex:ro
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000/api/v1}
     container_name: arex-recorder-frontend
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000/api/v1}
     ports:
       - "5173:5173"
     depends_on:
@@ -59,3 +67,5 @@ services:
 
 volumes:
   mysql_data:
+    external: true
+    name: arex-recorder_mysql_data

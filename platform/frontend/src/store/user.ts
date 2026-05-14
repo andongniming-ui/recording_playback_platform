@@ -12,16 +12,16 @@ type LoginPayload = {
 export const useUserStore = defineStore('user', () => {
   const token = ref('')
   const username = ref(localStorage.getItem('username') || '')
-  const role = ref(localStorage.getItem('role') || '')
+  const role = ref('')
   const refreshing = ref(false)
   let refreshPromise: Promise<boolean> | null = null
+  localStorage.removeItem('role')
 
   function setUser(payload: LoginPayload) {
     token.value = payload.access_token
     username.value = payload.username
     role.value = payload.role
     localStorage.setItem('username', payload.username)
-    localStorage.setItem('role', payload.role)
   }
 
   function clearUser() {

@@ -48,7 +48,7 @@ def _decode_possible_base64_text(value) -> str:
         if decoded.strip():
             return decoded
     except Exception:
-        pass
+        logger.debug("Failed to decode base64 text: %r", value[:100] if isinstance(value, str) else type(value))
     return value
 
 

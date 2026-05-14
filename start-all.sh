@@ -7,7 +7,7 @@
 
 set -e
 
-ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLATFORM_DIR="$ROOT_DIR/platform"
 SYSTEMS_DIR="$ROOT_DIR/systems-under-test"
 LOG_DIR="$ROOT_DIR/runtime/logs"
@@ -16,6 +16,12 @@ mkdir -p "$LOG_DIR"
 MODE="${1:-all}"
 AREX_AGENT_JAR_PATH="${AREX_AGENT_JAR_PATH:-${AR_AREX_AGENT_JAR_PATH:-/home/test/arex-agent/arex-agent.jar}}"
 FRONTEND_PORT=5173
+MYSQL_CONTAINER=arex-recorder-mysql
+MYSQL_PORT=3307
+MYSQL_VOLUME=arex-recorder_mysql_data
+MYSQL_DATABASE=arex_recorder
+MYSQL_USER=arex
+MYSQL_PASSWORD=arex123
 
 # ─── 工具函数 ────────────────────────────────────────────────
 
@@ -38,6 +44,58 @@ wait_port() {
 http_ok() {
   local url=$1
   curl -fsS --max-time 3 "$url" >/dev/null 2>&1
+}
+
+mysql_port_ready() {
+  nc -z 127.0.0.1 "$MYSQL_PORT" 2>/dev/null
+}
+
+mysql_data_volume() {
+  docker inspect "$MYSQL_CONTAINER" \
+    --format '{{range .Mounts}}{{if eq .Destination "/var/lib/mysql"}}{{.Name}}{{end}}{{end}}' \
+    2>/dev/null || true
+}
+
+rename_conflicting_mysql_container() {
+  if ! docker ps -a --format '{{.Names}}' | grep -qx "$MYSQL_CONTAINER"; then
+    return 0
+  fi
+
+  local mounted_volume new_name
+  mounted_volume="$(mysql_data_volume)"
+  if [ "$mounted_volume" = "$MYSQL_VOLUME" ] && mysql_port_ready; then
+    return 0
+  fi
+
+  new_name="${MYSQL_CONTAINER}-detached-$(date +%Y%m%d%H%M%S)"
+  log "MySQL container name is occupied but not usable for this project; preserving it as $new_name"
+  docker rename "$MYSQL_CONTAINER" "$new_name"
+}
+
+assert_mysql_volume() {
+  local mounted_volume
+  mounted_volume="$(mysql_data_volume)"
+  if [ "$mounted_volume" != "$MYSQL_VOLUME" ]; then
+    log "ERROR: MySQL is mounted on '$mounted_volume', expected '$MYSQL_VOLUME'. Refusing to continue to avoid using the wrong database."
+    exit 1
+  fi
+}
+
+log_mysql_data_summary() {
+  local counts total
+  counts="$(docker exec -e MYSQL_PWD="$MYSQL_PASSWORD" "$MYSQL_CONTAINER" \
+    mysql -u"$MYSQL_USER" -N "$MYSQL_DATABASE" \
+      -e "SELECT 'application', COUNT(*) FROM application UNION ALL SELECT 'recording_session', COUNT(*) FROM recording_session UNION ALL SELECT 'recording', COUNT(*) FROM recording UNION ALL SELECT 'arex_mocker', COUNT(*) FROM arex_mocker UNION ALL SELECT 'replay_job', COUNT(*) FROM replay_job UNION ALL SELECT 'test_case', COUNT(*) FROM test_case;" \
+    2>/dev/null || true)"
+  if [ -z "$counts" ]; then
+    log "WARNING: Unable to read MySQL data summary; backend health check will still verify connectivity."
+    return 0
+  fi
+  log "MySQL data summary: $(echo "$counts" | awk '{printf "%s=%s ", $1, $2}')"
+  total="$(echo "$counts" | awk '{sum += $2} END {print sum + 0}')"
+  if [ "$total" = "0" ]; then
+    log "WARNING: Current MySQL business tables are empty. If you expected old test data, stop now and check the active Docker volume."
+  fi
 }
 
 restart_process_on_port() {
@@ -85,7 +143,7 @@ start_mysql() {
   if docker ps --format '{{.Names}}' | grep -q '^arex-recorder-mysql$'; then
     log "MySQL 已在运行，跳过"
   else
-    docker start arex-recorder-mysql
+    docker compose -f "$PLATFORM_DIR/docker-compose.yml" up -d db
     wait_port 3307 "MySQL" || true
   fi
 }
@@ -157,6 +215,21 @@ start_didi() {
 }
 
 # ─── 主流程 ──────────────────────────────────────────────────
+
+start_mysql() {
+  log "Starting MySQL container..."
+  if docker ps --format '{{.Names}}' | grep -qx "$MYSQL_CONTAINER" && mysql_port_ready; then
+    assert_mysql_volume
+    log "MySQL is already running"
+  else
+    rename_conflicting_mysql_container
+    docker volume inspect "$MYSQL_VOLUME" >/dev/null 2>&1 || docker volume create "$MYSQL_VOLUME" >/dev/null
+    docker compose -f "$PLATFORM_DIR/docker-compose.yml" up -d db
+    wait_port "$MYSQL_PORT" "MySQL" || true
+    assert_mysql_volume
+  fi
+  log_mysql_data_summary
+}
 
 case "$MODE" in
   platform)

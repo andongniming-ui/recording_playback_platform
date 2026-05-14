@@ -22,7 +22,11 @@ ssh_keys/
 data/
 runtime/logs/
 runtime/docker-build/
+runtime/intranet-incremental-packages/
+runtime/mysql-backups/
+runtime/deployment-records/
 runtime/arex-agent-download-test.jar
+runtime/offline-bundle/frontend/
 runtime/offline-bundle/pip/
 runtime/offline-bundle/docker/
 runtime/offline-bundle/maven/

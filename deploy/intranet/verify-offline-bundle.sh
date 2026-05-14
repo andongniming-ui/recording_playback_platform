@@ -49,11 +49,26 @@ npm_count="$(find "${BUNDLE_DIR}/npm" -type f 2>/dev/null | wc -l)"
 [[ "${npm_count}" -gt 0 ]] || fail "No npm cache files found in ${BUNDLE_DIR}/npm"
 ok "npm cache files: ${npm_count}"
 
+[[ -d "${BUNDLE_DIR}/frontend/dist" ]] || fail "Missing frontend build artifact: ${BUNDLE_DIR}/frontend/dist"
+[[ -d "${BUNDLE_DIR}/frontend/node_modules" ]] || fail "Missing frontend runtime dependencies: ${BUNDLE_DIR}/frontend/node_modules"
+[[ -f "${BUNDLE_DIR}/frontend/dist.sha256" ]] || fail "Missing frontend dist checksum: ${BUNDLE_DIR}/frontend/dist.sha256"
+if [[ -f "${BUNDLE_DIR}/frontend/package-lock.sha256" ]]; then
+  (cd "${BUNDLE_DIR}/frontend" && sha256sum -c package-lock.sha256)
+fi
+(cd "${BUNDLE_DIR}/frontend" && sha256sum -c dist.sha256)
+ok "Frontend dist and node_modules are captured"
+
 [[ -f "${BUNDLE_DIR}/maven/repository.tgz" ]] || fail "Missing Maven repository archive: ${BUNDLE_DIR}/maven/repository.tgz"
 ok "Maven repository archive exists"
 
 [[ -f "${BUNDLE_DIR}/docker/base-images.tar" ]] || fail "Missing Docker base image archive"
 [[ -f "${BUNDLE_DIR}/docker/arex-recorder-images.tar" ]] || fail "Missing Docker platform image archive"
+if [[ -f "${BUNDLE_DIR}/docker/base-images.tar.sha256" ]]; then
+  (cd "${BUNDLE_DIR}/docker" && sha256sum -c base-images.tar.sha256)
+fi
+if [[ -f "${BUNDLE_DIR}/docker/arex-recorder-images.tar.sha256" ]]; then
+  (cd "${BUNDLE_DIR}/docker" && sha256sum -c arex-recorder-images.tar.sha256)
+fi
 ok "Docker image archives exist"
 
 if [[ -f "${BUNDLE_DIR}/docker/ai-gateway-images.tar" ]]; then

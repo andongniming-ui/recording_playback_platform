@@ -4,8 +4,9 @@ set -euo pipefail
 database="${MYSQL_DATABASE:-arex_recorder}"
 user="${MYSQL_USER:-arex}"
 password="${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}"
+root_password="${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}"
 
-mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" <<SQL
+mysql -uroot -p"${root_password}" <<SQL
 CREATE DATABASE IF NOT EXISTS \`${database}\`
   DEFAULT CHARACTER SET utf8mb4
   DEFAULT COLLATE utf8mb4_unicode_ci;

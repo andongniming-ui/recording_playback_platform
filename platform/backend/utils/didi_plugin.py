@@ -12,6 +12,7 @@ from typing import Any
 
 from config import settings
 from utils.governance import infer_transaction_code
+from utils.sub_call_merge import exclude_duplicate_database_sub_calls, merge_sub_calls
 from utils.system_plugin import SystemPlugin, register_plugin
 
 logger = logging.getLogger(__name__)
@@ -123,44 +124,28 @@ _DIDI_REPOSITORY_SPECS: list[dict] = [
 
 # ── Shared utility functions (kept for reuse by other plugins) ──────────────
 
-def merge_sub_calls(primary: list[dict] | None, secondary: list[dict] | None) -> list[dict]:
-    """Merge two sub-call lists, deduplicating by JSON signature."""
-    merged: list[dict] = []
-    seen: set[str] = set()
-    for group in (primary or [], secondary or []):
-        for item in group if isinstance(group, list) else [group]:
-            if not isinstance(item, dict):
-                continue
-            signature = json.dumps(item, ensure_ascii=False, sort_keys=True)
-            if signature in seen:
-                continue
-            seen.add(signature)
-            merged.append(item)
-    return merged
-
-
-def exclude_duplicate_database_sub_calls(
+def _legacy_exclude_duplicate_database_sub_calls(
     preferred: list[dict] | None,
     candidates: list[dict] | None,
 ) -> list[dict]:
     """Remove database sub-calls from candidates that already exist in preferred."""
     identities = {
         identity
-        for identity in (_database_sub_call_identity(item) for item in (preferred or []))
+        for identity in (_legacy_database_sub_call_identity(item) for item in (preferred or []))
         if identity is not None
     }
     if not identities:
         return candidates or []
     filtered: list[dict] = []
     for item in candidates or []:
-        identity = _database_sub_call_identity(item)
+        identity = _legacy_database_sub_call_identity(item)
         if identity is not None and identity in identities:
             continue
         filtered.append(item)
     return filtered
 
 
-def _database_sub_call_identity(item: dict | None) -> tuple[str, str, str] | None:
+def _legacy_database_sub_call_identity(item: dict | None) -> tuple[str, str, str] | None:
     if not isinstance(item, dict):
         return None
     sub_type = str(item.get("type") or "").strip().lower()

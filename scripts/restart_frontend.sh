@@ -1,4 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/project.sh"
 exec > /tmp/restart_output.txt 2>&1
 
 # Kill old vite process
@@ -6,7 +8,7 @@ pkill -f "vite" 2>/dev/null || true
 sleep 1
 
 # Start frontend
-cd /home/recording_playback_platform/platform/frontend
+cd "${FRONTEND_DIR}"
 nohup npm run dev -- --host 0.0.0.0 > /tmp/frontend.log 2>&1 &
 FRONTEND_PID=$!
 echo "Frontend PID: $FRONTEND_PID"

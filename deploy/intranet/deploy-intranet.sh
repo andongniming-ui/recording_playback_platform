@@ -15,6 +15,8 @@ if grep -q "CHANGE_ME" "${ENV_FILE}"; then
   exit 1
 fi
 
+"${SCRIPT_DIR}/verify-intranet-prereqs.sh" "${ENV_FILE}"
+
 agent_version="$(grep -E '^AREX_AGENT_VERSION=' "${ENV_FILE}" | tail -n 1 | cut -d '=' -f 2- | tr -d '"' | tr -d "'" || true)"
 agent_version="${agent_version:-0.4.8}"
 agent_file="${SCRIPT_DIR}/third_party/arex-agent/arex-agent-${agent_version}.jar"
@@ -23,12 +25,12 @@ if [[ ! -f "${agent_file}" ]]; then
   exit 1
 fi
 
-build_images="$(grep -E '^BUILD_IMAGES=' "${ENV_FILE}" | tail -n 1 | cut -d '=' -f 2- | tr -d '"' | tr -d "'" || true)"
-build_images="${build_images:-true}"
-
-if [[ "${build_images}" == "false" || "${build_images}" == "0" ]]; then
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d
-else
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build
+build_images="$(grep -E '^BUILD_IMAGES=' "${ENV_FILE}" | tail -n 1 | cut -d '=' -f 2- | sed "s/^['\"]//;s/['\"]$//" || true)"
+build_images="${build_images:-false}"
+if [[ "${build_images}" != "false" && "${build_images}" != "0" ]]; then
+  echo "BUILD_IMAGES must be false for intranet deployment. Build images on the external-network machine and import them first." >&2
+  exit 1
 fi
+
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --no-build
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps

@@ -47,4 +47,8 @@ ADDITIVE_MIGRATIONS = [
     ("20260427_010_replay_suite_suite_type", "replay_suite.suite_type", "ALTER TABLE replay_suite ADD COLUMN suite_type VARCHAR(32) DEFAULT 'regression'"),
     ("20260428_001_replay_result_actual_sub_calls", "replay_result.actual_sub_calls", "ALTER TABLE replay_result ADD COLUMN actual_sub_calls TEXT"),
     ("20260428_002_replay_result_sub_call_diff_detail", "replay_result.sub_call_diff_detail", "ALTER TABLE replay_result ADD COLUMN sub_call_diff_detail TEXT"),
+    ("20260511_001_replay_job_status_index", "replay_job.status index", "CREATE INDEX ix_replay_job_status ON replay_job (status)"),
+    ("20260511_002_replay_job_application_id_index", "replay_job.application_id index", "CREATE INDEX ix_replay_job_application_id ON replay_job (application_id)"),
+    ("20260511_003_replay_job_created_at_index", "replay_job.created_at index", "CREATE INDEX ix_replay_job_created_at ON replay_job (created_at)"),
+    ("20260511_004_refresh_token_expires_at_index", "refresh_token.expires_at index", "CREATE INDEX ix_refresh_token_expires_at ON refresh_token (expires_at)"),
 ]

@@ -20,6 +20,7 @@ from integration.arex_client import ArexClient
 from models.arex_mocker import ArexMocker
 from models.audit import RecordingAuditLog
 from models.recording import Recording, RecordingSession
+from utils.timezone import BEIJING_TZ
 from utils.governance import infer_transaction_code
 from utils.didi_plugin import DidiPlugin
 from utils.dynamic_sub_calls import _fetch_dynamic_class_sub_calls
@@ -56,6 +57,20 @@ def test_list_sessions(client, admin_headers, created_app):
     assert resp.status_code == 200
     sessions = resp.json()
     assert len(sessions) >= 2
+
+
+def test_list_sessions_tolerates_active_count_refresh_failure(client, admin_headers, created_app):
+    app_id = created_app["id"]
+    _create_session(client, app_id, admin_headers, "sess-refresh-failure")
+
+    with patch("api.v1.sessions._refresh_active_session_remote_counts", new=AsyncMock(side_effect=RuntimeError("storage down"))):
+        resp = client.get(
+            "/api/v1/sessions?refresh_active_count=true&include_total=true",
+            headers=admin_headers,
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["total"] >= 1
 
 
 def test_list_sessions_filter_by_app(client, admin_headers, created_app):
@@ -1423,7 +1438,7 @@ async def test_sync_active_session_preview_handles_naive_start_time(client, admi
     sync_mock.assert_awaited_once()
     _, kwargs = sync_mock.await_args
     assert kwargs["finalize_session"] is False
-    assert kwargs["begin_time"] == datetime(2026, 4, 22, 10, 0, 0, tzinfo=timezone.utc)
+    assert kwargs["begin_time"] == datetime(2026, 4, 22, 10, 0, 0, tzinfo=BEIJING_TZ)
 
 
 @pytest.mark.asyncio

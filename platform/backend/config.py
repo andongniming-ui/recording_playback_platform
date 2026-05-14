@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     # AREX storage 连接
     arex_storage_url: str = "http://127.0.0.1:8000"
     arex_agent_storage_url: str = ""   # 留空则回退到 arex_storage_url
+    arex_agent_shared_secret: str = ""
+    arex_proxy_allow_private_only: bool = True
     docker_agent_storage_url: str = "http://host.docker.internal:8000"
     arex_agent_jar_path: str = "/opt/arex/arex-agent.jar"
     # JWT
@@ -38,6 +40,10 @@ class Settings(BaseSettings):
     # 回放任务心跳。进程崩溃后，超过 timeout 仍未更新心跳的 RUNNING 任务会被恢复为 FAILED。
     replay_job_heartbeat_interval_s: float = 5.0
     replay_job_heartbeat_timeout_s: float = 300.0
+    refresh_token_cleanup_interval_hours: int = 24
+    refresh_token_cleanup_retention_days: int = 7
+    ssh_strict_host_key_checking: bool = False
+    ssh_known_hosts_path: str = ""
     # 日志落盘：留空则不写文件，填路径则启用 RotatingFileHandler
     log_file: str = ""
     log_max_bytes: int = 10 * 1024 * 1024   # 10 MB

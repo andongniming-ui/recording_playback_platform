@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func, or_, update
 import asyncio
 import logging
+import shlex
 
 logger = logging.getLogger(__name__)
 
@@ -437,7 +438,7 @@ async def unmount_agent(
             await asyncio.to_thread(
                 ssh_executor.run_command,
                 app,
-                f"sed -i '/-javaagent/d' {script_path}",
+                f"sed -i '/-javaagent/d' {shlex.quote(script_path)}",
             )
 
     app.agent_status = "offline"
